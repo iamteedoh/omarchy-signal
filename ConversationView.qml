@@ -350,12 +350,11 @@ Item {
 
       // A transparent layer above the delegates owns wheel events, so the
       // Flickable's own wheel animation never fights the position we set.
-      Item {
+      MouseArea {
         anchors.fill: parent
         z: 10
-        WheelHandler {
-          onWheel: function(ev) { view.scrollBy(list, ev) }
-        }
+        acceptedButtons: Qt.NoButton      // wheel only; clicks fall through to the messages
+        onWheel: function(ev) { view.scrollBy(list, ev) }
       }
       delegate: Item {
         id: row
@@ -559,7 +558,7 @@ Item {
           spacing: Style.space(2)
           model: view.thumbnails ? [] : view.pickerVisible
           boundsBehavior: Flickable.StopAtBounds
-          Item { anchors.fill: parent; z: 10; WheelHandler { onWheel: function(ev) { view.scrollBy(plainList, ev) } } }
+          MouseArea { anchors.fill: parent; z: 10; acceptedButtons: Qt.NoButton; onWheel: function(ev) { view.scrollBy(plainList, ev) } }
           delegate: Rectangle {
             required property var modelData
             required property int index
@@ -617,7 +616,7 @@ Item {
           cellHeight: Style.space(132)
           model: view.thumbnails ? view.pickerVisible : []
           boundsBehavior: Flickable.StopAtBounds
-          Item { anchors.fill: parent; z: 10; WheelHandler { onWheel: function(ev) { view.scrollBy(grid, ev) } } }
+          MouseArea { anchors.fill: parent; z: 10; acceptedButtons: Qt.NoButton; onWheel: function(ev) { view.scrollBy(grid, ev) } }
           delegate: Item {
             required property var modelData
             required property int index
