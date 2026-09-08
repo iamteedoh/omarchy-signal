@@ -449,14 +449,20 @@ Item {
       implicitWidth: Style.space(640)
       implicitHeight: Style.space(600)
       minimumSize: Qt.size(Style.space(380), Style.space(320))
-      visible: true
-      onVisibleChanged: if (!visible) root.closeWindow(modelData)
+      // Map only once the title is final: Hyprland applies float/size/center
+      // rules at map time, and the rule matches on "^Signal · ".
+      visible: false
+      onVisibleChanged: if (!visible && winView.conversationKey) root.closeWindow(modelData)
       Component.onCompleted: {
-        var name = modelData
-        winView.load(modelData, name)
+        winView.load(modelData, modelData.split(":").slice(1).join(":"))
+        Qt.callLater(function() { win.visible = true })
         nameProc.command = [root.cliPath, "conversations", "--json", "--all"]
         nameProc.running = true
+        contactsProc.command = [root.cliPath, "contacts", "--json"]
+        contactsProc.running = true
       }
+      // The title comes from the conversation list, else the contact/group
+      // directory (which is where "Note to Self" and never-messaged contacts live).
       Process {
         id: nameProc
         stdout: StdioCollector {
@@ -464,7 +470,26 @@ Item {
           onStreamFinished: {
             var rows = []
             try { rows = JSON.parse(text) } catch (e) { rows = [] }
-            for (var i = 0; i < rows.length; i++) if (rows[i].key === win.modelData && rows[i].name) { winView.conversationName = Model.singleLine(rows[i].name, 80); break }
+            for (var i = 0; i < rows.length; i++) if (rows[i].key === win.modelData && rows[i].name) { winView.conversationName = Model.singleLine(rows[i].name, 80); return }
+          }
+        }
+      }
+      Process {
+        id: contactsProc
+        stdout: StdioCollector {
+          waitForEnd: true
+          onStreamFinished: {
+            var obj = null
+            try { obj = JSON.parse(text) } catch (e) { obj = null }
+            if (!obj) return
+            var lists = [].concat(Array.isArray(obj.contacts) ? obj.contacts : [], Array.isArray(obj.groups) ? obj.groups : [])
+            for (var i = 0; i < lists.length; i++) {
+              if (lists[i].key === win.modelData) {
+                var n = lists[i].displayName || lists[i].name
+                if (n && winView.conversationName === win.modelData.split(":").slice(1).join(":")) winView.conversationName = Model.singleLine(n, 80)
+                return
+              }
+            }
           }
         }
       }
