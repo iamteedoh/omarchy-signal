@@ -147,13 +147,27 @@ def cmd_events(args) -> int:
         def on_event(name, data):
             _print_json({"event": name, "data": data})
 
+        async def watch_parent():
+            # The shell (or whoever started us) is our reason to exist. If it
+            # dies, or crashes and restarts, we would linger holding a socket;
+            # notice being reparented and leave.
+            parent = os.getppid()
+            while not stop.is_set():
+                await asyncio.sleep(2)
+                if os.getppid() != parent:
+                    stop.set()
+                    return
+
+        watcher = asyncio.create_task(watch_parent())
+
         while not stop.is_set():
             client = BridgeClient(_paths(), on_event=on_event)
             try:
                 hello = await client.connect()
                 await client.request("subscribe")
                 _print_json({"event": "unread", "data": {"total": hello.get("unread", 0)}})
-                await client.closed.wait()
+                await asyncio.wait([asyncio.ensure_future(client.closed.wait()), asyncio.ensure_future(stop.wait())],
+                                   return_when=asyncio.FIRST_COMPLETED)
             except BridgeUnavailable as exc:
                 _print_json({"event": "status", "data": {"connected": False, "linked": False, "error": str(exc).split(";")[0]}})
                 if args.once:
@@ -161,10 +175,11 @@ def cmd_events(args) -> int:
                 await asyncio.sleep(3)
             finally:
                 await client.close()
-            if args.once:
-                return 0
+            if args.once or stop.is_set():
+                break
             _print_json({"event": "status", "data": {"connected": False, "linked": False, "error": "bridge connection lost"}})
             await asyncio.sleep(1)
+        watcher.cancel()
         return 0
     try:
         return asyncio.run(go())
