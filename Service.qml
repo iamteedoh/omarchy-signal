@@ -532,7 +532,11 @@ Item {
       detached: true
       siblings: root.windowTabs
       onConversationNameChanged: {
-        if (root.activeTab && conversationName) { var n = root.tabNames; n[root.activeTab] = conversationName; root.tabNames = n; root.refreshTabs() }
+        // Keep resolved names only; a bare number is just the placeholder.
+        var bare = root.activeTab.split(":").slice(1).join(":")
+        if (root.activeTab && conversationName && conversationName !== bare && conversationName !== root.activeTab) {
+          var n = root.tabNames; n[root.activeTab] = conversationName; root.tabNames = n; root.refreshTabs()
+        }
       }
       onRequestClose: root.closeWindow(root.activeTab)
       onRequestTerminal: root.openTerminal(root.activeTab)
@@ -540,7 +544,24 @@ Item {
       onRequestCloseTab: function(key) { root.closeWindow(key) }
     }
 
-    // Titles come from the conversation list, else the directory (Note to Self).
+    // Titles come from the conversation list, then the directory (which is
+    // where "Note to Self" and never-messaged contacts live).
+    function applyNames(rows) {
+      var n = root.tabNames
+      var changed = false
+      for (var i = 0; i < rows.length; i++) {
+        var r = rows[i]
+        var name = r && (r.name || r.displayName)
+        if (!r || !r.key || !name) continue
+        var bare = String(r.key).split(":").slice(1).join(":")
+        if (!n[r.key] || n[r.key] === bare || n[r.key] === r.key) { n[r.key] = Model.singleLine(name, 80); changed = true }
+      }
+      if (changed) {
+        root.tabNames = n
+        if (root.activeTab && n[root.activeTab] && chatView.conversationName !== n[root.activeTab]) chatView.conversationName = n[root.activeTab]
+        root.refreshTabs()
+      }
+    }
     Process {
       id: namesProc
       command: [root.cliPath, "conversations", "--json", "--all"]
@@ -549,10 +570,21 @@ Item {
         onStreamFinished: {
           var rows = []
           try { rows = JSON.parse(text) } catch (e) { rows = [] }
-          var n = root.tabNames
-          for (var i = 0; i < rows.length; i++) if (rows[i].key && rows[i].name && !n[rows[i].key]) n[rows[i].key] = Model.singleLine(rows[i].name, 80)
-          root.tabNames = n
-          root.refreshTabs()
+          if (Array.isArray(rows)) chatWindow.applyNames(rows)
+          contactsProc.running = true
+        }
+      }
+    }
+    Process {
+      id: contactsProc
+      command: [root.cliPath, "contacts", "--json"]
+      stdout: StdioCollector {
+        waitForEnd: true
+        onStreamFinished: {
+          var obj = null
+          try { obj = JSON.parse(text) } catch (e) { obj = null }
+          if (!obj) return
+          chatWindow.applyNames([].concat(Array.isArray(obj.contacts) ? obj.contacts : [], Array.isArray(obj.groups) ? obj.groups : []))
         }
       }
     }

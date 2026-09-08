@@ -58,7 +58,7 @@ Item {
   function load(key, name) {
     view.stickToBottom = true
     view.conversationKey = key
-    view.conversationName = Model.singleLine(name || key, 80)
+    view.conversationName = Model.singleLine(name || key.split(":").slice(1).join(":"), 80)
     view.thread = []
     view.quote = null
     view.attachments = []
