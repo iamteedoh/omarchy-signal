@@ -16,8 +16,8 @@ verified with burst screenshot captures of real sends, not by inspection.
 ## Known issues and gotchas
 
 - **Omarchy shell may abort on plugin hot-reload (upstream).** Writing under
-  `~/.config/omarchy/plugins/` reloads every user plugin; on this machine the
-  cloned lock service (`tito.lock`) then sometimes trips Quickshell's fatal
+  `~/.config/omarchy/plugins/` reloads every user plugin; a cloned copy of the
+  lock service (as some users keep) then sometimes trips Quickshell's fatal
   "Tried to show lockscreen surfaces without active lock". Quickshell restarts
   itself. `install.sh` therefore copies (never symlinks) and restarts the shell
   once; avoid `--link`.

@@ -13,7 +13,12 @@ if [[ -x $PLUGIN_DIR/scripts/qml-check.sh ]]; then
   "$PLUGIN_DIR/scripts/qml-check.sh" >/dev/null 2>&1 || problems+=("Service.qml no longer loads with this Omarchy shell")
 fi
 if ! systemctl --user is-enabled --quiet omarchy-signal.service 2>/dev/null; then
-  systemctl --user enable --now omarchy-signal.service >/dev/null 2>&1 || problems+=("bridge service not enabled")
+  if systemctl --user enable --now omarchy-signal.service >/dev/null 2>&1; then
+    echo "omarchy-signal: the update left the bridge service disabled; re-enabled it"
+    command -v omarchy-notification-send >/dev/null 2>&1 && omarchy-notification-send --app-name Signal "Signal bridge re-enabled after the update" >/dev/null 2>&1
+  else
+    problems+=("bridge service not enabled")
+  fi
 fi
 if command -v signal-cli >/dev/null; then
   ver=$(signal-cli --version 2>/dev/null | awk '{print $2}')

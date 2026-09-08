@@ -113,22 +113,6 @@ def cmd_ls_files(args) -> int:
     return 0
 
 
-def cmd_pick_file(args) -> int:
-    """Print one file chosen with Omarchy's file menu (used by the shell windows)."""
-    dirs = [d for d in (args.dirs or []) if os.path.isdir(d)] or [os.path.expanduser("~")]
-    exe = shutil.which("omarchy-menu-file")
-    if not exe:
-        print("omarchy-menu-file not found", file=sys.stderr)
-        return 1
-    formats = "png jpg jpeg gif webp heic pdf txt md mp4 mov mp3 m4a ogg opus zip"
-    res = subprocess.run([exe, "Attach", ":".join(dirs), formats], capture_output=True, text=True, timeout=300, check=False)
-    path = res.stdout.strip().splitlines()[-1] if res.stdout.strip() else ""
-    if not path:
-        return 1
-    print(path)
-    return 0
-
-
 def cmd_float_window(args) -> int:
     """Float, size and centre the Hyprland window with the given title (used by
     the shell for detached conversation windows; window rules proved flaky)."""
@@ -483,7 +467,7 @@ def cmd_link(args) -> int:
 def cmd_demo(args) -> int:
     """Show a sample popup (nothing is sent or stored)."""
     async def go(client, hello):
-        await client.request("demo", text=args.text or "")
+        await client.request("demo", text=args.text or "", name=args.sender or "")
         print("demo popup sent to the shell")
         return 0
     return _run(go)
@@ -687,10 +671,6 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("dir", nargs="?")
     s.set_defaults(fn=cmd_ls_files)
 
-    s = sub.add_parser("pick-file", help=argparse.SUPPRESS)
-    s.add_argument("dirs", nargs="*")
-    s.set_defaults(fn=cmd_pick_file)
-
     s = sub.add_parser("window", help="open a conversation in its own window, detached from the client")
     s.add_argument("conversation", nargs="?")
     s.set_defaults(fn=cmd_window)
@@ -740,6 +720,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("demo", help="show a sample notification popup (nothing is sent)")
     s.add_argument("text", nargs="?")
+    s.add_argument("--from", dest="sender", help="name shown as the sender")
     s.set_defaults(fn=cmd_demo)
 
     s = sub.add_parser("bridge", help="run the bridge daemon in the foreground")

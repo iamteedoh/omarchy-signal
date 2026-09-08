@@ -7,7 +7,7 @@
 // C0/C1 controls, bidi overrides/isolates, BOM and the private-use plane a
 // remote sender could use to draw fake UI glyphs. Mirrors
 // lib/omarchy_signal/sanitize.py.
-var CONTROL_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f؜‎‏‪-‮⁦-⁩﻿-]/g
+var CONTROL_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u00ad\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff\ue000-\uf8ff\u{F0000}-\u{FFFFD}\u{100000}-\u{10FFFD}]/gu
 
 function cleanText(value, maxLength) {
   if (value === null || value === undefined) return ""

@@ -88,9 +88,10 @@ the terminal need Ghostty, kitty or WezTerm as Omarchy's default terminal
 (`omarchy default terminal ghostty`) or `terminal = "ghostty"` in the config.
 
 ```bash
-git clone <this repo> ~/git/omarchy-signal
+git clone https://github.com/iamteedoh/omarchy-signal ~/git/omarchy-signal
 cd ~/git/omarchy-signal
-./install.sh          # (--link symlinks the checkout instead; see docs/STATUS.md before using it)
+./install.sh          # also fine from ~/.config/omarchy/plugins/iamteedoh.signal after `omarchy plugin add`
+                      # (--link symlinks the checkout instead; see docs/STATUS.md before using it)
 omarchy-signal link   # a QR code pops up on screen; scan it with Signal on your phone
 omarchy-signal tui
 ```

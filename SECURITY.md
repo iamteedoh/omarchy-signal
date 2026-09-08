@@ -68,8 +68,11 @@ through without any decoder running. The kitty protocol is used in quiet mode
 
 ### Command injection (any input → subprocess)
 
-No shell strings anywhere. `signal-cli` is invoked with an argv list and
-driven over JSON-RPC; the Quickshell plugin launches `omarchy-signal` via
+No shell strings carry remote data. `signal-cli` is invoked with an argv list
+and driven over JSON-RPC; the single shell string in the code base is the
+launch command handed to Omarchy's `omarchy-launch-or-focus` (which evals
+it), assembled from our own fixed argv with `shlex.quote` and never from
+message text; the Quickshell plugin launches `omarchy-signal` via
 `Util.execArgv` with arrays built by `Model.tuiArgv` / `Model.sendArgv`, which
 validate the conversation key against `^(number|uuid|group|username):[A-Za-z0-9+/=_.-]+$`
 and pass free text as `--message=…` after which the key follows `--`.
@@ -81,7 +84,7 @@ group id, or Signal username. Nothing starting with `-` can reach
 ### File access (client → bridge → filesystem)
 
 Attachments to send are resolved with symlinks followed and must be regular,
-readable, non-empty files ≤ 100 MiB under `$HOME` or `/tmp`
+readable, non-empty files ≤ 100 MiB under `$HOME` (the bridge has a private `/tmp`)
 (`safe_attachment_path`). `/etc/shadow`, `/proc/self/environ`, FIFOs and
 device nodes are refused. Remote attachment file names are reduced to a safe
 basename (`safe_filename`) and are never used to write files: `signal-cli`

@@ -170,6 +170,9 @@ class RenderTests(unittest.TestCase):
             self.assertIn("\n", app.composer.text)
             await app.handle_key(Key("char", char="x", ctrl=True))
             self.assertEqual(app.composer.text, "")
+            await app.handle_key(Key("paste", char="two\r\nlines"))
+            self.assertEqual(app.composer.text, "two\nlines")           # a paste never sends
+            await app.handle_key(Key("char", char="x", ctrl=True))
             # navigation
             await app.handle_key(Key("tab"))
             self.assertEqual(app.focus, "list")

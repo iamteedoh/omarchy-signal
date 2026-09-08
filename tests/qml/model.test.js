@@ -10,6 +10,7 @@ test("cleanText strips controls, bidi, private use and caps length", () => {
   assert.equal(M.cleanText(null), "")
   assert.equal(M.cleanText(12), "12")
   assert.equal(M.cleanText("x".repeat(10), 3), "xxx")
+  assert.equal(M.cleanText("a\u{F0C9A}b\u00adc"), "abc")     // supplementary private use (Nerd Font glyphs) and soft hyphen
   assert.equal(M.cleanText("Ünïcödé ✓ 日本語 🎉"), "Ünïcödé ✓ 日本語 🎉")
 })
 

@@ -1,81 +1,34 @@
-# omarchy-signal configuration. Every key is optional; these are the defaults.
-# Restart the bridge after editing: systemctl --user restart omarchy-signal
+# omarchy-signal configuration — edited by `omarchy-signal settings` and the client's settings screen.
+# Live keys apply immediately; keys marked (restart) need: systemctl --user restart omarchy-signal
 
-# Phone number (E.164) of the account to use when signal-cli knows several.
-# Leave empty to use the first linked account.
-account = ""
+account = ""   # E.164 of the account to use; empty = first linked (restart)
+signal_cli = "signal-cli"   # (restart)
+log_level = "info"   # debug | info | warning | error (restart)
 
-# Path or name of the signal-cli binary.
-signal_cli = "signal-cli"
-
-# Tell senders when you have read their messages (blue ticks).
-send_read_receipts = true
-
-# Download attachments so they can be shown inline. They land in
-# ~/.local/share/signal-cli/attachments (owner-only permissions).
-download_attachments = true
-
-# Keep a local message history (SQLite, owner-only). Signal has no server-side
-# history: with this off, only messages received while a client is open are
-# visible and nothing survives a restart.
-history_enabled = true
-
-# Delete messages older than this many days (0 = keep forever).
-history_retain_days = 0
-
-# "popup"  — Quickshell toast you can click to reply in place (default)
-# "system" — plain Omarchy notification
-# "off"    — no desktop notifications
-notifications = "popup"
-
-# Show message text in the popup (false = "New message" only).
-notification_preview = true
-notification_timeout_ms = 8000
-
-# Send / show typing indicators.
-typing_indicators = true
-
-# Inline images in the terminal: "auto" probes the terminal, "on"/"off" force it.
-terminal_images = "auto"
-
-# When to show a received image inside the conversation:
-#   always  as soon as it arrives
-#   click   only after you click it (or press v in its menu); good for privacy
-#   never   names only; open them with the attachment menu
-inline_images = "always"
-
-# Conversation layout: "left" keeps every message on the left (sender names
-# tell them apart); "bubbles" puts your own messages on the right.
-message_layout = "left"
-
-# Terminal used when the shell, the keybinding or `omarchy-signal open` starts
-# the client. "auto" uses Omarchy's default terminal (omarchy default terminal
-# <name>). Inline images need ghostty, kitty or wezterm.
-terminal = "auto"
+# ── Notifications ──
+notifications = "popup"   # popup: click-to-reply toast · system: plain Omarchy notification · off
+notification_content = "name-and-message"   # What a popup reveals: sender and text, sender only, or neither
+notification_timeout_ms = 8000   # How long a popup stays on screen
+respect_dnd = true   # No popups while Omarchy's Do Not Disturb is on (unread counts still update)
+notification_sound = ""   # A .wav/.ogg/.oga file played with each popup (pw-play); empty for silence
+# ── Privacy ──
+send_read_receipts = true   # Tell senders you read their messages; the same receipt clears the notification on your phone
+typing_indicators = true   # Send and show typing indicators
+trust_new_identities = "on-first-use"   # on-first-use matches Signal's clients; never refuses changed safety numbers (restart)
+# ── Chats & media ──
+inline_images = "always"   # always: as they arrive · click: only after you click · never
+download_attachments = true   # Fetch attachments as messages arrive (restart)
+attachment_thumbnails = true   # Picture tiles in the attachment picker; off shows a plain file list
+save_dir = "~/Downloads"   # Folder used by the attachment menu's save action
+emoji_autoconvert = true   # As you type (after the space) and on send; off sends them exactly as written
+message_layout = "left"   # left: everything left-aligned · bubbles: yours on the right
+# ── Appearance ──
+scroll_speed = 9   # Multiplier for trackpad and mouse-wheel scrolling in the popup and chat window; 0 = Qt's default
+terminal = "auto"   # auto follows omarchy default terminal; images need ghostty, kitty or wezterm
+terminal_images = "auto"   # auto probes the terminal
 image_max_rows = 14
-
-# Height of the device-linking QR code in terminal rows when drawn as an image
-# (Ghostty, kitty, WezTerm). The text fallback is about 11 rows regardless.
-qr_rows = 9
-
-# How to show the linking QR code:
-#   auto     popup in the Omarchy shell, else an image in a graphics terminal, else "half"
-#   shell    only the Omarchy shell popup
-#   image    kitty graphics protocol in the terminal (Ghostty, kitty, WezTerm)
-#   half     text, one column per module (square, ~43x21)
-#   quad     text, quarter blocks (~22x22, tall)
-#   braille  text, braille dots (~22x11, square, may not scan)
-qr_style = "auto"
-
-# Where the terminal client saves received attachments ("s" in the attachment menu).
-save_dir = "~/Downloads"
-
-# Name shown in Signal's "Linked devices" list.
-device_name = "omarchy-signal"
-
-# debug | info | warning | error  (message contents are never logged)
-log_level = "info"
-
-# What to do when a contact's safety number changes:
-# on-first-use (default, like Signal's own clients) | always | never
-trust_new_identities = "on-first-use"
+qr_style = "auto"   # auto: shell popup, else image, else text
+# ── Data ──
+history_enabled = true   # Store messages on disk (owner-only SQLite); off = nothing survives a restart (restart)
+history_retain_days = 0   # 0 keeps everything
+device_name = "omarchy-signal"   # Shown in Signal's Linked devices (restart)

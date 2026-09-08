@@ -59,6 +59,14 @@ class KeyParserTests(unittest.TestCase):
         self.assertEqual(self.keys(b"\x1b_Gi=31;OK\x1b\\\x1b[?62;c"), [])
         self.assertEqual(self.keys(b"\x1b]11;rgb:00/00/00\x07q"), ["q"])
 
+    def test_bracketed_paste_is_one_key(self):
+        keys = term.KeyParser().feed(b"\x1b[200~line1\nline2\x1b[201~x")
+        self.assertEqual([k.name for k in keys], ["paste", "char"])
+        self.assertEqual(keys[0].char, "line1\nline2")
+        p = term.KeyParser()
+        self.assertEqual(p.feed(b"\x1b[200~partial"), [])          # waits for the end marker
+        self.assertEqual([k.name for k in p.feed(b"\x1b[201~")], ["paste"])
+
     def test_partial_sequences_wait(self):
         p = term.KeyParser()
         self.assertEqual(p.feed(b"\x1b["), [])

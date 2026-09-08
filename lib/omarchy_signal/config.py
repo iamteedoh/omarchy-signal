@@ -7,6 +7,7 @@ Every key has a default so the file may be absent. Nothing secret lives here.
 from __future__ import annotations
 
 import os
+import stat
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -67,6 +68,12 @@ class Paths:
                 os.chmod(d, 0o700)
             except OSError:
                 pass
+        # The runtime dir holds the socket. With XDG_RUNTIME_DIR unset it falls
+        # back to a path under /tmp that another local user could have created
+        # first, so insist that it is a private directory of ours (no symlink).
+        st = self.run_dir.lstat()
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or (st.st_mode & 0o077):
+            raise PermissionError(f"refusing to use {self.run_dir}: not a private directory owned by this user")
 
 
 @dataclass

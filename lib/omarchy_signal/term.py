@@ -208,6 +208,13 @@ class KeyParser:
             return None, 0
         nxt = s[1]
         if nxt == "[":
+            if s.startswith("\x1b[200~"):
+                # Bracketed paste: deliver the whole block as one key so a
+                # multi-line paste never triggers "send" on its newlines.
+                end = s.find("\x1b[201~")
+                if end < 0:
+                    return (None, len(s)) if len(s) > 1_000_000 else (None, 0)
+                return Key("paste", char=s[6:end]), end + 6
             m = _MOUSE_RE.match(s)
             if m:
                 b, x, y, kind = int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4)

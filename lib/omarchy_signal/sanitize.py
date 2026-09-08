@@ -205,8 +205,9 @@ def safe_attachment_path(raw: object, *, allowed_roots: list[Path] | None = None
     """Validate a file the user wants to send.
 
     The path is resolved (symlinks followed) and must be a regular, readable
-    file under one of ``allowed_roots`` (default: the user's home directory
-    and ``/tmp``). Device nodes, FIFOs, sockets and anything under a root the
+    file under one of ``allowed_roots`` (default: the user's home directory;
+    the bridge runs with a private ``/tmp``, so files there would be invisible
+    to it anyway). Device nodes, FIFOs, sockets and anything under a root the
     user did not opt into are refused so a crafted request from another local
     process can not exfiltrate ``/etc/shadow`` or hang the bridge on a FIFO.
     """
@@ -222,9 +223,9 @@ def safe_attachment_path(raw: object, *, allowed_roots: list[Path] | None = None
     except (OSError, RuntimeError) as exc:
         raise InvalidAttachment(f"attachment not found: {raw}") from exc
 
-    roots = allowed_roots or [Path.home().resolve(), Path("/tmp").resolve()]
+    roots = allowed_roots or [Path.home().resolve()]
     if not any(path == root or root in path.parents for root in roots):
-        raise InvalidAttachment("attachment is outside the allowed directories")
+        raise InvalidAttachment("attachment must be a file under your home directory")
     if not path.is_file():
         raise InvalidAttachment("attachment is not a regular file")
     if not os.access(path, os.R_OK):

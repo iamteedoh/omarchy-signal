@@ -19,7 +19,16 @@ if [[ -f $BINDINGS ]]; then
   hyprctl reload >/dev/null 2>&1 || true
 fi
 MENU="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
-[[ -f $MENU ]] && sed -i '/"signal-tui"/d' "$MENU"
+if [[ -f $MENU ]] && grep -q '"signal-tui"' "$MENU"; then
+  python3 - "$MENU" <<'PY'
+import re, sys
+path = sys.argv[1]
+src = open(path, encoding="utf-8").read()
+src = re.sub(r'^[ \t]*"signal-tui":.*\n?', "", src, flags=re.M)
+src = re.sub(r",(\s*\})\s*$", r"\1\n", src)   # no dangling comma when it was the last entry
+open(path, "w", encoding="utf-8").write(src)
+PY
+fi
 command -v omarchy-shell >/dev/null && omarchy-shell -q shell rescanPlugins >/dev/null 2>&1 || true
 if (( PURGE )); then
   rm -rf "$HOME/.local/share/omarchy-signal" "$HOME/.local/state/omarchy-signal" "$HOME/.config/omarchy-signal"
