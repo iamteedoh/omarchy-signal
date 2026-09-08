@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, kitty, links, pathcomplete, qr
+from . import __version__, emoji, kitty, links, pathcomplete, qr
 from .bridge import _guess_mime
 from .client import BridgeClient, BridgeError, BridgeUnavailable
 from .config import RESTART_REQUIRED, SETTINGS, Config, Paths, coerce_setting, save_config
@@ -114,6 +114,8 @@ class App:
         self.att_items: list[dict] = []      # attachments shown in the "attachment" overlay
         self.att_index = 0
         self._pending_seq = 0
+        self.emoji_suggestions: list[tuple[str, str]] = []
+        self.emoji_index = 0
         self._last_failed: dict | None = None
         self.settings_index = 0
         self.settings_pending: set[str] = set()   # changed keys that need a bridge restart
@@ -644,6 +646,9 @@ class App:
         if self.overlay:
             await self._overlay_key(key)
             return
+        if self.emoji_suggestions and self.focus == "composer" and key.name in ("tab", "enter", "up", "down", "escape"):
+            await self._composer_key(key)   # the picker owns these keys while it is open
+            return
         if key.name == "f1" or (key.name == "char" and key.char == "?" and not self.composer.text):
             self.open_overlay("help")
             return
@@ -724,8 +729,38 @@ class App:
         elif key.name == "char" and key.char == "c":
             self.open_overlay("contacts")
 
+    def _update_emoji_suggestions(self) -> None:
+        partial = emoji.partial_at(self.composer.text, self.composer.cursor)
+        self.emoji_suggestions = emoji.search(partial[1]) if partial else []
+        self.emoji_index = 0
+
+    def _accept_emoji(self, index: int | None = None) -> bool:
+        partial = emoji.partial_at(self.composer.text, self.composer.cursor)
+        if not partial or not self.emoji_suggestions:
+            return False
+        start, _ = partial
+        code, glyph = self.emoji_suggestions[index if index is not None else self.emoji_index]
+        c = self.composer
+        c.text = c.text[:start] + glyph + c.text[c.cursor:]
+        c.cursor = start + len(glyph)
+        self.emoji_suggestions = []
+        return True
+
     async def _composer_key(self, key: Key) -> None:
         c = self.composer
+        if self.emoji_suggestions:
+            if key.name in ("down",) or (key.ctrl and key.char == "n"):
+                self.emoji_index = (self.emoji_index + 1) % len(self.emoji_suggestions)
+                return
+            if key.name in ("up",) or (key.ctrl and key.char == "p"):
+                self.emoji_index = (self.emoji_index - 1) % len(self.emoji_suggestions)
+                return
+            if key.name in ("tab", "enter"):
+                self._accept_emoji()
+                return
+            if key.name == "escape":
+                self.emoji_suggestions = []
+                return
         if key.name == "enter" and not key.alt and not key.shift:
             await self._send()
         elif key.name == "enter":
@@ -762,10 +797,21 @@ class App:
             self.scroll = max(0, self.scroll - 1)
         elif key.name == "char" and not key.ctrl:
             if len(c.text) < 60000:
+                if key.char == ":":
+                    # Closing colon on a known code converts it right away.
+                    partial = emoji.partial_at(c.text, c.cursor)
+                    glyph = emoji.lookup(partial[1]) if partial else None
+                    if glyph:
+                        c.text = c.text[:partial[0]] + glyph + c.text[c.cursor:]
+                        c.cursor = partial[0] + len(glyph)
+                        self.emoji_suggestions = []
+                        return
                 c.insert(key.char)
                 await self._maybe_typing()
         elif key.name == "paste":
             c.insert(key.char)
+        if key.name in ("char", "backspace", "delete", "left", "right", "home", "end"):
+            self._update_emoji_suggestions()
 
     async def _overlay_key(self, key: Key) -> None:
         name = self.overlay
@@ -1249,6 +1295,7 @@ class App:
         out.append(self._draw_list())
         out.append(self._draw_messages())
         out.append(self._draw_composer())
+        out.append(self._draw_emoji_picker())
         out.append(self._draw_footer())
         if self.overlay:
             out.append(self._draw_overlay())
@@ -1696,6 +1743,24 @@ class App:
                 out.append(T.fg(th.dim) + truncate(placeholder, width - 4) + T.RESET)
         return "".join(out)
 
+    def _draw_emoji_picker(self) -> str:
+        """Small completion box just above the composer, nvim style."""
+        if not self.emoji_suggestions or self.overlay or self.focus != "composer":
+            return ""
+        assert self.term
+        t, th = self.term, self.theme
+        rows = len(self.emoji_suggestions)
+        width = max(len(code) for code, _ in self.emoji_suggestions) + 8
+        bottom = t.rows - 1 - self._composer_rows() - 2
+        top = max(3, bottom - rows + 1)
+        left = LIST_WIDTH + 4
+        out = []
+        for i, (code, glyph) in enumerate(self.emoji_suggestions[:bottom - top + 1]):
+            selected = i == self.emoji_index
+            style = T.bg(th.selection) + T.fg(th.bright_foreground) if selected else T.bg(th.panel) + T.fg(th.foreground)
+            out.append(T.move(top + i, left) + style + (" ▶ " if selected else "   ") + glyph + " " + pad(":" + code + ":", width - 5) + T.RESET)
+        return "".join(out)
+
     def _draw_footer(self) -> str:
         assert self.term
         t, th = self.term, self.theme
@@ -1818,7 +1883,7 @@ class App:
                     ("/", "search history"), ("Ctrl-A", "attach a file"), ("Ctrl-R", "react to last message"),
                     ("Ctrl-Q", "quote last message"), ("Ctrl-O / click", "open, save or copy an attachment (or open a link)"),
                     ("Ctrl-E / m", "mute conversation"), ("Ctrl-S / F2", "settings"), ("Ctrl-L", "redraw"), ("Ctrl-X", "clear composer"),
-                    ("Ctrl-Z", "put a failed message back in the composer"),
+                    ("Ctrl-Z", "put a failed message back in the composer"), (":smile:", "emoji shortcodes; a picker opens as you type"),
                     ("Ctrl-C", "quit")]
             for i, (k, v) in enumerate(keys[:h - 3]):
                 out.append(T.move(top + 1 + i, body_left) + bg + T.fg(th.accent) + pad(k, 22) + T.fg(th.foreground) + truncate(v, body_w - 22) + T.RESET)

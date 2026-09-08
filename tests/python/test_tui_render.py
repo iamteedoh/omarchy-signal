@@ -270,6 +270,43 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class EmojiPickerTests(unittest.TestCase):
+    def test_picker_and_autoconvert(self):
+        app = make_app()
+        seed(app)
+
+        async def go():
+            for ch in "hi :sm":
+                await app.handle_key(Key("char", char=ch))
+            self.assertTrue(app.emoji_suggestions)
+            self.assertEqual(app.emoji_suggestions[0][0], "smile")
+            app.term.out.clear()
+            app.draw()
+            self.assertIn(":smile:", app.term.text())
+            await app.handle_key(Key("down"))
+            await app.handle_key(Key("up"))
+            await app.handle_key(Key("tab"))
+            self.assertEqual(app.composer.text, "hi 😄")
+            self.assertEqual(app.composer.cursor, len("hi 😄"))
+            self.assertEqual(app.emoji_suggestions, [])
+            # closing colon converts a known code on its own; Enter with a picker open never sends
+            for ch in " :+1:":
+                await app.handle_key(Key("char", char=ch))
+            self.assertEqual(app.composer.text, "hi 😄 👍")
+            for ch in " :thum":
+                await app.handle_key(Key("char", char=ch))
+            self.assertTrue(app.emoji_suggestions)
+            await app.handle_key(Key("enter"))
+            self.assertEqual(app.composer.text, "hi 😄 👍 👍")
+            await app.handle_key(Key("escape"))
+            # unknown code stays literal and shows no picker after a space
+            for ch in " :zzzzq: x":
+                await app.handle_key(Key("char", char=ch))
+            self.assertEqual(app.emoji_suggestions, [])
+            self.assertIn(":zzzzq:", app.composer.text)
+        asyncio.run(go())
+
+
 class FooterAndImageLifecycleTests(unittest.TestCase):
     def test_footer_never_touches_the_last_cell(self):
         strip = lambda t: re.sub(r"\x1b\[[0-9;?]* ?[A-Za-z]|\x1b\][^\x07\x1b]*(\x07|\x1b\\\\)", "", t)

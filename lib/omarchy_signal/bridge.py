@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import __version__, protocol
+from . import __version__, emoji, protocol
 from .config import Config, Paths
 from .envelope import Attachment, Event, parse_receive
 from .rpc import JsonRpcClient, RpcClosed, RpcError
@@ -595,7 +595,7 @@ class Bridge:
     async def op_send(self, p: dict) -> dict:
         account = self._require_account()
         rec = parse_conversation_key(p["conversation"])
-        text = clean_text(p.get("text", ""))
+        text = emoji.replace_shortcodes(clean_text(p.get("text", "")))
         paths = [str(safe_attachment_path(a)) for a in p.get("attachments", [])]
         if not text.strip() and not paths:
             raise ValueError("nothing to send")
