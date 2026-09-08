@@ -135,16 +135,33 @@ Item {
   property string pickerParent: ""
   property var pickerRows: []
   property string pickerFilter: ""
+  property int pickerIndex: 0
   readonly property string home: Quickshell.env("HOME") || ""
+
+  function pickerMove(delta) {
+    var n = view.pickerVisible.length
+    if (n === 0) return
+    view.pickerIndex = Math.max(0, Math.min(n - 1, view.pickerIndex + delta))
+    if (view.thumbnails) grid.positionViewAtIndex(view.pickerIndex, GridView.Contain)
+    else plainList.positionViewAtIndex(view.pickerIndex, ListView.Contain)
+  }
+
+  function pickerChoose() {
+    var rows = view.pickerVisible
+    if (rows.length) view.chooseRow(rows[Math.max(0, Math.min(rows.length - 1, view.pickerIndex))])
+  }
   readonly property var quickDirs: ["Pictures", "Screenshots", "Downloads", "Documents", "Desktop"]
 
   function pickAttachment() {
     view.pickerOpen = true
     view.pickerFilter = ""
+    view.pickerIndex = 0
     view.listDir(view.pickerDir || (view.home + "/Pictures"))
+    Qt.callLater(function() { pickerFilterField.forceActiveFocus() })
   }
 
   function listDir(dir) {
+    view.pickerIndex = 0
     lsProc.running = false
     lsProc.command = [view.cliPath, "ls-files", "--", dir]
     lsProc.running = true
@@ -480,10 +497,20 @@ Item {
           TextField {
             id: pickerFilterField
             Layout.fillWidth: true
-            placeholderText: "filter " + view.pickerDir.replace(view.home, "~")
-            onTextChanged: view.pickerFilter = text
+            placeholderText: "filter " + view.pickerDir.replace(view.home, "~") + "   (arrows move · Enter attaches · Backspace on empty goes up)"
+            onTextChanged: { view.pickerFilter = text; view.pickerIndex = 0 }
             Keys.onEscapePressed: function(e) { view.handleEscape(); e.accepted = true }
-            Keys.onReturnPressed: if (view.pickerVisible.length) view.chooseRow(view.pickerVisible[0])
+            Keys.onReturnPressed: view.pickerChoose()
+            Keys.onPressed: function(e) {
+              var perRow = view.thumbnails ? Math.max(1, Math.floor(grid.width / grid.cellWidth)) : 1
+              if (e.key === Qt.Key_Down) { view.pickerMove(perRow); e.accepted = true }
+              else if (e.key === Qt.Key_Up) { view.pickerMove(-perRow); e.accepted = true }
+              else if (e.key === Qt.Key_Right && view.thumbnails && cursorPosition === text.length) { view.pickerMove(1); e.accepted = true }
+              else if (e.key === Qt.Key_Left && view.thumbnails && cursorPosition === 0) { view.pickerMove(-1); e.accepted = true }
+              else if (e.key === Qt.Key_PageDown) { view.pickerMove(perRow * 3); e.accepted = true }
+              else if (e.key === Qt.Key_PageUp) { view.pickerMove(-perRow * 3); e.accepted = true }
+              else if (e.key === Qt.Key_Backspace && text.length === 0 && view.pickerParent) { view.listDir(view.pickerParent); e.accepted = true }
+            }
           }
           Button { text: "✕"; onClicked: { view.pickerOpen = false; composer.forceActiveFocus() } }
         }
@@ -500,10 +527,11 @@ Item {
           boundsBehavior: Flickable.StopAtBounds
           delegate: Rectangle {
             required property var modelData
+            required property int index
             width: plainList.width
             implicitHeight: rowText.implicitHeight + Style.space(10)
             radius: Style.cornerRadius / 2
-            color: rowHover.containsMouse ? Util.alpha(Color.accent, 0.18) : "transparent"
+            color: (rowHover.containsMouse || index === view.pickerIndex) ? Util.alpha(Color.accent, 0.18) : "transparent"
             RowLayout {
               anchors.fill: parent
               anchors.margins: Style.space(6)
@@ -556,6 +584,8 @@ Item {
           boundsBehavior: Flickable.StopAtBounds
           delegate: Item {
             required property var modelData
+            required property int index
+            readonly property bool keyed: index === view.pickerIndex
             width: grid.cellWidth
             height: grid.cellHeight
             Rectangle {
@@ -563,9 +593,9 @@ Item {
               anchors.fill: parent
               anchors.margins: Style.space(4)
               radius: Style.cornerRadius / 2
-              color: tileHover.containsMouse ? Util.alpha(Color.accent, 0.18) : Util.alpha(Color.popups.text, 0.05)
-              border.color: tileHover.containsMouse ? Color.accent : Util.alpha(Color.popups.border, 0.4)
-              border.width: 1
+              color: (tileHover.containsMouse || keyed) ? Util.alpha(Color.accent, 0.18) : Util.alpha(Color.popups.text, 0.05)
+              border.color: (tileHover.containsMouse || keyed) ? Color.accent : Util.alpha(Color.popups.border, 0.4)
+              border.width: keyed ? 2 : 1
               ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: Style.space(6)
@@ -688,6 +718,10 @@ Item {
           if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && (event.modifiers & Qt.ControlModifier)) {
             view.cycleWindow((event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab ? -1 : 1)
             event.accepted = true
+          } else if ((event.key === Qt.Key_O && (event.modifiers & Qt.ControlModifier))
+                     || (event.key === Qt.Key_A && (event.modifiers & Qt.ControlModifier) && (event.modifiers & Qt.ShiftModifier))) {
+            view.pickAttachment()
+            event.accepted = true
           }
         }
       }
@@ -699,7 +733,7 @@ Item {
       spacing: Style.space(8)
       Text {
         Layout.fillWidth: true
-        text: view.error ? view.error : (view.sending ? "Encrypting…" : "click a message: Reply · React · Copy  ·  right-click: react  ·  middle-click: reply  ·  Esc closes")
+        text: view.error ? view.error : (view.sending ? "Encrypting…" : "click a message: Reply · React · Copy  ·  right-click: react  ·  middle-click: reply  ·  Ctrl+O attach  ·  Esc closes")
         textFormat: Text.PlainText
         elide: Text.ElideRight
         color: view.error ? Color.urgent : Util.alpha(Color.popups.text, 0.5)
