@@ -27,11 +27,11 @@ Item {
 
   // Qt Quick moves a Flickable by the raw trackpad pixel delta, which on a
   // Wayland touchpad is a few pixels per event; terminals and GTK apps scale
-  // it. Take over wheel events, apply the multiplier, and add inertia: a
-  // swipe keeps gliding and eases out, a wheel notch glides instead of
-  // stepping.
+  // it. Take over wheel events and apply the multiplier ourselves.
+  // Inertia: a swipe keeps gliding and eases out, a wheel notch glides
+  // instead of stepping.
   property var kineticTarget: null
-  property real velocity: 0          // px per second, positive = content moving up (scrolling down)
+  property real velocity: 0          // px per second, positive = scrolling down
   property real lastWheelAt: 0
 
   function clampY(flick, y) {
@@ -84,6 +84,25 @@ Item {
       view.velocity *= 0.93                         // friction per frame
       if (Math.abs(view.velocity) < 25 || flick.contentY === before) { view.velocity = 0; stop() }
     }
+  }
+  property bool stickToBottom: true      // follow new messages unless the user scrolled up
+  property string typingName: ""
+
+  signal requestClose()
+  signal requestDetach()
+  signal requestTerminal()
+  signal requestRaise(string key)
+  signal requestCloseTab(string key)
+
+  property var siblings: []              // other detached windows: [{key, name}]
+
+  // Esc peels one layer at a time: picker → message actions → quote → the window.
+  function handleEscape() {
+    if (view.pickerOpen) { view.pickerOpen = false; composer.forceActiveFocus(); return true }
+    if (view.emojiRowOpen || view.selectedTs) { view.emojiRowOpen = false; view.selectedTs = 0; return true }
+    if (view.quote) { view.quote = null; return true }
+    view.requestClose()
+    return true
   }
 
   function cycleWindow(delta) {
