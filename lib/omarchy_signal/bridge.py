@@ -149,7 +149,15 @@ class SignalCliSupervisor:
     async def call(self, method: str, params: dict | None = None, *, timeout: float | None = None) -> Any:
         if not self.rpc or self.rpc.closed:
             raise RpcClosed("signal-cli is not running")
-        return await self.rpc.call(method, params, timeout=timeout)
+        started = time.monotonic()
+        try:
+            return await self.rpc.call(method, params, timeout=timeout)
+        finally:
+            took = time.monotonic() - started
+            if took > 5:
+                log.warning("signal-cli %s took %.1fs", method, took)
+            else:
+                log.debug("signal-cli %s took %.2fs", method, took)
 
     async def restart(self) -> None:
         if self.proc and self.proc.returncode is None:
@@ -393,6 +401,18 @@ class Bridge:
             writer.close()
             return
         subscribed = False
+        write_lock = asyncio.Lock()
+        inflight: set[asyncio.Task] = set()
+
+        async def answer(req_id, op, params):
+            # Requests run concurrently: a slow receipt or typing call must
+            # never hold up the send behind it on the same connection.
+            response = await self._dispatch(req_id, op, params)
+            async with write_lock:
+                writer.write(protocol.encode(response))
+                with contextlib.suppress(ConnectionResetError, BrokenPipeError):
+                    await writer.drain()
+
         try:
             writer.write(protocol.encode(protocol.event("hello", self.status())))
             await writer.drain()
@@ -423,9 +443,17 @@ class Bridge:
                     subscribed = False
                     response = protocol.reply(req_id, {"subscribed": False})
                 else:
-                    response = await self._dispatch(req_id, op, params)
-                writer.write(protocol.encode(response))
-                await writer.drain()
+                    if len(inflight) >= 64:
+                        writer.write(protocol.encode(protocol.error(req_id, "too many requests in flight", code="busy")))
+                        await writer.drain()
+                        continue
+                    task = asyncio.create_task(answer(req_id, op, params))
+                    inflight.add(task)
+                    task.add_done_callback(inflight.discard)
+                    continue
+                async with write_lock:
+                    writer.write(protocol.encode(response))
+                    await writer.drain()
         except (ConnectionResetError, BrokenPipeError):
             pass
         except asyncio.CancelledError:
@@ -433,6 +461,8 @@ class Bridge:
         except Exception:  # pragma: no cover - defensive
             log.exception("client handler crashed")
         finally:
+            for task in inflight:
+                task.cancel()
             if subscribed:
                 self.subscribers.discard(writer)
             writer.close()

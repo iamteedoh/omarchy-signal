@@ -255,6 +255,9 @@ def cmd_link(args) -> int:
         task = asyncio.ensure_future(client.request("linkFinish", timeout=620))
         frames = "◐◓◑◒"
         i = 0
+        import atexit
+        if shown == "shell":
+            atexit.register(qr.shell_hide_qr)   # killed or crashed: never leave the popup on screen
         try:
             while not task.done():
                 elapsed = int(asyncio.get_running_loop().time() - started)

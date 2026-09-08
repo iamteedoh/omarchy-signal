@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import __version__, kitty, links, pathcomplete, qr
+from .bridge import _guess_mime
 from .client import BridgeClient, BridgeError, BridgeUnavailable
 from .config import RESTART_REQUIRED, SETTINGS, Config, Paths, coerce_setting, save_config
 from .sanitize import InvalidAttachment, clean_name, clean_text, safe_attachment_path, safe_filename
@@ -112,6 +113,8 @@ class App:
         self.overlay_message = ""
         self.att_items: list[dict] = []      # attachments shown in the "attachment" overlay
         self.att_index = 0
+        self._pending_seq = 0
+        self._last_failed: dict | None = None
         self.settings_index = 0
         self.settings_pending: set[str] = set()   # changed keys that need a bridge restart
         self.settings_edit_key = ""               # text/path setting being edited in a prompt
@@ -286,8 +289,7 @@ class App:
             if key in self.messages:
                 self.messages[key].append(self._event_to_message(data))
             if key == self.active_key and not data.get("outgoing") and self.client:
-                with contextlib.suppress(BridgeError):
-                    await self.client.request("markRead", conversation=key)
+                asyncio.ensure_future(self._mark_read(key, force=True))
                 self.scroll = 0
             elif not data.get("outgoing") and data.get("notify"):
                 self.show_toast(f"{clean_name(data.get('senderName', '?'))}: {data.get('preview', '')}", 4)
@@ -406,15 +408,15 @@ class App:
         asyncio.ensure_future(self._load_history(key))
         asyncio.ensure_future(self._mark_read(key))
 
-    async def _mark_read(self, key: str) -> None:
+    async def _mark_read(self, key: str, *, force: bool = False) -> None:
         if not self.client:
             return
         for c in self.conversations:
-            if c["key"] == key and c.get("unread"):
-                with contextlib.suppress(BridgeError):
-                    await self.client.request("markRead", conversation=key)
+            if c["key"] == key and (c.get("unread") or force):
                 c["unread"] = 0
                 self.dirty = True
+                with contextlib.suppress(BridgeError, BridgeUnavailable):
+                    await self.client.request("markRead", conversation=key)
 
     async def _load_history(self, key: str, *, older: bool = False) -> None:
         if not self.client or not key or key in self.pending_history:
@@ -682,6 +684,9 @@ class App:
             return
         if key.ctrl and key.char == "x":
             self.composer.clear()
+            return
+        if key.ctrl and key.char == "z":
+            self._restore_failed()
             return
         if key.name == "char" and key.char == "/" and not self.composer.text and self.focus == "composer":
             self.open_overlay("search")
@@ -986,8 +991,11 @@ class App:
         now = time.monotonic()
         if self.client and self.active_key and now - self.last_typing_sent > 8:
             self.last_typing_sent = now
-            with contextlib.suppress(BridgeError):
-                await self.client.request("typing", conversation=self.active_key)
+
+            async def fire():
+                with contextlib.suppress(BridgeError, BridgeUnavailable):
+                    await self.client.request("typing", conversation=self.active_key)
+            asyncio.ensure_future(fire())
 
     async def _toggle_mute(self) -> None:
         conv = self.active()
@@ -1005,21 +1013,65 @@ class App:
             self.open_overlay("contacts")
             return
         text = self.composer.text
-        if not text.strip() and not self.composer.attachments:
+        attachments = list(self.composer.attachments)
+        if not text.strip() and not attachments:
             return
-        params = dict(conversation=self.active_key, text=text, attachments=list(self.composer.attachments))
+        key = self.active_key
+        params = dict(conversation=key, text=text, attachments=attachments)
         if self.composer.quote:
             params.update(quoteTs=self.composer.quote["ts"], quoteAuthor=self.composer.quote["sender"],
                           quoteText=self.composer.quote.get("body", ""))
+        # Show it at once and clear the composer, so a slow network never
+        # looks like a dead Enter key (and a second Enter can not resend it).
+        self._pending_seq += 1
+        local_ts = int(time.time() * 1000) + self._pending_seq
+        pending = {"conversation": key, "ts": local_ts, "sender": "me", "senderName": "You", "outgoing": True,
+                   "body": text, "attachments": [{"filename": Path(a).name, "contentType": _guess_mime(Path(a)),
+                                                  "size": Path(a).stat().st_size if Path(a).exists() else 0, "path": a} for a in attachments],
+                   "status": "sending", "reactions": {}, "quoteText": params.get("quoteText", ""), "quoteAuthor": "", "_pending": True}
+        self.messages.setdefault(key, []).append(pending)
+        self.composer.clear()
+        self.scroll = 0
+        self.dirty = True
+        asyncio.ensure_future(self._deliver(key, pending, params))
+
+    async def _deliver(self, key: str, pending: dict, params: dict) -> None:
+        assert self.client
         try:
             res = await self.client.request("send", **params)
         except BridgeError as exc:
-            self.show_toast(f"send failed: {exc}", 5)
+            pending["status"] = "failed"
+            pending["_error"] = str(exc)
+            self.show_toast(f"send failed: {exc}  (Ctrl-Z restores the text)", 8)
+            self._last_failed = pending
+            self.dirty = True
             return
+        ts = int(res.get("ts", 0) or 0)
+        pending["ts"] = ts or pending["ts"]
+        pending["status"] = res.get("status", "sent")
+        pending.pop("_pending", None)
         if res.get("failures"):
             self.show_toast("delivered with errors: " + ", ".join(res["failures"])[:80], 5)
-        self.composer.clear()
-        self.scroll = 0
+        # If the bridge's own "sent" event already added this message, drop the duplicate.
+        msgs = self.messages.get(key, [])
+        dupes = [m for m in msgs if m is not pending and m.get("outgoing") and m.get("ts") == pending["ts"]]
+        for m in dupes:
+            msgs.remove(m)
+        self.dirty = True
+
+    def _restore_failed(self) -> None:
+        failed = getattr(self, "_last_failed", None)
+        if not failed:
+            self.show_toast("nothing to restore")
+            return
+        self.composer.text = failed.get("body", "")
+        self.composer.cursor = len(self.composer.text)
+        self.composer.attachments = [a["path"] for a in failed.get("attachments", []) if a.get("path")]
+        msgs = self.messages.get(failed["conversation"], [])
+        if failed in msgs:
+            msgs.remove(failed)
+        self._last_failed = None
+        self.dirty = True
 
     def _last_incoming(self) -> dict | None:
         for m in reversed(self.messages.get(self.active_key, [])):
@@ -1170,13 +1222,20 @@ class App:
         self.frame += 1
         self.link_map = {}
         if t.cols < MIN_COLS or t.rows < MIN_ROWS:
-            t.write(T.bg(th.background) + T.CLEAR + T.move(1, 1) + T.fg(th.red) + "terminal too small" + T.RESET)
+            t.write(T.bg(th.background) + "".join(T.move(r, 1) + T.CLEAR_LINE for r in range(1, t.rows + 1))
+                    + T.move(1, 1) + T.fg(th.red) + "terminal too small" + T.RESET)
+            self.reset_images = True
             t.flush()
             return
-        out = ["\x1b[?2026h", T.bg(th.background), T.CLEAR]
+        # Never ESC[2J here: Ghostty (and kitty) drop every image *and its
+        # data* on a full clear, so pictures would vanish on the next frame.
+        # Erasing line by line leaves placements alone.
+        out = ["\x1b[?2026h", T.bg(th.background)] + [T.move(r, 1) + T.CLEAR_LINE for r in range(1, t.rows + 1)]
         if self.graphics and self.reset_images:
             out.append(kitty.encode_delete_all())
             self.placed.clear()
+            for slot in self.images.values():
+                slot.transmitted = False
             self.reset_images = False
         out.append(self._draw_header())
         out.append(self._draw_list())
@@ -1373,7 +1432,7 @@ class App:
         who = "You" if outgoing else (clean_name(m.get("senderName")) or clean_name(m.get("sender", "?")).split(":", 1)[-1])
         hue = th.accent if outgoing else self._hue(m.get("sender", ""))
         status = m.get("status", "")
-        tick = {"sending": "◌", "sent": "✓", "delivered": "✓✓", "read": "✓✓", "viewed": "✓✓", "failed": "✗"}.get(status, "")
+        tick = {"sending": "◌ sending", "sent": "✓", "delivered": "✓✓", "read": "✓✓", "viewed": "✓✓", "failed": "✗ failed"}.get(status, "")
         tick_color = th.red if status == "failed" else (th.accent if status in ("read", "viewed") else th.dim)
         header = (T.fg(hue) + T.BOLD + who + T.RESET + T.fg(th.dim) + " · " + self._fmt_time(m.get("ts", 0)) + T.RESET
                   + ("  " + T.fg(th.dim) + "(edited)" + T.RESET if m.get("edited") else "")
@@ -1751,6 +1810,7 @@ class App:
                     ("/", "search history"), ("Ctrl-A", "attach a file"), ("Ctrl-R", "react to last message"),
                     ("Ctrl-Q", "quote last message"), ("Ctrl-O / click", "open, save or copy an attachment (or open a link)"),
                     ("Ctrl-E / m", "mute conversation"), ("Ctrl-S / F2", "settings"), ("Ctrl-L", "redraw"), ("Ctrl-X", "clear composer"),
+                    ("Ctrl-Z", "put a failed message back in the composer"),
                     ("Ctrl-C", "quit")]
             for i, (k, v) in enumerate(keys[:h - 3]):
                 out.append(T.move(top + 1 + i, body_left) + bg + T.fg(th.accent) + pad(k, 22) + T.fg(th.foreground) + truncate(v, body_w - 22) + T.RESET)

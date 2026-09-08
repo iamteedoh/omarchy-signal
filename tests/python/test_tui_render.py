@@ -307,6 +307,8 @@ class FooterAndImageLifecycleTests(unittest.TestCase):
             self.assertEqual(first.count("\x1b_Ga=t,"), 1)
             self.assertEqual(first.count("\x1b_Ga=p,"), 1)
             self.assertNotIn("a=d,d=a", first)            # no blanket delete
+            self.assertNotIn("\x1b[2J", first)            # a full clear would destroy the image in Ghostty
+            self.assertEqual(first.count("\x1b[2K"), 40)   # per-line erase instead
             app.term.out.clear()
             app.draw()                                     # unchanged frame: nothing re-sent, nothing deleted
             second = app.term.text()
