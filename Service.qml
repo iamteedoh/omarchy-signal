@@ -33,6 +33,7 @@ Item {
   property string account: ""
   property bool emojiAutoconvert: true
   property bool attachmentThumbnails: true
+  property int scrollSpeed: 3
   property var windows: []               // conversation keys open as tabs of the chat window
   property string activeTab: ""          // which tab the chat window shows
   property var tabNames: ({})            // key -> resolved name
@@ -148,6 +149,7 @@ Item {
       if (typeof d.account === "string") root.account = d.account
       if ("emojiAutoconvert" in d) root.emojiAutoconvert = d.emojiAutoconvert !== false
       if ("attachmentThumbnails" in d) root.attachmentThumbnails = d.attachmentThumbnails !== false
+      if (typeof d.scrollSpeed === "number") root.scrollSpeed = Math.max(1, Math.min(10, d.scrollSpeed))
       root.lastError = Model.singleLine(d.error || "", 200)
       return
     }
@@ -491,6 +493,7 @@ Item {
           account: root.account
           emojiAutoconvert: root.emojiAutoconvert
           thumbnails: root.attachmentThumbnails
+          scrollSpeed: root.scrollSpeed
           onRequestClose: root.closeReply()
           onRequestTerminal: root.openTerminal(root.replyKey)
           onRequestDetach: { var k = root.replyKey; root.closeReply(); root.openWindow(k, root.replyName) }
@@ -529,6 +532,7 @@ Item {
       account: root.account
       emojiAutoconvert: root.emojiAutoconvert
       thumbnails: root.attachmentThumbnails
+      scrollSpeed: root.scrollSpeed
       detached: true
       siblings: root.windowTabs
       onConversationNameChanged: {

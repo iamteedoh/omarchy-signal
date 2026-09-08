@@ -294,6 +294,7 @@ class Bridge:
             "respectDnd": self.cfg.respect_dnd,
             "emojiAutoconvert": self.cfg.emoji_autoconvert,
             "attachmentThumbnails": self.cfg.attachment_thumbnails,
+            "scrollSpeed": self.cfg.scroll_speed,
             "notificationSound": self.cfg.notification_sound if self.cfg.notification_sound and os.path.isfile(os.path.expanduser(self.cfg.notification_sound)) else "",
             "account": self.account,
             "notificationTimeoutMs": self.cfg.notification_timeout_ms,

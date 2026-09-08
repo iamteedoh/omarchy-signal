@@ -89,6 +89,7 @@ class Config:
     message_layout: str = "left"           # left (everything left-aligned) | bubbles (yours on the right)
     emoji_autoconvert: bool = True         # turn :smile: and :D into emoji as you type (and on send); off sends them raw
     attachment_thumbnails: bool = True     # picture tiles in the attachment picker (off = plain list)
+    scroll_speed: int = 3                  # chat window: trackpad/wheel scroll multiplier (1 = Qt default)
     terminal: str = "auto"                 # terminal for `omarchy-signal open`: auto (system default) | ghostty | kitty | wezterm | foot | alacritty
     image_max_rows: int = 14
     qr_rows: int = 9                       # height of the linking QR code in terminal rows (image mode)
@@ -194,6 +195,8 @@ SETTINGS: list[dict] = [
      "help": "As you type (after the space) and on send; off sends them exactly as written"},
     {"section": "Chats & media", "key": "message_layout", "label": "Message layout", "type": "choice",
      "choices": ["left", "bubbles"], "help": "left: everything left-aligned · bubbles: yours on the right"},
+    {"section": "Appearance", "key": "scroll_speed", "label": "Chat window scroll speed", "type": "int",
+     "min": 1, "max": 10, "step": 1, "help": "Multiplier for trackpad and mouse-wheel scrolling in the popup and chat window"},
     {"section": "Appearance", "key": "terminal", "label": "Terminal for the client", "type": "choice",
      "choices": ["auto", "ghostty", "kitty", "wezterm", "foot", "alacritty"], "help": "auto follows omarchy default terminal; images need ghostty, kitty or wezterm"},
     {"section": "Appearance", "key": "terminal_images", "label": "Terminal image support", "type": "choice",
