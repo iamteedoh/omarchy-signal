@@ -79,3 +79,11 @@ test("argv builders never produce shell strings and validate keys", () => {
   assert.equal(M.sendArgv("bad key", "hi"), null)
   assert.equal(M.sendArgv("number:+1", "hi\x00there")[3], "--message=hithere")
 })
+
+test("parseDnd reads Omarchy's state file", () => {
+  assert.equal(M.parseDnd('{"version":3,"dnd":true}'), true)
+  assert.equal(M.parseDnd('{"version":3,"dnd":false}'), false)
+  assert.equal(M.parseDnd(""), false)
+  assert.equal(M.parseDnd("garbage"), false)
+  assert.equal(M.parseDnd('{"dnd":"true"}'), false)
+})

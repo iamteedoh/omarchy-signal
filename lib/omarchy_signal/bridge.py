@@ -291,6 +291,7 @@ class Bridge:
             "historyEnabled": self.cfg.history_enabled, "notifications": self.cfg.notifications,
             "notificationPreview": self.cfg.notification_preview,
             "notificationContent": self.cfg.notification_content,
+            "respectDnd": self.cfg.respect_dnd,
             "notificationTimeoutMs": self.cfg.notification_timeout_ms,
             "linking": self._link_task is not None and not self._link_task.done(),
             "error": self.supervisor.last_error, "uptime": int(time.time() - self.started_at),

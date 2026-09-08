@@ -110,7 +110,7 @@ Clicking a link or attachment name also opens it in terminals with mouse support
 
 Press `Ctrl-S` (or `F2`) in the client for a settings screen grouped like
 Signal's own: **Notifications** (popup / system / off, and notification
-content: name and message, name only, or nothing), **Privacy** (read
+content: name and message, name only, or nothing; honour Omarchy's Do Not Disturb), **Privacy** (read
 receipts, typing indicators, safety-number policy), **Chats & media** (show
 images always / on click / never, auto-download, save folder, layout),
 **Appearance** (terminal, image height, QR style) and **Data** (history,

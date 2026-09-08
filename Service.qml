@@ -28,7 +28,21 @@ Item {
   property bool previewEnabled: true
   property int toastTimeoutMs: 8000
   property string notificationMode: "popup"
+  property bool respectDnd: true
+  property bool dnd: false
   property string lastError: ""
+
+  // Omarchy's Do Not Disturb, so our popups stay quiet when the user asked
+  // the desktop to be quiet. Unread counts keep flowing regardless.
+  FileView {
+    id: dndFile
+    path: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/omarchy/notifications.json"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.dnd = Model.parseDnd(text())
+    onLoadFailed: root.dnd = false
+  }
 
   // Toast queue: newest last. Each entry is the object Model.toastFromMessage builds.
   property var toasts: []
@@ -92,6 +106,7 @@ Item {
       if ("notificationPreview" in d) root.previewEnabled = d.notificationPreview !== false
       if (typeof d.notificationTimeoutMs === "number") root.toastTimeoutMs = Math.max(1000, Math.min(120000, d.notificationTimeoutMs))
       if (typeof d.notifications === "string") root.notificationMode = d.notifications
+      if ("respectDnd" in d) root.respectDnd = d.respectDnd !== false
       root.lastError = Model.singleLine(d.error || "", 200)
       return
     }
@@ -108,6 +123,7 @@ Item {
         root.replyThread = root.replyThread.concat([{ who: toast.title, body: Model.cleanText(d.text || toast.body, 4000), outgoing: false, ts: toast.ts }])
         return
       }
+      if (root.respectDnd && root.dnd) return
       if (root.notificationMode === "system") {
         Util.execArgv(["omarchy-notification-send", "--app-name", "Signal", "-g", "󰭹", toast.title, toast.body,
                        "--exec", "omarchy-signal", "open", toast.key])
@@ -247,7 +263,7 @@ Item {
     function showQr(path: string): string { return root.showQr(path) ? "ok" : "refused" }
     function hideQr(): string { root.hideQr(); return "ok" }
     function unread(): string { return String(root.unread) }
-    function state(): string { return JSON.stringify({ connected: root.connected, linked: root.linked, unread: root.unread }) }
+    function state(): string { return JSON.stringify({ connected: root.connected, linked: root.linked, unread: root.unread, mode: root.notificationMode, dnd: root.dnd, respectDnd: root.respectDnd }) }
   }
 
   // ---------------------------------------------------------------- toast surface

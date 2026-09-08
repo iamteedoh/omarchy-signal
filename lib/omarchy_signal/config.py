@@ -81,6 +81,7 @@ class Config:
     notification_content: str = "name-and-message"   # name-and-message | name-only | none  (like Signal's "Notification content")
     notification_preview: bool = True      # legacy alias: False == "name-only"
     notification_timeout_ms: int = 8000
+    respect_dnd: bool = True               # no popups while Omarchy's Do Not Disturb is on
     typing_indicators: bool = True
     terminal_images: str = "auto"          # auto | on | off   (can the terminal draw images at all)
     inline_images: str = "always"          # always | click | never   (show received images in the thread)
@@ -167,6 +168,8 @@ SETTINGS: list[dict] = [
      "choices": ["name-and-message", "name-only", "none"], "help": "What a popup reveals: sender and text, sender only, or neither"},
     {"section": "Notifications", "key": "notification_timeout_ms", "label": "Popup stays for (ms)", "type": "int",
      "min": 1000, "max": 120000, "step": 1000, "help": "How long a popup stays on screen"},
+    {"section": "Notifications", "key": "respect_dnd", "label": "Honor Do Not Disturb", "type": "bool",
+     "help": "No popups while Omarchy's Do Not Disturb is on (unread counts still update)"},
     {"section": "Privacy", "key": "send_read_receipts", "label": "Read receipts", "type": "bool",
      "help": "Tell senders when you have read their messages"},
     {"section": "Privacy", "key": "typing_indicators", "label": "Typing indicators", "type": "bool",

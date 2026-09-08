@@ -96,6 +96,13 @@ function relativeTime(tsMs, nowMs) {
   return new Date(ts).toISOString().substring(0, 10)
 }
 
+// Omarchy's Do Not Disturb state file (~/.local/state/omarchy/notifications.json).
+function parseDnd(text) {
+  var obj
+  try { obj = JSON.parse(String(text || "")) } catch (e) { return false }
+  return !!(obj && typeof obj === "object" && obj.dnd === true)
+}
+
 var KEY_RE = /^(number|uuid|group|username):[A-Za-z0-9+/=_.\-]{1,120}$/
 
 function isConversationKey(key) {
@@ -131,6 +138,7 @@ if (typeof module !== "undefined") {
     unreadLabel: unreadLabel,
     relativeTime: relativeTime,
     isConversationKey: isConversationKey,
+    parseDnd: parseDnd,
     tuiArgv: tuiArgv,
     sendArgv: sendArgv
   }
