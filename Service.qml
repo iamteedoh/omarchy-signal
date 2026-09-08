@@ -467,7 +467,7 @@ Item {
       id: keyCatcher
       anchors.fill: parent
       focus: true
-      Keys.onEscapePressed: root.closeReply()
+      Keys.onEscapePressed: replyView.handleEscape()
 
       BorderSurface {
         id: dialog

@@ -34,6 +34,15 @@ Item {
 
   property var siblings: []              // other detached windows: [{key, name}]
 
+  // Esc peels one layer at a time: picker → message actions → quote → the window.
+  function handleEscape() {
+    if (view.pickerOpen) { view.pickerOpen = false; composer.forceActiveFocus(); return true }
+    if (view.emojiRowOpen || view.selectedTs) { view.emojiRowOpen = false; view.selectedTs = 0; return true }
+    if (view.quote) { view.quote = null; return true }
+    view.requestClose()
+    return true
+  }
+
   function cycleWindow(delta) {
     var tabs = Array.isArray(view.siblings) ? view.siblings : []
     if (tabs.length < 2) return
@@ -73,8 +82,11 @@ Item {
     Qt.callLater(function() { composer.forceActiveFocus() })
   }
 
+  property real savedY: 0
+
   function reload() {
     if (!view.conversationKey) return
+    view.savedY = list.contentY
     historyProc.running = false
     historyProc.command = [view.cliPath, "history", "--json", "-n", "60", "--", view.conversationKey]
     historyProc.running = true
@@ -173,7 +185,13 @@ Item {
       onStreamFinished: {
         var rows = []
         try { rows = JSON.parse(text) } catch (e) { rows = [] }
-        if (Array.isArray(rows)) { view.thread = Model.threadRows(rows, 60); if (view.stickToBottom) Qt.callLater(list.positionViewAtEnd) }
+        if (Array.isArray(rows)) {
+          view.thread = Model.threadRows(rows, 60)
+          // A model swap resets the list to the top; put it back where it was,
+          // or at the end when following the conversation.
+          var y = view.savedY
+          Qt.callLater(function() { if (view.stickToBottom) list.positionViewAtEnd(); else list.contentY = Math.min(y, Math.max(0, list.contentHeight - list.height)) })
+        }
       }
     }
   }
@@ -184,7 +202,7 @@ Item {
     stderr: StdioCollector { id: sendErr; waitForEnd: true }
     onExited: function(code) {
       view.sending = false
-      if (code === 0) { composer.text = ""; view.quote = null; view.attachments = []; view.reload() }
+      if (code === 0) { composer.text = ""; view.quote = null; view.attachments = []; view.stickToBottom = true; view.reload() }
       else view.error = Model.singleLine(sendErr.text || ("send failed (" + code + ")"), 160)
     }
   }
@@ -454,7 +472,7 @@ Item {
             Layout.fillWidth: true
             placeholderText: "filter " + view.pickerDir.replace(view.home, "~")
             onTextChanged: view.pickerFilter = text
-            Keys.onEscapePressed: function(e) { view.pickerOpen = false; composer.forceActiveFocus(); e.accepted = true }
+            Keys.onEscapePressed: function(e) { view.handleEscape(); e.accepted = true }
             Keys.onReturnPressed: if (view.pickerVisible.length) view.chooseRow(view.pickerVisible[0])
           }
           Button { text: "✕"; onClicked: { view.pickerOpen = false; composer.forceActiveFocus() } }
@@ -655,7 +673,7 @@ Item {
           var r = Emoji.convertBeforeCursor(text, cursorPosition)
           if (r) { text = r.text; cursorPosition = r.cursor }
         }
-        Keys.onEscapePressed: function(event) { if (view.quote) view.quote = null; else view.requestClose(); event.accepted = true }
+        Keys.onEscapePressed: function(event) { view.handleEscape(); event.accepted = true }
         Keys.onPressed: function(event) {
           if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && (event.modifiers & Qt.ControlModifier)) {
             view.cycleWindow((event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab ? -1 : 1)
