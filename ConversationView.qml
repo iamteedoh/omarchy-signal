@@ -253,7 +253,8 @@ Item {
         color: Util.alpha(Color.popups.text, 0.4)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
-        anchors.verticalCenter: parent.verticalCenter
+        height: Style.font.caption + Style.space(10)
+        verticalAlignment: Text.AlignVCenter
       }
     }
 

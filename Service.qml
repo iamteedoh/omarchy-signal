@@ -473,7 +473,7 @@ Item {
       id: win
       required property string modelData
       property alias view: winView
-      readonly property int cascade: root.windowSeq
+      property int cascade: 0
       title: "Signal · " + winView.conversationName
       color: Util.alpha(Color.popups.background, 1.0)
       implicitWidth: Style.space(640)
@@ -484,12 +484,13 @@ Item {
       visible: false
       onVisibleChanged: if (!visible && winView.conversationKey) root.closeWindow(modelData)
       Component.onCompleted: {
+        win.cascade = Math.max(0, root.windows.indexOf(modelData))   // fixed at creation: its slot in the stack
         winView.load(modelData, modelData.split(":").slice(1).join(":"))
         Qt.callLater(function() {
           win.visible = true
           // Float, size and centre it once mapped; from then on it is an
           // ordinary window Hyprland can tile, move or park in the scratchpad.
-          floatProc.command = [root.cliPath, "float-window", "--offset", String((win.cascade - 1) % 6), "--", win.title]
+          floatProc.command = [root.cliPath, "float-window", "--offset", String(win.cascade % 6), "--", win.title]
           floatProc.running = true
           root.refreshTabs()
         })
