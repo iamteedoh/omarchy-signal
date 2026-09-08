@@ -1,60 +1,41 @@
-# Status — 2026-09-08 (overnight build)
+# Status — 2026-09-08
 
-## Done and verified on this machine
+## Verified on this machine (real account)
 
-- Bridge daemon runs as the `omarchy-signal` systemd user unit against the real
-  `signal-cli` 0.14.6 (`signal-cli-native-bin` from the AUR, installed tonight).
-  It reports "connected, not linked" because no account has been linked yet.
-- Terminal client starts in a real pty, draws the boot screen, header, panes,
-  overlays (contacts, search, attach, react, help, quit) and the device-link QR
-  overlay, and exits cleanly. Themed from the current Omarchy theme (Lumon).
-- Quickshell plugin `iamteedoh.signal` is installed (copy mode), validated by
-  `omarchy plugin validate`, enabled in the bar's right section, and answers
-  IPC (`omarchy-shell iamteedoh.signal state|toasts|close|dismiss|demo`).
-  `omarchy-signal demo` produced a toast layer surface (380×89, top right) and
-  `omarchy-shell iamteedoh.signal reply number:+15550000000` produced the
-  centered reply surface, both confirmed via `hyprctl layers`.
-- Keybinding `SUPER+SHIFT+G` → terminal client (block in
-  `~/.config/hypr/bindings.lua` between `-- BEGIN/END omarchy-signal`), and a
-  "Signal (terminal)" row in `~/.config/omarchy/extensions/omarchy-menu.jsonc`.
-- Tests: `make test` → 91 Python tests (unit + integration with a fake
-  signal-cli), 8 node tests, shell static checks, manifest validation. All green.
+Linking (QR popup), receiving, sending, attachments both ways, read receipts
+(they also clear the phone), typing indicators, reactions, quotes, edits,
+delete-for-everyone, Note to Self, the popup and the tabbed chat window
+(float, scratchpad round trip, WM close and reopen), the bar picker, the
+terminal client with inline images in Ghostty, settings live-reload, and the
+post-update hook. `make test` runs 120+ Python tests (fake signal-cli), the
+node tests for the shared JS, shell static checks and a QML load check.
 
-## Not verified (needs a real account)
+Visual behaviour in the chat window (send flicker, scroll pinning) was
+verified with burst screenshot captures of real sends, not by inspection.
 
-- Linking (`omarchy-signal link`), receiving, sending, attachments, receipts,
-  typing, reactions and groups against the live Signal network. The JSON-RPC
-  shapes follow the signal-cli 0.14 manual and were probed locally, but field
-  names in real envelopes may need small adjustments (`envelope.py` is the one
-  place to fix them).
-- The visual look of the toast/reply window was not screenshotted: the display
-  was off (DPMS) so `grim` blocked. First thing in the morning:
-  `omarchy-signal demo` and click the popup.
+## Known issues and gotchas
 
-## Known issues
+- **Omarchy shell may abort on plugin hot-reload (upstream).** Writing under
+  `~/.config/omarchy/plugins/` reloads every user plugin; on this machine the
+  cloned lock service (`tito.lock`) then sometimes trips Quickshell's fatal
+  "Tried to show lockscreen surfaces without active lock". Quickshell restarts
+  itself. `install.sh` therefore copies (never symlinks) and restarts the shell
+  once; avoid `--link`.
+- **Services do not hot-reload.** `Service.qml` (popups, chat window) only
+  reloads on a shell restart; `install.sh` does that.
+- **Hyprland 0.56 dispatchers are Lua** (`hl.dsp.window.float({...})`); the
+  classic `setfloating address:…` form is rejected, and an `o.window` rule did
+  not float the Quickshell window, so the chat window floats itself after
+  mapping via `omarchy-signal float-window`.
+- **Qt list views scroll by raw trackpad deltas**, which Omarchy scales to 0.4×;
+  the chat window applies its own multiplier (`scroll_speed`) with inertia.
+- **`positionViewAtEnd()` blanks the list for a few frames**; the chat window
+  scrolls by setting `contentY`.
+- `signal-cli` prints a harmless GraalVM "InterruptedException" on exit; the
+  bridge filters it.
 
-- The shell's hot-reload recreates bar widgets and panels only; `Service.qml`
-  (toasts, reply window, QR popup) is a `keepLoaded` service and only reloads
-  on `omarchy restart shell`. `install.sh` now restarts the shell.
+## Not done
 
-- **Omarchy shell crashes on plugin hot-reload (upstream).** Every write under
-  `~/.config/omarchy/plugins/` reloads all user plugins; on this machine the
-  cloned lock service (`tito.lock`) then hits Quickshell's fatal "Tried to show
-  lockscreen surfaces without active lock" (coredumps 01:24:08, 01:25:53,
-  01:29:40). Quickshell restarts itself within a second. Not caused by this
-  plugin's QML; it happens on `omarchy-shell shell rescanPlugins` too. Worth
-  reporting to omacom/omarchy with the log sequence in
-  `~/.cache/quickshell/crashes/2gmo85u0lt/log.qslog.log`. Until then: prefer
-  copy-mode installs and avoid `./install.sh --link`.
-- `signal-cli` prints a harmless "Fatal error: java.lang.InterruptedException"
-  on exit (GraalVM shutdown hook); the bridge filters it from the log.
-
-## Next steps
-
-1. `omarchy-signal link` → scan with the phone → `omarchy-signal tui`.
-2. Send yourself a message from the phone: expect a toast, click → reply.
-3. Adjust `envelope.py` if any real envelope field differs; add a captured
-   (redacted) envelope to `tests/python/test_envelope.py`.
-4. Screenshot the toast and reply window for the README.
-5. Decide whether to publish (plugins.omarchy.org needs a public repo, README,
-   license and the `omarchy-plugin` topic).
+- Calls, stories, link previews, voice-note recording, stickers sending.
+- Publishing to plugins.omarchy.org (needs a public repo and the
+  `omarchy-plugin` topic).
