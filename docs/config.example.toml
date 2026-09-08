@@ -44,9 +44,9 @@ image_max_rows = 14
 qr_rows = 9
 
 # How to show the linking QR code:
-#   auto     image in a graphics terminal, else a popup in the Omarchy shell, else "half"
-#   image    kitty graphics protocol only (Ghostty, kitty, WezTerm)
-#   shell    always the Omarchy shell popup
+#   auto     popup in the Omarchy shell, else an image in a graphics terminal, else "half"
+#   shell    only the Omarchy shell popup
+#   image    kitty graphics protocol in the terminal (Ghostty, kitty, WezTerm)
 #   half     text, one column per module (square, ~43x21)
 #   quad     text, quarter blocks (~22x22, tall)
 #   braille  text, braille dots (~22x11, square, may not scan)

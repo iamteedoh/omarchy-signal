@@ -1362,19 +1362,19 @@ class App:
             return out
         y = top + 3
         drawn = False
-        if not self.graphics and self.cfg.qr_style in ("auto", "shell") and not self.link_shell_shown:
+        if self.cfg.qr_style in ("auto", "shell") and not self.link_shell_shown:
             self.link_shell_shown = True
             try:
                 self.link_shell_ok = qr.shell_show_qr(qr.qr_png_file(self.link_uri, self.paths.run_dir))
             except qr.QrUnavailable:
                 self.link_shell_ok = False
-        if not self.graphics and self.link_shell_ok:
+        if self.link_shell_ok:
             for line in ("The QR code is showing on your screen (Omarchy shell).",
                          "Esc there only hides it; this window keeps waiting."):
                 out.append(T.move(y, left + 2) + bg + T.fg(th.foreground) + truncate(line, w - 4) + T.RESET)
                 y += 1
             drawn = True
-        if self.graphics:
+        if not drawn and self.graphics and self.cfg.qr_style in ("auto", "image"):
             try:
                 if not self.link_png_id:
                     png = qr.qr_png(self.link_uri)

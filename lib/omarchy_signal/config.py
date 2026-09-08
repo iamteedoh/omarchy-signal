@@ -84,7 +84,7 @@ class Config:
     terminal_images: str = "auto"          # auto | on | off
     image_max_rows: int = 14
     qr_rows: int = 9                       # height of the linking QR code in terminal rows (image mode)
-    qr_style: str = "auto"                 # auto | image | shell | half | quad | braille
+    qr_style: str = "auto"                 # auto (shell popup, else image, else text) | shell | image | half | quad | braille
     device_name: str = "omarchy-signal"
     log_level: str = "info"
     trust_new_identities: str = "on-first-use"  # passed to signal-cli verbatim (allow-listed)

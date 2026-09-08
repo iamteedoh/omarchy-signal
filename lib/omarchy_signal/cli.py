@@ -216,8 +216,16 @@ def cmd_link(args) -> int:
         if args.text:
             style = "half"
         shown = ""
-        want_image = style in ("auto", "image")
-        if want_image and sys.stdout.isatty() and kitty.terminal_supports_graphics():
+        if style in ("auto", "shell"):
+            try:
+                png_path = qr.qr_png_file(uri, _paths().run_dir)
+                if qr.shell_show_qr(png_path):
+                    shown = "shell"
+                    print("  The QR code is on your screen (Omarchy shell). Esc hides it; the link keeps waiting.")
+                    print("  Prefer it in the terminal? Ctrl-C and rerun with --qr-style image (or half).")
+            except qr.QrUnavailable:
+                shown = ""
+        if not shown and style in ("auto", "image") and sys.stdout.isatty() and kitty.terminal_supports_graphics():
             try:
                 import fcntl, struct, termios
                 packed = fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\x00" * 8)
@@ -229,15 +237,6 @@ def cmd_link(args) -> int:
                 sys.stdout.flush()
                 shown = "image"
             except (qr.QrUnavailable, OSError):
-                shown = ""
-        if not shown and style in ("auto", "shell"):
-            try:
-                png_path = qr.qr_png_file(uri, _paths().run_dir)
-                if qr.shell_show_qr(png_path):
-                    shown = "shell"
-                    print("  The QR code is on your screen (Omarchy shell). Esc hides it; the link keeps waiting.")
-                    print("  Prefer it in the terminal? Ctrl-C and rerun with --qr-style half.")
-            except qr.QrUnavailable:
                 shown = ""
         if not shown:
             text_style = style if style in qr.TEXT_STYLES else "half"
@@ -427,7 +426,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--text", action="store_true", help="draw the QR code with block characters even if the terminal can show images")
     s.add_argument("--qr-size", type=int, metavar="ROWS", help="height of the image QR code in rows (default from config, 9)")
     s.add_argument("--qr-style", choices=["auto", "image", "shell", "half", "quad", "braille"],
-                   help="auto: image in a graphics terminal, else an Omarchy shell popup, else half-block text")
+                   help="auto: Omarchy shell popup, else an image in a graphics terminal, else half-block text")
     s.set_defaults(fn=cmd_link)
 
     s = sub.add_parser("demo", help="show a sample notification popup (nothing is sent)")
