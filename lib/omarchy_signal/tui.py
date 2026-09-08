@@ -52,6 +52,8 @@ class ImageSlot:
     rows: int
     transmitted: bool = False
     failed: bool = False
+    png: bytes | None = None       # converted data, filled in by a worker thread
+    converting: bool = False
 
 
 @dataclass
@@ -670,6 +672,7 @@ class App:
         if conv:
             is_group = conv.get("kind") == "group"
             exp = next((label for secs, label in self.EXPIRATIONS if secs == int(conv.get("expiration", 0) or 0)), f"{conv.get('expiration')}s")
+            items.append(("window", "Open in a window (detach from the client)"))
             items.append(("expiration", f"Disappearing messages: {exp}"))
             items.append(("mute", "Unmute" if conv.get("muted") else "Mute notifications"))
             items.append(("archive", "Unarchive" if conv.get("archived") else "Archive conversation"))
@@ -703,7 +706,10 @@ class App:
         if not self.client:
             return
         try:
-            if action == "expiration" and conv:
+            if action == "window" and conv:
+                self._open_in_window(conv["key"])
+                self.close_overlay()
+            elif action == "expiration" and conv:
                 current = int(conv.get("expiration", 0) or 0)
                 secs = [x for x, _ in self.EXPIRATIONS]
                 idx = secs.index(current) if current in secs else 0
@@ -1025,6 +1031,9 @@ class App:
             return
         if key.ctrl and key.char == "t":
             self.open_conversation_menu()
+            return
+        if key.alt and key.name == "char" and key.char in ("d", "w") and self.active_key:
+            self._open_in_window(self.active_key)
             return
         if key.ctrl and key.char == "a":
             self.open_overlay("attach")
@@ -1528,6 +1537,18 @@ class App:
                 return m
         return None
 
+    def _open_in_window(self, key: str) -> None:
+        """Hand the conversation to the shell's tabbed chat window."""
+        exe = Path(__file__).resolve().parents[2] / "bin" / "omarchy-signal"
+        if not exe.is_file():
+            exe = Path(shutil.which("omarchy-signal") or "omarchy-signal")
+        try:
+            subprocess.Popen([str(exe), "window", "--", key], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+            self.show_toast("opened in the chat window (SUPER+ALT+S parks it in the scratchpad)", 5)
+        except OSError as exc:
+            self.show_toast(f"could not open the window: {exc}")
+
     def _open_last(self) -> None:
         atts = self._all_attachments()
         if atts:
@@ -2021,6 +2042,34 @@ class App:
             self.images[path] = slot
         return slot
 
+    def _convert_async(self, slot: ImageSlot) -> None:
+        if slot.converting or slot.failed:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop (headless rendering): convert in place.
+            png = kitty.to_png(Path(slot.path))
+            if png is None:
+                slot.failed = True
+            else:
+                slot.png = png
+            return
+        slot.converting = True
+
+        async def work():
+            try:
+                png = await asyncio.to_thread(kitty.to_png, Path(slot.path))
+            except Exception:
+                png = None
+            slot.converting = False
+            if png is None:
+                slot.failed = True
+            else:
+                slot.png = png
+            self.dirty = True
+        asyncio.ensure_future(work())
+
     def _draw_messages(self) -> str:
         assert self.term
         t, th = self.term, self.theme
@@ -2093,11 +2142,13 @@ class App:
                 if slot is None or slot.failed:
                     continue
                 if not slot.transmitted:
-                    png = kitty.to_png(Path(slot.path))
-                    if png is None:
-                        slot.failed = True
-                        continue
-                    out.append(kitty.encode_transmit_only(png, image_id))
+                    if slot.png is None:
+                        # Conversion runs in a thread; the rows stay reserved and the
+                        # picture appears on the frame after it is ready.
+                        self._convert_async(slot)
+                        if slot.png is None:
+                            continue
+                    out.append(kitty.encode_transmit_only(slot.png, image_id))
                     slot.transmitted = True
                 if self.placed.get(image_id) != (y, col, cols, irows):
                     # Same placement id: the terminal moves the picture instead of stacking a copy.
@@ -2388,7 +2439,8 @@ class App:
                     ("/", "search history"), ("Ctrl-A", "attach a file"), ("Ctrl-R", "react to last message"),
                     ("Ctrl-Q", "quote last message"), ("Ctrl-O / click", "open, save or copy an attachment (or open a link)"),
                     ("Ctrl-G", "message actions: react, quote, edit, delete, forward, copy, info"),
-                    ("Ctrl-T", "conversation: disappearing messages, mute, archive, block, safety number, groups"),
+                    ("Ctrl-T", "conversation: open in a window (detach), timers, mute, archive, block, safety number, groups"),
+                    ("Alt-D (w in the list)", "detach this chat into the shell's chat window"),
                     ("Ctrl-E / m", "mute conversation"), ("Ctrl-S / F2", "settings"), ("Ctrl-L", "redraw"), ("Ctrl-X", "clear composer"),
                     ("Ctrl-Z", "put a failed message back in the composer"), (":smile:", "emoji shortcodes; a picker opens as you type"),
                     ("Ctrl-C", "quit")]

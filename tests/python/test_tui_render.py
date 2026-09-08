@@ -386,6 +386,19 @@ class FooterAndImageLifecycleTests(unittest.TestCase):
             att = {"id": "a1", "contentType": "image/png", "filename": "a.png", "size": 91, "path": str(img)}
             app.messages[key] = [{"conversation": key, "ts": 1700000000000, "sender": "number:+15550002222", "senderName": "Trinity",
                                   "outgoing": False, "body": "", "attachments": [att], "status": "", "reactions": {}}]
+            async def first_frames():
+                app.draw()
+                first = app.term.text()
+                self.assertNotIn("\x1b_Ga=t,", first)      # conversion is off-thread: nothing uploaded on frame one
+                slot = next(iter(app.images.values()))
+                self.assertTrue(slot.converting)
+                for _ in range(100):
+                    if slot.png is not None or slot.failed:
+                        break
+                    await asyncio.sleep(0.05)
+                self.assertIsNotNone(slot.png)
+            asyncio.run(first_frames())
+            app.term.out.clear()
             app.draw()
             first = app.term.text()
             self.assertEqual(first.count("\x1b_Ga=t,"), 1)
