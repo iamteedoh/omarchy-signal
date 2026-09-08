@@ -133,19 +133,23 @@ Item {
       var cur = threadModel.get(j)
       if (!wanted[cur.ts + ":" + (cur.outgoing ? 1 : 0)]) threadModel.remove(j)
     }
+    var inserted = 0, updated = 0, kept = 0
+    var before = threadModel.count
     for (var k = 0; k < rows.length; k++) {
       var row = rows[k]
       if (k < threadModel.count) {
         var have = threadModel.get(k)
-        if (have.ts === row.ts && have.outgoing === row.outgoing) {
+        if (Number(have.ts) === Number(row.ts) && !!have.outgoing === !!row.outgoing) {
           if (have.body !== row.body || have.status !== row.status || have.reactions !== row.reactions || have.edited !== row.edited
-              || have.image !== row.image || have.filesText !== row.filesText || have.quote !== row.quote) threadModel.set(k, row)
+              || have.image !== row.image || have.filesText !== row.filesText || have.quote !== row.quote) { threadModel.set(k, row); updated++ } else kept++
           continue
         }
       }
       threadModel.insert(k, row)
+      inserted++
     }
-    while (threadModel.count > rows.length) threadModel.remove(threadModel.count - 1)
+    var trimmed = 0
+    while (threadModel.count > rows.length) { threadModel.remove(threadModel.count - 1); trimmed++ }
     view.thread = rows
   }
   property var quote: null               // {ts, author, text, who}
@@ -170,7 +174,8 @@ Item {
     view.error = ""
     view.selectedTs = 0
     view.emojiRowOpen = false
-    historyProc.running = false
+    historyProc.running = false          // switching conversations: the old read is stale
+    view.reloadPending = false
     historyProc.command = [view.cliPath, "history", "--json", "-n", "60", "--", key]
     historyProc.running = true
     markReadProc.command = [view.cliPath, "mark-read", "--", key]
@@ -188,19 +193,31 @@ Item {
   }
   Timer { id: userScrollTimer; interval: 250; onTriggered: view.userScrolling = false }
 
-  function pinToBottom() {
+  // Scroll to the end by setting contentY. Asking the ListView to position
+  // itself at the end makes it re-lay out from the end and drop its visible
+  // delegates for a few frames, which showed as a blank flash on every send.
+  function scrollToEnd() {
     view.pinning = true
-    list.positionViewAtEnd()
+    list.contentY = view.clampY(list, list.originY + list.contentHeight - list.height)
     view.pinning = false
+  }
+
+  function pinToBottom() {
+    view.scrollToEnd()
     view.stickToBottom = true
     settle.restart()          // rows may still be measuring: pin once more when they are done
   }
-  Timer { id: settle; interval: 120; onTriggered: if (view.stickToBottom && !view.userScrolling) { view.pinning = true; list.positionViewAtEnd(); view.pinning = false } }
+  Timer { id: settle; interval: 120; onTriggered: if (view.stickToBottom && !view.userScrolling) view.scrollToEnd() }
 
+  property bool reloadPending: false
+
+  // Reloads coalesce: a second request while one is in flight waits for it
+  // instead of killing it (a killed reader hands back an empty result, which
+  // used to blank the thread for a few frames on every send).
   function reload() {
     if (!view.conversationKey) return
+    if (historyProc.running) { view.reloadPending = true; return }
     view.savedY = list.contentY
-    historyProc.running = false
     historyProc.command = [view.cliPath, "history", "--json", "-n", "60", "--", view.conversationKey]
     historyProc.running = true
   }
@@ -310,20 +327,23 @@ Item {
 
   Process {
     id: historyProc
+    property string forKey: ""
+    onStarted: forKey = view.conversationKey
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var rows = []
-        try { rows = JSON.parse(text) } catch (e) { rows = [] }
-        if (Array.isArray(rows)) {
-          view.applyThread(Model.threadRows(rows, 60))
-          // A model swap resets the list to the top; put it back where it was,
-          // or at the end when following the conversation.
-          var y = view.savedY
-          Qt.callLater(function() { if (view.stickToBottom) view.pinToBottom(); else list.contentY = Math.min(y, Math.max(0, list.contentHeight - list.height)) })
-        }
+        if (historyProc.forKey !== view.conversationKey) return   // answer for a conversation we left
+        var raw = String(text || "").trim()
+        if (!raw) return                                          // killed or failed read: keep what we show
+        var rows = null
+        try { rows = JSON.parse(raw) } catch (e) { rows = null }
+        if (!Array.isArray(rows)) return
+        view.applyThread(Model.threadRows(rows, 60))
+        var y = view.savedY
+        Qt.callLater(function() { if (view.stickToBottom) view.pinToBottom(); else list.contentY = Math.min(y, Math.max(0, list.contentHeight - list.height)) })
       }
     }
+    onExited: if (view.reloadPending) { view.reloadPending = false; view.reload() }
   }
   Process { id: markReadProc }
   Process { id: actionProc; onExited: function(code) { if (code !== 0) view.error = "action failed"; view.reload() } }
