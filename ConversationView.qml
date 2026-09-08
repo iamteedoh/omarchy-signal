@@ -30,6 +30,7 @@ Item {
   signal requestDetach()
   signal requestTerminal()
   signal requestRaise(string key)
+  signal requestCloseTab(string key)
 
   property var siblings: []              // other detached windows: [{key, name}]
 
@@ -218,10 +219,10 @@ Item {
     }
     Rectangle { Layout.fillWidth: true; height: 1; color: Util.alpha(Color.popups.border, 0.6) }
 
-    // Tab strip: every detached conversation, so a stack of windows in the
-    // scratchpad is still one click (or Ctrl+Tab) away from any of them.
+    // Tab strip: every conversation open in this window. Click switches the
+    // content in place; ✕ closes a tab; Ctrl+Tab cycles.
     Flow {
-      visible: view.detached && Array.isArray(view.siblings) && view.siblings.length > 1
+      visible: view.detached && Array.isArray(view.siblings) && view.siblings.length > 0
       Layout.fillWidth: true
       spacing: Style.space(6)
       Repeater {
@@ -229,25 +230,38 @@ Item {
         delegate: Rectangle {
           required property var modelData
           readonly property bool current: modelData.key === view.conversationKey
-          width: tabText.implicitWidth + Style.space(20)
-          height: tabText.implicitHeight + Style.space(10)
+          width: tabRow.implicitWidth + Style.space(20)
+          height: tabRow.implicitHeight + Style.space(10)
           radius: height / 2
           color: current ? Util.alpha(Color.accent, 0.25) : Util.alpha(Color.popups.text, 0.06)
           border.width: 1
-          border.color: current ? Color.accent : Util.alpha(Color.popups.border, 0.5)
-          Text {
-            id: tabText
+          border.color: current ? Color.accent : (modelData.unread ? Util.alpha(Color.accent, 0.8) : Util.alpha(Color.popups.border, 0.5))
+          Row {
+            id: tabRow
             anchors.centerIn: parent
-            text: (current ? "● " : "○ ") + Model.singleLine(modelData.name || modelData.key, 28)
-            textFormat: Text.PlainText
-            color: current ? Color.popups.text : Util.alpha(Color.popups.text, 0.8)
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
+            spacing: Style.space(6)
+            Text {
+              text: (modelData.unread ? "● " : "") + Model.singleLine(modelData.name || modelData.key, 28)
+              textFormat: Text.PlainText
+              color: current ? Color.popups.text : (modelData.unread ? Color.accent : Util.alpha(Color.popups.text, 0.8))
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              font.bold: modelData.unread === true
+              MouseArea { anchors.fill: parent; onClicked: if (!current) view.requestRaise(modelData.key) }
+            }
+            Text {
+              text: "✕"
+              textFormat: Text.PlainText
+              color: Util.alpha(Color.popups.text, 0.5)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              MouseArea { anchors.fill: parent; anchors.margins: -Style.space(4); onClicked: view.requestCloseTab(modelData.key) }
+            }
           }
-          MouseArea { anchors.fill: parent; onClicked: if (!current) view.requestRaise(modelData.key) }
         }
       }
       Text {
+        visible: Array.isArray(view.siblings) && view.siblings.length > 1
         text: "  Ctrl+Tab cycles"
         textFormat: Text.PlainText
         color: Util.alpha(Color.popups.text, 0.4)

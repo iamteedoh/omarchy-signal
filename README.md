@@ -39,10 +39,11 @@ count. It follows whichever Omarchy theme is active.
   top right. Click it and a conversation window opens front and centre: the
   thread with images, reply-to-message (click a bubble, or middle-click it),
   reactions, attachments via Omarchy's file menu, emoji shortcodes.
-  "Detach" turns it into a real window (`omarchy-signal window <chat>` does
-  too) that Hyprland floats, tiles or parks in the scratchpad
-  (`SUPER+ALT+S` / `SUPER+S`) like any app, so a chat can stay open without
-  the whole client. Middle-click on the toast opens the terminal; right-click
+  "Detach" moves it into the chat window (`omarchy-signal window <chat>` does
+  too): one real window with a tab per conversation, so Hyprland can float,
+  tile or park it in the scratchpad (`SUPER+ALT+S` / `SUPER+S`) like any app
+  and a few chats stay open without the whole client. Tabs show an unread
+  dot; Ctrl+Tab cycles them. Middle-click on the toast opens the terminal; right-click
   dismisses.
 - **Bar widget**: Signal glyph with a pulsing unread dot and count. Click for a
   keyboard-driven list of conversations and contacts: type to filter, Enter

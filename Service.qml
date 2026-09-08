@@ -33,25 +33,38 @@ Item {
   property string account: ""
   property bool emojiAutoconvert: true
   property bool attachmentThumbnails: true
-  property var windows: []               // conversation keys open as detached windows
-  property var windowTabs: []            // [{key, name}] for the tab strip in every detached window
-  property int windowSeq: 0              // cascade index for newly opened windows
+  property var windows: []               // conversation keys open as tabs of the chat window
+  property string activeTab: ""          // which tab the chat window shows
+  property var tabNames: ({})            // key -> resolved name
+  property var tabUnread: ({})           // key -> true when a message arrived while another tab was active
+  property var windowTabs: []            // [{key, name, unread}] for the tab strip and the bar panel
+  property bool chatFloated: false
+
+  onWindowsChanged: { root.refreshTabs(); if (root.windows.length) namesProc.running = true }
 
   function refreshTabs() {
     var tabs = []
-    for (var i = 0; i < windowRepeater.count; i++) {
-      var w = windowRepeater.objectAt(i)
-      if (w && w.view) tabs.push({ key: w.modelData, name: w.view.conversationName })
+    for (var i = 0; i < root.windows.length; i++) {
+      var k = root.windows[i]
+      tabs.push({ key: k, name: root.tabNames[k] || k.split(":").slice(1).join(":"), unread: root.tabUnread[k] === true })
     }
     root.windowTabs = tabs
   }
 
+  function showTab(key) {
+    if (root.windows.indexOf(key) < 0) return false
+    root.activeTab = key
+    var u = root.tabUnread; delete u[key]; root.tabUnread = u
+    chatView.load(key, root.tabNames[key] || "")
+    root.refreshTabs()
+    return true
+  }
+
   function raiseWindow(key) {
-    for (var i = 0; i < windowRepeater.count; i++) {
-      var w = windowRepeater.objectAt(i)
-      if (w && w.modelData === key) { Util.execArgv([root.cliPath, "raise-window", "--", w.title]); return true }
-    }
-    return false
+    if (!root.showTab(key)) return false
+    if (!chatWindow.visible) chatWindow.visible = true
+    Util.execArgv([root.cliPath, "raise-window", "--", chatWindow.title])
+    return true
   }
   property bool dnd: false
   property string lastError: ""
@@ -144,17 +157,19 @@ Item {
       if (typeof d.conversation === "string") root.dismissKey(d.conversation)
       return
     }
-    // Conversation views (popup and detached windows) follow their own thread.
+    // Conversation views (popup and the chat window) follow their own thread.
     if (root.replyOpen) replyView.onEvent(ev.event, d)
-    for (var i = 0; i < windowRepeater.count; i++) {
-      var w = windowRepeater.objectAt(i)
-      if (w && w.view) w.view.onEvent(ev.event, d)
+    if (chatWindow.visible) chatView.onEvent(ev.event, d)
+    if (ev.event === "message" && d && typeof d.conversation === "string" && d.outgoing !== true
+        && root.windows.indexOf(d.conversation) >= 0 && d.conversation !== root.activeTab) {
+      var u = root.tabUnread; u[d.conversation] = true; root.tabUnread = u
+      root.refreshTabs()
     }
     if (ev.event === "message") {
       var toast = Model.toastFromMessage(d, root.previewEnabled)
       if (!toast) return
       if (root.replyOpen && root.replyKey === toast.key) return
-      if (root.windows.indexOf(toast.key) >= 0) return   // a detached window is showing it
+      if (chatWindow.visible && toast.key === root.activeTab) return   // the chat window is showing it
       if (root.respectDnd && root.dnd) return
       if (root.notificationMode === "system") {
         Util.execArgv(["omarchy-notification-send", "--app-name", "Signal", "-g", "󰭹", toast.title, toast.body,
@@ -224,14 +239,38 @@ Item {
 
   function openWindow(key, name) {
     if (!Model.isConversationKey(key)) return false
-    if (root.windows.indexOf(key) < 0) { root.windowSeq += 1; root.windows = root.windows.concat([key]) }
-    else root.raiseWindow(key)
+    if (name) { var n = root.tabNames; n[key] = Model.singleLine(name, 80); root.tabNames = n }
+    if (root.windows.indexOf(key) < 0) root.windows = root.windows.concat([key])
+    root.showTab(key)
+    if (!chatWindow.visible) {
+      chatWindow.visible = true
+      if (!root.chatFloated) {
+        root.chatFloated = true
+        Qt.callLater(function() {
+          floatProc.command = [root.cliPath, "float-window", "--", chatWindow.title]
+          floatProc.running = true
+        })
+      }
+    } else {
+      Util.execArgv([root.cliPath, "raise-window", "--", chatWindow.title])
+    }
     root.dismissKey(key)
     return true
   }
 
   function closeWindow(key) {
-    root.windows = root.windows.filter(function(k) { return k !== key })
+    var idx = root.windows.indexOf(key)
+    if (idx < 0) return
+    var next = root.windows.filter(function(k) { return k !== key })
+    root.windows = next
+    if (next.length === 0) {
+      root.activeTab = ""
+      chatWindow.visible = false
+      root.chatFloated = false
+    } else if (root.activeTab === key) {
+      root.showTab(next[Math.min(idx, next.length - 1)])
+    }
+    root.refreshTabs()
   }
 
   function openTerminal(key) {
@@ -253,6 +292,7 @@ Item {
     function closeWindow(key: string): string { root.closeWindow(key); return "ok" }
     function windows(): string { return JSON.stringify(root.windowTabs) }
     function raise(key: string): string { return root.raiseWindow(key) ? "ok" : "unknown" }
+    function closeChatWindow(): string { root.windows = []; root.activeTab = ""; chatWindow.visible = false; root.chatFloated = false; root.refreshTabs(); return "ok" }
     function dismiss(): string { root.dismissAll(); return "ok" }
     function close(): string { root.closeReply(); return "ok" }
     function demo(): string { Util.execArgv([root.cliPath, "demo"]); return "ok" }
@@ -459,95 +499,61 @@ Item {
     }
   }
 
-  // ---------------------------------------------------------------- detached conversation windows
+  // ---------------------------------------------------------------- the chat window (tabs)
   //
-  // Real toplevel windows (class org.quickshell, title "Signal · <name>"), so
-  // Hyprland can tile, float, move them to the scratchpad or another
-  // workspace like any app. Same view as the popup.
+  // One real toplevel window (class org.quickshell, title "Signal · <chat>")
+  // holding every detached conversation as a tab. Hyprland can float, tile or
+  // park it in the scratchpad like any app, and there is only ever one of it.
 
-  Instantiator {
-    id: windowRepeater
-    model: root.windows
-    onObjectRemoved: root.refreshTabs()
-    delegate: FloatingWindow {
-      id: win
-      required property string modelData
-      property alias view: winView
-      property int cascade: 0
-      title: "Signal · " + winView.conversationName
-      color: Util.alpha(Color.popups.background, 1.0)
-      implicitWidth: Style.space(640)
-      implicitHeight: Style.space(600)
-      minimumSize: Qt.size(Style.space(380), Style.space(320))
-      // Map only once the title is final: Hyprland applies float/size/center
-      // rules at map time, and the rule matches on "^Signal · ".
-      visible: false
-      onVisibleChanged: if (!visible && winView.conversationKey) root.closeWindow(modelData)
-      Component.onCompleted: {
-        win.cascade = Math.max(0, root.windows.indexOf(modelData))   // fixed at creation: its slot in the stack
-        winView.load(modelData, modelData.split(":").slice(1).join(":"))
-        Qt.callLater(function() {
-          win.visible = true
-          // Float, size and centre it once mapped; from then on it is an
-          // ordinary window Hyprland can tile, move or park in the scratchpad.
-          floatProc.command = [root.cliPath, "float-window", "--offset", String(win.cascade % 6), "--", win.title]
-          floatProc.running = true
+  FloatingWindow {
+    id: chatWindow
+    title: "Signal · " + (chatView.conversationName || "chats")
+    color: Util.alpha(Color.popups.background, 1.0)
+    implicitWidth: Style.space(640)
+    implicitHeight: Style.space(600)
+    minimumSize: Qt.size(Style.space(380), Style.space(320))
+    visible: false
+    onVisibleChanged: {
+      // Closed by the window manager: drop every tab.
+      if (!visible && root.windows.length > 0) { root.windows = []; root.activeTab = ""; root.chatFloated = false; root.refreshTabs() }
+    }
+    Process { id: floatProc }
+
+    ConversationView {
+      id: chatView
+      anchors.fill: parent
+      anchors.margins: Style.space(16)
+      cliPath: root.cliPath
+      connected: root.connected
+      linked: root.linked
+      account: root.account
+      emojiAutoconvert: root.emojiAutoconvert
+      thumbnails: root.attachmentThumbnails
+      detached: true
+      siblings: root.windowTabs
+      onConversationNameChanged: {
+        if (root.activeTab && conversationName) { var n = root.tabNames; n[root.activeTab] = conversationName; root.tabNames = n; root.refreshTabs() }
+      }
+      onRequestClose: root.closeWindow(root.activeTab)
+      onRequestTerminal: root.openTerminal(root.activeTab)
+      onRequestRaise: function(key) { root.showTab(key) }
+      onRequestCloseTab: function(key) { root.closeWindow(key) }
+    }
+
+    // Titles come from the conversation list, else the directory (Note to Self).
+    Process {
+      id: namesProc
+      command: [root.cliPath, "conversations", "--json", "--all"]
+      stdout: StdioCollector {
+        waitForEnd: true
+        onStreamFinished: {
+          var rows = []
+          try { rows = JSON.parse(text) } catch (e) { rows = [] }
+          var n = root.tabNames
+          for (var i = 0; i < rows.length; i++) if (rows[i].key && rows[i].name && !n[rows[i].key]) n[rows[i].key] = Model.singleLine(rows[i].name, 80)
+          root.tabNames = n
           root.refreshTabs()
-        })
-        nameProc.command = [root.cliPath, "conversations", "--json", "--all"]
-        nameProc.running = true
-        contactsProc.command = [root.cliPath, "contacts", "--json"]
-        contactsProc.running = true
-      }
-      Process { id: floatProc }
-      // The title comes from the conversation list, else the contact/group
-      // directory (which is where "Note to Self" and never-messaged contacts live).
-      Process {
-        id: nameProc
-        stdout: StdioCollector {
-          waitForEnd: true
-          onStreamFinished: {
-            var rows = []
-            try { rows = JSON.parse(text) } catch (e) { rows = [] }
-            for (var i = 0; i < rows.length; i++) if (rows[i].key === win.modelData && rows[i].name) { winView.conversationName = Model.singleLine(rows[i].name, 80); return }
-          }
         }
-      }
-      Process {
-        id: contactsProc
-        stdout: StdioCollector {
-          waitForEnd: true
-          onStreamFinished: {
-            var obj = null
-            try { obj = JSON.parse(text) } catch (e) { obj = null }
-            if (!obj) return
-            var lists = [].concat(Array.isArray(obj.contacts) ? obj.contacts : [], Array.isArray(obj.groups) ? obj.groups : [])
-            for (var i = 0; i < lists.length; i++) {
-              if (lists[i].key === win.modelData) {
-                var n = lists[i].displayName || lists[i].name
-                if (n && winView.conversationName === win.modelData.split(":").slice(1).join(":")) winView.conversationName = Model.singleLine(n, 80)
-                return
-              }
-            }
-          }
-        }
-      }
-      ConversationView {
-        id: winView
-        anchors.fill: parent
-        anchors.margins: Style.space(16)
-        cliPath: root.cliPath
-        connected: root.connected
-        linked: root.linked
-        account: root.account
-        emojiAutoconvert: root.emojiAutoconvert
-        thumbnails: root.attachmentThumbnails
-        detached: true
-        siblings: root.windowTabs
-        onConversationNameChanged: root.refreshTabs()
-        onRequestClose: root.closeWindow(win.modelData)
-        onRequestTerminal: root.openTerminal(win.modelData)
-        onRequestRaise: function(key) { root.raiseWindow(key) }
       }
     }
   }
