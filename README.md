@@ -73,7 +73,7 @@ conversion). The installer offers to install the last three.
 ```bash
 git clone <this repo> ~/git/omarchy-signal
 cd ~/git/omarchy-signal
-./install.sh          # or ./install.sh --link for a hot-reloading dev checkout
+./install.sh          # (--link symlinks the checkout instead; see docs/STATUS.md before using it)
 omarchy-signal link   # scan the QR code with Signal on your phone
 omarchy-signal tui
 ```

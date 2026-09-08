@@ -2,7 +2,8 @@
 # Install omarchy-signal on this machine.
 #
 #   ./install.sh            # copy the plugin into ~/.config/omarchy/plugins, link the CLI, enable the service
-#   ./install.sh --link     # developer mode: symlink the plugin dir to this checkout (hot reload on edit)
+#   ./install.sh --link     # developer mode: symlink the plugin dir to this checkout (every save reloads ALL
+#                           # user plugins in the shell; see docs/STATUS.md before using it)
 #   ./install.sh --no-bind  # skip the SUPER+SHIFT+G keybinding
 #   ./install.sh --no-menu  # skip the Omarchy menu entry
 #
