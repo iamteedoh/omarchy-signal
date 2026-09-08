@@ -200,6 +200,8 @@ def cmd_mark_read(args) -> int:
 
 
 def cmd_link(args) -> int:
+    from . import kitty, qr
+
     async def go(client, hello):
         if hello.get("linked") and not args.force:
             print("an account is already linked; pass --force to link another")
@@ -207,19 +209,70 @@ def cmd_link(args) -> int:
         res = await client.request("link", deviceName=args.name or Config.load(_paths()).device_name)
         uri = res["uri"]
         print("Open Signal on your phone → Settings → Linked devices → Link new device, then scan:\n")
-        qr = shutil.which("qrencode")
-        if qr and not args.uri_only:
-            subprocess.run([qr, "-t", "UTF8", "-m", "1", uri], check=False)
-        else:
-            print(uri)
-        print("\nWaiting for the phone (up to 10 minutes)…")
-        fin = await client.request("linkFinish", timeout=620)
-        if fin.get("linked"):
-            print(f"Linked as {clean_text(fin.get('number', ''), single_line=True)}. The bridge is restarting signal-cli;")
-            print("contacts sync in the background. Run `omarchy-signal tui` when ready.")
-            return 0
-        print("linking did not complete")
-        return 1
+        graphics = (not args.text) and sys.stdout.isatty() and kitty.terminal_supports_graphics()
+        shown = False
+        if graphics:
+            try:
+                import fcntl, struct, termios
+                packed = fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\x00" * 8)
+                rows_, cols_, xpix, ypix = struct.unpack("HHHH", packed)
+                cell_w = max(1, xpix // max(1, cols_)) if xpix else 10
+                cell_h = max(1, ypix // max(1, rows_)) if ypix else 20
+                seq, cols, rows = qr.qr_image_sequence(uri, kitty.image_id_for(uri), cell_w=cell_w, cell_h=cell_h)
+                sys.stdout.write("  " + seq + "\n" * (rows + 1))
+                sys.stdout.flush()
+                shown = True
+            except (qr.QrUnavailable, OSError):
+                shown = False
+        if not shown:
+            try:
+                for line in qr.qr_text_lines(uri):
+                    print("  " + line)
+            except qr.QrUnavailable as exc:
+                print(f"({exc}; paste this into another QR tool)\n{uri}")
+        print()
+        print("After the scan the phone shows nothing until the link completes; that usually takes")
+        print("10–60 seconds while keys are exchanged and contacts sync. Pull down to refresh")
+        print("Linked devices afterwards if the new device is not listed yet.\n")
+
+        started = asyncio.get_running_loop().time()
+        task = asyncio.ensure_future(client.request("linkFinish", timeout=620))
+        frames = "◐◓◑◒"
+        i = 0
+        while not task.done():
+            elapsed = int(asyncio.get_running_loop().time() - started)
+            sys.stdout.write(f"\r  {frames[i % 4]} waiting for the phone… {elapsed:>3}s  (Ctrl-C cancels)")
+            sys.stdout.flush()
+            i += 1
+            await asyncio.wait({task}, timeout=0.25)
+        sys.stdout.write("\r" + " " * 60 + "\r")
+        fin = task.result()
+        if not fin.get("linked"):
+            print("linking did not complete")
+            return 1
+        number = clean_text(fin.get("number", ""), single_line=True)
+        print(f"  ✓ linked as {number or 'your account'}")
+        # The bridge restarts signal-cli for the new account and pulls the
+        # directory; show that instead of returning to a silent prompt.
+        sys.stdout.write("  ◌ syncing contacts and groups…")
+        sys.stdout.flush()
+        contacts = groups = 0
+        for tick in range(120):
+            await asyncio.sleep(1)
+            try:
+                status = await client.request("status")
+                if status.get("linked") and status.get("connected"):
+                    contacts = len(await client.request("contacts"))
+                    groups = len(await client.request("groups"))
+                    if contacts or groups or tick > 30:
+                        break
+            except BridgeError:
+                pass
+            sys.stdout.write(".")
+            sys.stdout.flush()
+        print(f"\r  ✓ {contacts} contacts, {groups} groups synced" + " " * 20)
+        print("\nAll set. Open the client with `omarchy-signal tui` or SUPER+SHIFT+G.")
+        return 0
     return _run(go)
 
 
@@ -338,7 +391,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("link", help="link this computer to your Signal account (QR code)")
     s.add_argument("-n", "--name", help="device name shown in Signal")
     s.add_argument("--force", action="store_true")
-    s.add_argument("--uri-only", action="store_true", help="print the URI instead of a QR code")
+    s.add_argument("--text", action="store_true", help="draw the QR code with block characters even if the terminal can show images")
     s.set_defaults(fn=cmd_link)
 
     s = sub.add_parser("demo", help="show a sample notification popup (nothing is sent)")

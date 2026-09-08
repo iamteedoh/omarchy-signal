@@ -37,7 +37,7 @@ from . import __version__, protocol
 from .config import Config, Paths
 from .envelope import Attachment, Event, parse_receive
 from .rpc import JsonRpcClient, RpcClosed, RpcError
-from .sanitize import (InvalidAttachment, InvalidRecipient, Recipient, classify_recipient,
+from .sanitize import (E164, InvalidAttachment, InvalidRecipient, Recipient, classify_recipient,
                        clean_name, clean_text, parse_conversation_key, safe_attachment_path)
 from .store import Store
 
@@ -734,10 +734,15 @@ class Bridge:
             self._link_uri = ""
         number = result.get("number") if isinstance(result, dict) else None
         log.info("device linked")
-        if isinstance(number, str):
-            self.cfg.account = number if not self.cfg.account else self.cfg.account
+        if isinstance(number, str) and E164.match(number):
+            if not self.cfg.account:
+                self.cfg.account = number
+            self.account = number
+            if number not in self.accounts:
+                self.accounts.append(number)
         # A fresh account only starts receiving after a restart of the RPC process.
         await self.supervisor.restart()
+        await self._broadcast("status", self.status())
         return {"linked": True, "number": number if isinstance(number, str) else ""}
 
     async def op_linkFinish(self, p: dict) -> dict:

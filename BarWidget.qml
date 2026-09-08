@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import QtQuick.Controls
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
@@ -8,9 +9,11 @@ import "Model.js" as Model
 // Bar widget: Signal glyph with an unread badge. Click opens a keyboard-driven
 // list of conversations and contacts; Enter opens the chosen one in the
 // terminal client, right-click opens the client directly.
-BarWidget {
+Panel {
   id: root
   moduleName: "iamteedoh.signal"
+  ipcTarget: "iamteedoh.signal.bar"
+  readonly property bool vertical: bar ? bar.vertical : false
 
   property int unread: 0
   property bool connected: false
@@ -27,21 +30,22 @@ BarWidget {
     var list = root.showContacts
       ? root.contacts.map(function(c) { return { key: c.key, name: Model.singleLine(c.displayName || c.key, 60), sub: Model.singleLine(c.number || c.username || "", 40), unread: 0, ts: 0 } })
       : Model.sortConversations(root.conversations).map(function(c) { return { key: c.key, name: Model.singleLine(c.name || c.key, 60), sub: Model.singleLine(c.preview || "", 80), unread: c.unread || 0, ts: c.lastTs || 0, typing: c.typing === true } })
-    return Model.filterRows(list, root.query).slice(0, 40)
+    return Model.filterRows(list, root.query).slice(0, 500)
   }
-
-  readonly property bool opened: panel.open
-  function open() { panel.open = true }
-  function close() { panel.open = false }
-  function toggle() { panel.open = !panel.open }
 
   onOpenedChanged: {
     if (opened) {
+      searchField.text = ""
       root.query = ""
       root.cursor = 0
       root.showContacts = false
       refresh()
     }
+  }
+
+  function toggleMode() {
+    root.showContacts = !root.showContacts
+    root.cursor = 0
   }
 
   function refresh() {
@@ -125,13 +129,6 @@ BarWidget {
     }
   }
 
-  IpcHandler {
-    target: "iamteedoh.signal.bar"
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function toggle(): void { root.toggle() }
-  }
-
   BarIconButton {
     id: button
     anchors.fill: parent
@@ -168,25 +165,22 @@ BarWidget {
     anchorItem: button
     owner: root
     bar: root.bar
-    open: false
-    focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(420))
+    open: root.opened
+    focusTarget: searchField
+    contentWidth: panel.fittedContentWidth(Style.space(440))
     contentHeight: panel.fittedContentHeight(column.implicitHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      onMoveRequested: function(dx, dy) { if (dy !== 0) root.moveCursor(dy); else if (dx !== 0) root.showContacts = !root.showContacts }
+      // The search field owns the keyboard while it has focus (the catcher
+      // would otherwise eat j/k/h/l/x/space as navigation); it forwards the
+      // navigation keys itself below.
+      blocked: searchField.activeFocus
+      onMoveRequested: function(dx, dy) { if (dy !== 0) root.moveCursor(dy); else if (dx !== 0) root.toggleMode() }
       onActivateRequested: root.activate()
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
-      Keys.onPressed: function(event) {
-        if (event.key === Qt.Key_Backspace) { root.query = root.query.slice(0, -1); root.cursor = 0; event.accepted = true; return }
-        if (event.key === Qt.Key_Tab) { root.showContacts = !root.showContacts; root.cursor = 0; event.accepted = true; return }
-        if (event.text && event.text.length === 1 && event.text >= " " && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier))) {
-          root.query += event.text; root.cursor = 0; event.accepted = true
-        }
-      }
 
       Column {
         id: column
@@ -202,7 +196,7 @@ BarWidget {
           Text {
             id: headerTitle
             anchors.left: parent.left
-            text: (root.showContacts ? "CONTACTS" : "CONVERSATIONS") + (root.query ? "  ▸ " + root.query : "")
+            text: root.showContacts ? "CONTACTS" : "CONVERSATIONS"
             textFormat: Text.PlainText
             color: root.bar.foreground
             font.family: root.bar.fontFamily
@@ -222,7 +216,28 @@ BarWidget {
             font.pixelSize: Style.font.caption
           }
         }
-        PanelSeparator { width: parent.width }
+
+        TextField {
+          id: searchField
+          width: parent.width
+          foreground: root.bar.foreground
+          placeholderText: root.showContacts ? "Search contacts and groups…" : "Search conversations…"
+          verticalPadding: Style.space(4)
+          onTextChanged: { root.query = text; root.cursor = 0 }
+          Keys.onPressed: function(event) {
+            var ctrl = event.modifiers & Qt.ControlModifier
+            if (event.key === Qt.Key_Down || (ctrl && event.key === Qt.Key_N)) { root.moveCursor(1); event.accepted = true }
+            else if (event.key === Qt.Key_Up || (ctrl && event.key === Qt.Key_P)) { root.moveCursor(-1); event.accepted = true }
+            else if (event.key === Qt.Key_PageDown) { root.moveCursor(8); event.accepted = true }
+            else if (event.key === Qt.Key_PageUp) { root.moveCursor(-8); event.accepted = true }
+            else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.activate(); event.accepted = true }
+            else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) { root.toggleMode(); event.accepted = true }
+            else if (event.key === Qt.Key_Escape) {
+              if (searchField.text.length > 0) searchField.text = ""; else root.close()
+              event.accepted = true
+            }
+          }
+        }
 
         Text {
           visible: root.rows.length === 0
@@ -235,13 +250,26 @@ BarWidget {
           font.pixelSize: Style.font.body
         }
 
-        Repeater {
+        // Scrollable list: capped height so a long address book never pushes
+        // the popup off screen; the cursor row is kept in view.
+        ListView {
+          id: list
+          width: parent.width
+          height: Math.min(contentHeight, Style.space(420))
+          spacing: Style.space(2)
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+          interactive: contentHeight > height
+          ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
           model: root.rows
+          currentIndex: root.cursor
+          onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
+
           delegate: Rectangle {
             id: rowItem
             required property var modelData
             required property int index
-            width: column.width
+            width: ListView.view.width
             implicitHeight: rowLayout.implicitHeight + Style.space(10)
             radius: Style.cornerRadius / 2
             readonly property bool current: index === root.cursor
@@ -309,14 +337,31 @@ BarWidget {
         }
 
         PanelSeparator { width: parent.width }
-        Text {
+
+        // Footer: hints on the left, position in the list on the right.
+        Item {
           width: parent.width
-          text: "type to filter · ↑↓ move · Enter open · Tab " + (root.showContacts ? "conversations" : "contacts") + " · right-click icon opens client"
-          textFormat: Text.PlainText
-          wrapMode: Text.Wrap
-          color: Util.alpha(root.bar.foreground, 0.5)
-          font.family: root.bar.fontFamily
-          font.pixelSize: Style.font.caption
+          implicitHeight: Math.max(footerHints.implicitHeight, footerPos.implicitHeight)
+          Text {
+            id: footerHints
+            anchors.left: parent.left
+            width: parent.width - footerPos.implicitWidth - Style.space(8)
+            text: "↑↓ move · Enter open · Tab " + (root.showContacts ? "conversations" : "contacts") + " · Esc " + (root.query ? "clear" : "close")
+            textFormat: Text.PlainText
+            elide: Text.ElideRight
+            color: Util.alpha(root.bar.foreground, 0.5)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+          Text {
+            id: footerPos
+            anchors.right: parent.right
+            text: root.rows.length > 0 ? (root.cursor + 1) + " / " + root.rows.length : ""
+            textFormat: Text.PlainText
+            color: Util.alpha(root.bar.foreground, 0.7)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
         }
       }
     }

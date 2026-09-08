@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, kitty, links
+from . import __version__, kitty, links, qr
 from .client import BridgeClient, BridgeError, BridgeUnavailable
 from .config import Config, Paths
 from .sanitize import InvalidAttachment, clean_name, clean_text, safe_attachment_path
@@ -111,6 +111,8 @@ class App:
         self.overlay_results: list[dict] = []
         self.overlay_message = ""
         self.link_uri = ""
+        self.link_started = 0.0
+        self.link_png_id = 0
         self.scroll = 0                  # lines scrolled up from the bottom
         self.composer = Composer()
         self.toast = ""
@@ -217,6 +219,8 @@ class App:
                     del self.typing[k]
                 if expired:
                     self.dirty = True
+            if self.overlay == "link" and self.link_uri and self.frame % 1 == 0:
+                self.dirty = True
             if self.dirty:
                 self.draw()
                 self.dirty = False
@@ -466,11 +470,26 @@ class App:
         try:
             res = await self.client.request("link", deviceName=self.cfg.device_name)
             self.link_uri = res.get("uri", "")
-            self.overlay_message = "Scan with Signal on your phone: Settings → Linked devices → Link new device"
+            self.link_started = time.monotonic()
+            self.link_png_id = 0
+            self.overlay_message = "Signal on your phone → Settings → Linked devices → Link new device → scan"
             self.dirty = True
             fin = await self.client.request("linkFinish", timeout=620)
             if fin.get("linked"):
                 self.status["linked"] = True
+                self.link_uri = ""
+                self.overlay_message = "Linked. Syncing contacts…"
+                self.dirty = True
+                for _ in range(60):
+                    await asyncio.sleep(1)
+                    with contextlib.suppress(BridgeError):
+                        self.contacts = await self.client.request("contacts")
+                        self.groups = await self.client.request("groups")
+                    if self.contacts or self.groups:
+                        break
+                self.overlay_message = f"Linked. {len(self.contacts)} contacts, {len(self.groups)} groups."
+                self.close_overlay()
+                self.show_toast(f"Linked. {len(self.contacts)} contacts synced. Ctrl-U to start a conversation.", 6)
         except BridgeError as exc:
             self.overlay_message = f"Linking failed: {exc}"
         self.dirty = True
@@ -1325,35 +1344,56 @@ class App:
         return "".join(out)
 
     def _draw_link(self, top: int, left: int, w: int, h: int) -> list[str]:
+        assert self.term
         th = self.theme
         bg = T.bg(th.panel)
-        out = [T.move(top + 1, left + 2) + bg + T.fg(th.foreground) + truncate(clean_text(self.overlay_message or "Requesting a link from signal-cli…", single_line=True), w - 4) + T.RESET]
+        out = [T.move(top + 1, left + 2) + bg + T.fg(th.foreground)
+               + truncate(clean_text(self.overlay_message or "Requesting a link from signal-cli…", single_line=True), w - 4) + T.RESET]
         if not self.link_uri:
             out.append(T.move(top + 3, left + 2) + bg + T.fg(th.dim) + "q to cancel" + T.RESET)
             return out
-        qr = shutil.which("qrencode")
-        if qr:
-            try:
-                res = subprocess.run([qr, "-t", "UTF8", "-m", "1", "-l", "M", self.link_uri], capture_output=True, timeout=5, check=False)
-                qr_lines = res.stdout.decode("utf-8", "replace").splitlines() if res.returncode == 0 else []
-            except (OSError, subprocess.SubprocessError):
-                qr_lines = []
-        else:
-            qr_lines = []
         y = top + 3
-        if qr_lines:
-            qw = max(str_width(l) for l in qr_lines)
-            x = left + max(2, (w - qw) // 2)
-            for line in qr_lines[:h - 6]:
-                out.append(T.move(y, x) + T.bg((255, 255, 255)) + T.fg((0, 0, 0)) + line + T.RESET)
+        drawn = False
+        if self.graphics:
+            try:
+                if not self.link_png_id:
+                    png = qr.qr_png(self.link_uri)
+                    self.link_png_id = kitty.image_id_for("link:" + self.link_uri)
+                    out.append(kitty.encode_transmit_only(png, self.link_png_id))
+                cols, rows = qr.qr_cells(self.term.cell_w, self.term.cell_h, rows=min(qr.QR_ROWS, h - 8))
+                x = left + max(2, (w - cols) // 2)
+                out.append(T.move(y, x) + kitty.encode_place(self.link_png_id, cols=cols, rows=rows))
+                y += rows
+                drawn = True
+            except qr.QrUnavailable:
+                drawn = False
+        if not drawn:
+            try:
+                qr_lines = qr.qr_text_lines(self.link_uri)
+            except qr.QrUnavailable:
+                qr_lines = []
+            if qr_lines:
+                qw = max(str_width(l) for l in qr_lines)
+                x = left + max(2, (w - qw) // 2)
+                for line in qr_lines[:h - 8]:
+                    out.append(T.move(y, x) + T.bg((255, 255, 255)) + T.fg((0, 0, 0)) + line + T.RESET)
+                    y += 1
+            else:
+                out.append(T.move(y, left + 2) + bg + T.fg(th.red) + "qrencode is not installed; copy the URI instead:" + T.RESET)
                 y += 1
-        else:
-            out.append(T.move(y, left + 2) + bg + T.fg(th.red) + "qrencode is not installed; copy the URI instead:" + T.RESET)
-            y += 1
-            for line in wrap(self.link_uri, w - 4)[:6]:
-                out.append(T.move(y, left + 2) + bg + T.fg(th.foreground) + line + T.RESET)
+                for line in wrap(self.link_uri, w - 4)[:6]:
+                    out.append(T.move(y, left + 2) + bg + T.fg(th.foreground) + line + T.RESET)
+                    y += 1
+        y += 1
+        note = ["After the scan the phone shows nothing until the link completes (10–60 s):",
+                "keys are exchanged and contacts sync. Pull to refresh Linked devices later."]
+        for line in note:
+            if y < top + h - 2:
+                out.append(T.move(y, left + 2) + bg + T.fg(th.dim) + truncate(line, w - 4) + T.RESET)
                 y += 1
-        out.append(T.move(top + h - 2, left + 2) + bg + T.fg(th.dim) + truncate("Waiting for your phone… q to cancel", w - 4) + T.RESET)
+        elapsed = int(time.monotonic() - self.link_started) if self.link_started else 0
+        spinner = "◐◓◑◒"[(self.frame // 4) % 4]
+        out.append(T.move(top + h - 2, left + 2) + bg + T.fg(th.accent) + f"{spinner} waiting for your phone… {elapsed}s" + T.fg(th.dim) + "   q to cancel" + T.RESET)
         return out
 
 
