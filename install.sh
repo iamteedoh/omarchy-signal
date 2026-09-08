@@ -73,7 +73,7 @@ if (( LINK_MODE )); then
 else
   mkdir -p "$PLUGIN_DIR"
   # Only what the shell and the CLI need; no tests, no .git.
-  cp -a "$HERE"/manifest.json "$HERE"/*.qml "$HERE"/*.js "$HERE/bin" "$HERE/lib" "$HERE/README.md" "$HERE/LICENSE" "$PLUGIN_DIR/"
+  cp -a "$HERE"/manifest.json "$HERE"/*.qml "$HERE"/*.js "$HERE/bin" "$HERE/lib" "$HERE/scripts" "$HERE/README.md" "$HERE/LICENSE" "$PLUGIN_DIR/"
   find "$PLUGIN_DIR" -name __pycache__ -type d -prune -exec rm -rf {} +
   say "Installed plugin to $PLUGIN_DIR"
 fi
@@ -156,6 +156,14 @@ PY
     say "Added 'Signal (terminal)' to the Omarchy menu"
   fi
 fi
+
+# --- post-update hook -------------------------------------------------------------------
+# After `omarchy update`, check that the plugin still loads and the service is
+# enabled, and notify if not.
+HOOK_DIR="$HOME/.config/omarchy/hooks/post-update.d"
+mkdir -p "$HOOK_DIR"
+install -m 755 "$HERE/scripts/post-update-hook.sh" "$HOOK_DIR/omarchy-signal"
+say "Post-update check installed ($HOOK_DIR/omarchy-signal)"
 
 # --- shell ---------------------------------------------------------------------------
 if command -v omarchy-shell >/dev/null; then

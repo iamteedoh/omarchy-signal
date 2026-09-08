@@ -103,6 +103,16 @@ and enables the bar widget. `./uninstall.sh` reverses all of it
 `omarchy plugin add <git-url>` works too; then run `install.sh` from the
 plugin directory for the CLI, service and keybinding.
 
+## Surviving Omarchy updates
+
+Everything the installer places lives under your home directory, which
+`omarchy update` does not rewrite. The installer also drops a post-update hook
+(`~/.config/omarchy/hooks/post-update.d/omarchy-signal`) that re-checks the
+plugin still loads against the new shell and that the bridge service is
+enabled, and raises a critical notification if anything needs attention;
+`omarchy-signal doctor` gives the details. A manual `omarchy refresh shell`
+resets `shell.json` (dropping the bar widget); re-run `./install.sh` after it.
+
 ## Keys (terminal client)
 
 | Key | Action |

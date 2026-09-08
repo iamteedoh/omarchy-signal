@@ -12,6 +12,7 @@ systemctl --user daemon-reload || true
 command -v omarchy-plugin-disable >/dev/null && omarchy-plugin-disable "$PLUGIN_ID" 2>/dev/null || true
 rm -rf "$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 rm -f "$HOME/.local/bin/omarchy-signal"
+rm -f "$HOME/.config/omarchy/hooks/post-update.d/omarchy-signal"
 BINDINGS="$HOME/.config/hypr/bindings.lua"
 if [[ -f $BINDINGS ]]; then
   sed -i '/^-- BEGIN omarchy-signal$/,/^-- END omarchy-signal$/d' "$BINDINGS"
