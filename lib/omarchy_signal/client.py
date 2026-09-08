@@ -82,6 +82,10 @@ class BridgeClient:
         self._pending[req_id] = fut
         payload = {"id": req_id, "op": op}
         payload.update(params)
+        for k, v in params.items():
+            if isinstance(v, str) and len(v) > protocol.MAX_STRING_LENGTH:
+                self._pending.pop(req_id, None)
+                raise BridgeError(f"{k} is too long ({len(v):,} characters; limit {protocol.MAX_STRING_LENGTH:,})", code="bad_request")
         try:
             self.writer.write(protocol.encode(payload))
             await self.writer.drain()
@@ -134,3 +138,9 @@ class BridgeClient:
             self._pending.clear()
             self.closed.set()
             self._hello_received.set()
+            if self.on_event and self.hello:
+                # Tell the owner the stream ended so it can reconnect.
+                with contextlib.suppress(Exception):
+                    res = self.on_event("__closed__", None)
+                    if asyncio.iscoroutine(res):
+                        await res

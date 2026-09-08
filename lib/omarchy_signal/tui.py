@@ -290,13 +290,49 @@ class App:
             except BridgeUnavailable as exc:
                 self.connected = False
                 self.show_toast(str(exc).split(";")[0])
+                self._schedule_reconnect()
             except BridgeError as exc:
                 self.show_toast(f"{exc}")
+            except Exception as exc:  # a bug must never leave the terminal in raw mode with a traceback
+                self.show_toast(f"internal error: {type(exc).__name__}: {exc}", 6)
             self.dirty = True
+
+    def _schedule_reconnect(self) -> None:
+        if getattr(self, "_reconnecting", False):
+            return
+        self._reconnecting = True
+
+        async def again():
+            try:
+                for attempt in range(1, 200):
+                    await asyncio.sleep(min(10, 2 * attempt))
+                    if self.client:
+                        with contextlib.suppress(Exception):
+                            await self.client.close()
+                        self.client = None
+                    await self._connect()
+                    if self.client:
+                        self.show_toast("reconnected to the bridge", 3)
+                        self.messages.clear()
+                        with contextlib.suppress(BridgeError):
+                            self.conversations = await self.client.request("conversations")
+                            self.contacts = await self.client.request("contacts")
+                            self.groups = await self.client.request("groups")
+                        self._select_key(self.active_key)
+                        self.dirty = True
+                        return
+            finally:
+                self._reconnecting = False
+        asyncio.ensure_future(again())
 
     # ------------------------------------------------------------------ events
 
     async def _on_event(self, name: str, data) -> None:
+        if name == "__closed__":
+            self.connected = False
+            self._schedule_reconnect()
+            self.dirty = True
+            return
         if not isinstance(data, dict):
             data = {}
         if name == "message":
@@ -1166,7 +1202,10 @@ class App:
                         self.emoji_suggestions = []
                 await self._maybe_typing()
         elif key.name == "paste":
-            c.insert(key.char)
+            text = key.char.replace("\r\n", "\n").replace("\r", "\n")
+            if len(c.text) + len(text) <= 60000:
+                c.insert(text)
+                self._update_emoji_suggestions()
         if key.name in ("char", "backspace", "delete", "left", "right", "home", "end"):
             self._update_emoji_suggestions()
 
@@ -1630,7 +1669,7 @@ class App:
             return
         try:
             subprocess.run([exe, "--", text], input=None, timeout=3, check=False)
-            self.show_toast("path copied")
+            self.show_toast("copied")
         except (OSError, subprocess.SubprocessError):
             self.show_toast("copy failed")
 
@@ -1818,9 +1857,6 @@ class App:
                         + (badge_style + badge + T.RESET + bg if unread else T.fg(th.dim) + pad(when, 5, align="right"))
                         + " " + T.RESET + sep)
                 out.append(line)
-                if i + 1 < rows and (unread or is_active or preview) and False:
-                    pass
-                # preview goes on a second physical line only when there is room
             else:
                 out.append(T.move(row, 1) + " " * width + sep)
         # Two-line entries: name row + preview row, when few conversations.
@@ -2309,15 +2345,6 @@ class App:
         t, th = self.term, self.theme
         name = self.overlay
         top, left, w, h = self._overlay_box()
-        _unused = {"contacts": min(t.rows - 6, 20), "search": min(t.rows - 6, 18), "help": 20, "link": min(t.rows - 4, 32),
-                       "quit": 5, "attach": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
-                       "saveas": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
-                       "react": 6, "attachment": min(t.rows - 6, 9 + min(10, len(self.att_items))),
-                       "settings": min(t.rows - 4, len(SETTINGS) + len({x["section"] for x in SETTINGS}) * 2 + 5),
-                       "pick": min(t.rows - 4, 6 + min(14, len(self.pick_items))), "convmenu": len(self.menu_items) + 5,
-                       "info": min(t.rows - 4, len(self.info_lines) + 5), "prompt": 6,
-                       "members": min(t.rows - 6, 20), "forward": min(t.rows - 6, 20),
-                       "setting-text": min(t.rows - 6, 5 + min(10, len(self.overlay_results)))}
         out = []
         bg = T.bg(th.panel)
         for i in range(h):

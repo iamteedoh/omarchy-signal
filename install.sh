@@ -64,16 +64,26 @@ fi
 
 # --- plugin --------------------------------------------------------------------
 mkdir -p "$PLUGINS_DIR" "$BIN_DIR" "$UNIT_DIR" "$CONFIG_DIR"
-if [[ -L $PLUGIN_DIR || -d $PLUGIN_DIR ]]; then
-  if [[ -L $PLUGIN_DIR ]]; then rm -f "$PLUGIN_DIR"; else rm -rf "$PLUGIN_DIR"; fi
-fi
-if (( LINK_MODE )); then
+# Directories the hardened service unit may write to; the unit tolerates their
+# absence but the bridge wants them owner-only from the first run.
+for d in "$HOME/.local/share/omarchy-signal" "$HOME/.local/state/omarchy-signal" "$HOME/.local/share/signal-cli"; do
+  mkdir -p "$d" && chmod 700 "$d"
+done
+if [[ -e $PLUGIN_DIR && $(realpath -m "$PLUGIN_DIR") == $(realpath -m "$HERE") ]]; then
+  # Running from the installed plugin folder itself (e.g. after
+  # `omarchy plugin add`): nothing to copy, and certainly nothing to delete.
+  say "Installing in place from $PLUGIN_DIR"
+elif (( LINK_MODE )); then
+  if [[ -L $PLUGIN_DIR ]]; then rm -f "$PLUGIN_DIR"; elif [[ -d $PLUGIN_DIR ]]; then rm -rf "$PLUGIN_DIR"; fi
   ln -s "$HERE" "$PLUGIN_DIR"
   say "Linked $PLUGIN_DIR → $HERE (dev mode)"
 else
+  if [[ -L $PLUGIN_DIR ]]; then rm -f "$PLUGIN_DIR"; elif [[ -d $PLUGIN_DIR ]]; then rm -rf "$PLUGIN_DIR"; fi
   mkdir -p "$PLUGIN_DIR"
-  # Only what the shell and the CLI need; no tests, no .git.
-  cp -a "$HERE"/manifest.json "$HERE"/*.qml "$HERE"/*.js "$HERE/bin" "$HERE/lib" "$HERE/scripts" "$HERE/README.md" "$HERE/LICENSE" "$PLUGIN_DIR/"
+  # Everything the shell, the CLI and a later ./install.sh or ./uninstall.sh from
+  # inside the plugin folder need; no tests, no .git.
+  cp -a "$HERE"/manifest.json "$HERE"/*.qml "$HERE"/*.js "$HERE/bin" "$HERE/lib" "$HERE/scripts" "$HERE/systemd" "$HERE/docs" \
+        "$HERE/install.sh" "$HERE/uninstall.sh" "$HERE/README.md" "$HERE/SECURITY.md" "$HERE/LICENSE" "$PLUGIN_DIR/"
   find "$PLUGIN_DIR" -name __pycache__ -type d -prune -exec rm -rf {} +
   say "Installed plugin to $PLUGIN_DIR"
 fi

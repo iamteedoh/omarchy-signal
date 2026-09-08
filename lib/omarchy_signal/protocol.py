@@ -20,6 +20,7 @@ import json
 from typing import Any
 
 MAX_REQUEST_BYTES = 1 * 1024 * 1024
+MAX_STRING_LENGTH = 64 * 1024        # any single string parameter (message text etc.)
 MAX_EVENT_BYTES = 8 * 1024 * 1024
 PROTOCOL_VERSION = 1
 
@@ -49,7 +50,7 @@ OPS: dict[str, dict[str, tuple[type | tuple[type, ...], bool]]] = {
     "link": {"deviceName": (str, False)},
     "linkFinish": {},
     "clearHistory": {},
-    "demo": {"text": (str, False)},
+    "demo": {"text": (str, False), "name": (str, False)},
     "reloadConfig": {},
     "delete": {"conversation": (str, True), "ts": (int, True)},
     "edit": {"conversation": (str, True), "ts": (int, True), "text": (str, True)},
@@ -67,7 +68,7 @@ OPS: dict[str, dict[str, tuple[type | tuple[type, ...], bool]]] = {
 
 
 class ProtocolError(ValueError):
-    pass
+    req_id: Any = None   # set by validate_request once the id is known
 
 
 def encode(obj: Any) -> bytes:
@@ -82,7 +83,10 @@ def decode(raw: bytes) -> Any:
 
 
 def validate_request(msg: Any) -> tuple[Any, str, dict]:
-    """Return ``(id, op, params)`` for a well-formed request or raise."""
+    """Return ``(id, op, params)`` for a well-formed request or raise.
+
+    Once the id has been checked, every later error carries it in
+    ``ProtocolError.req_id`` so the bridge can answer that request."""
     if not isinstance(msg, dict):
         raise ProtocolError("request must be an object")
     req_id = msg.get("id")
@@ -90,6 +94,14 @@ def validate_request(msg: Any) -> tuple[Any, str, dict]:
         raise ProtocolError("request id must be an int or string")
     if isinstance(req_id, str) and len(req_id) > 64:
         raise ProtocolError("request id too long")
+    try:
+        return _validate_body(req_id, msg)
+    except ProtocolError as exc:
+        exc.req_id = req_id
+        raise
+
+
+def _validate_body(req_id: Any, msg: dict) -> tuple[Any, str, dict]:
     op = msg.get("op")
     if not isinstance(op, str) or op not in OPS:
         raise ProtocolError("unknown op")
@@ -102,7 +114,7 @@ def validate_request(msg: Any) -> tuple[Any, str, dict]:
                 raise ProtocolError(f"{name} must be an integer")
             if not isinstance(value, typ):
                 raise ProtocolError(f"{name} has the wrong type")
-            if isinstance(value, str) and len(value) > 64 * 1024:
+            if isinstance(value, str) and len(value) > MAX_STRING_LENGTH:
                 raise ProtocolError(f"{name} is too long")
             if isinstance(value, list):
                 if len(value) > 32 or not all(isinstance(v, str) and len(v) < 4096 for v in value):

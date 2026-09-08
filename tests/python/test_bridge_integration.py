@@ -179,6 +179,28 @@ class BridgeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ctx.exception.code, "signal")
             await c.close()
 
+    async def test_long_message_keeps_connection(self):
+        async with BridgeHarness() as h:
+            c, _ = await self._client(h)
+            res = await c.request("send", conversation="number:+15550002222", text="x" * 60000)
+            self.assertEqual(res["status"], "sent")                    # a long message goes through
+            with self.assertRaises(BridgeError) as cm:                   # an oversized one fails fast, client-side
+                await c.request("send", conversation="number:+15550002222", text="x" * 70000)
+            self.assertEqual(cm.exception.code, "bad_request")
+            # ...and a raw oversized request gets an error carrying its id, not a hang or a dropped connection.
+            r, w = await asyncio.open_unix_connection(str(h.paths.socket), limit=protocol.MAX_REQUEST_BYTES)
+            await r.readuntil(b"\n")                                   # hello
+            w.write(json.dumps({"id": 9, "op": "send", "conversation": "number:+15550002222", "text": "x" * 70000}).encode() + b"\n")
+            w.write(b'{"id":10,"op":"ping"}\n')
+            await w.drain()
+            first = json.loads(await asyncio.wait_for(r.readuntil(b"\n"), 5))
+            second = json.loads(await asyncio.wait_for(r.readuntil(b"\n"), 5))
+            self.assertEqual((first["id"], first["ok"], first["code"]), (9, False, "bad_request"))
+            self.assertEqual((second["id"], second["result"]), (10, "pong"))
+            w.close()
+            self.assertEqual(await c.request("ping"), "pong")          # the original connection survived
+            await c.close()
+
     async def test_send_rejects_bad_input(self):
         async with BridgeHarness() as h:
             c, _ = await self._client(h)

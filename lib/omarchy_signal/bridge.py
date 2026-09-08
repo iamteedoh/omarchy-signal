@@ -199,7 +199,10 @@ class Bridge:
             if await self._socket_alive(sock_path):
                 raise SystemExit(f"another bridge is already listening on {sock_path}")
             sock_path.unlink()
-        self.server = await asyncio.start_unix_server(self._handle_client, path=str(sock_path))
+        # The reader limit must cover MAX_REQUEST_BYTES, or a long message
+        # trips asyncio's 64 KiB default and drops the connection.
+        self.server = await asyncio.start_unix_server(self._handle_client, path=str(sock_path),
+                                                      limit=protocol.MAX_REQUEST_BYTES + 4096)
         os.chmod(sock_path, 0o600)
         log.info("omarchy-signal bridge %s listening", __version__)
 
@@ -295,7 +298,7 @@ class Bridge:
             "emojiAutoconvert": self.cfg.emoji_autoconvert,
             "attachmentThumbnails": self.cfg.attachment_thumbnails,
             "scrollSpeed": self.cfg.scroll_speed,
-            "notificationSound": self.cfg.notification_sound if self.cfg.notification_sound and os.path.isfile(os.path.expanduser(self.cfg.notification_sound)) else "",
+            "notificationSound": os.path.expanduser(self.cfg.notification_sound) if self.cfg.notification_sound and os.path.isfile(os.path.expanduser(self.cfg.notification_sound)) else "",
             "account": self.account,
             "notificationTimeoutMs": self.cfg.notification_timeout_ms,
             "linking": self._link_task is not None and not self._link_task.done(),
@@ -437,8 +440,11 @@ class Bridge:
                 try:
                     req_id, op, params = protocol.validate_request(protocol.decode(raw))
                 except protocol.ProtocolError as exc:
-                    writer.write(protocol.encode(protocol.error(None, str(exc), code="bad_request")))
-                    await writer.drain()
+                    # Echo the id when the request carried a usable one, so the
+                    # client can fail that call instead of waiting for a timeout.
+                    async with write_lock:
+                        writer.write(protocol.encode(protocol.error(exc.req_id, str(exc), code="bad_request")))
+                        await writer.drain()
                     continue
                 if op == "subscribe":
                     self.subscribers.add(writer)
@@ -493,16 +499,16 @@ class Bridge:
         payload = protocol.encode(protocol.event(name, data))
         if len(payload) > protocol.MAX_EVENT_BYTES:
             return
-        dead = []
-        for w in list(self.subscribers):
+
+        async def push(w: asyncio.StreamWriter) -> None:
             try:
                 w.write(payload)
                 await asyncio.wait_for(w.drain(), 5)
             except (ConnectionResetError, BrokenPipeError, asyncio.TimeoutError, RuntimeError):
-                dead.append(w)
-        for w in dead:
-            self.subscribers.discard(w)
-            w.close()
+                self.subscribers.discard(w)
+                w.close()
+        # Deliver to every subscriber at once; one stuck client must not delay the rest.
+        await asyncio.gather(*(push(w) for w in list(self.subscribers)), return_exceptions=True)
 
     # -- request dispatch -------------------------------------------------------
 
@@ -820,9 +826,10 @@ class Bridge:
         Nothing is stored and nothing is sent."""
         text = clean_text(p.get("text") or "This is what an incoming message looks like. Click to reply.",
                           max_length=300, single_line=True)
+        name = clean_name(p.get("name") or "Demo contact", max_length=60) or "Demo contact"
         payload = {
-            "conversation": "number:+15550000000", "conversationName": "Demo contact", "isGroup": False,
-            "sender": "number:+15550000000", "senderName": "Demo contact", "ts": int(time.time() * 1000),
+            "conversation": "number:+15550000000", "conversationName": name, "isGroup": False,
+            "sender": "number:+15550000000", "senderName": name, "ts": int(time.time() * 1000),
             "text": text, "preview": text, "attachments": [], "outgoing": False, "muted": False,
             "quoteText": "", "expiresIn": 0, "viewOnce": False, "notify": True, "demo": True,
         }
