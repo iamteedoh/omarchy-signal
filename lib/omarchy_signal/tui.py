@@ -113,6 +113,8 @@ class App:
         self.link_uri = ""
         self.link_started = 0.0
         self.link_png_id = 0
+        self.link_shell_shown = False
+        self.link_shell_ok = False
         self.scroll = 0                  # lines scrolled up from the bottom
         self.composer = Composer()
         self.toast = ""
@@ -449,6 +451,8 @@ class App:
         self.dirty = True
 
     def close_overlay(self) -> None:
+        if self.overlay == "link" and self.link_shell_ok:
+            qr.shell_hide_qr()
         self.overlay = ""
         self.focus = "composer"
         self.link_uri = ""
@@ -472,9 +476,13 @@ class App:
             self.link_uri = res.get("uri", "")
             self.link_started = time.monotonic()
             self.link_png_id = 0
+            self.link_shell_shown = False
+            self.link_shell_ok = False
             self.overlay_message = "Signal on your phone → Settings → Linked devices → Link new device → scan"
             self.dirty = True
             fin = await self.client.request("linkFinish", timeout=620)
+            if self.link_shell_ok:
+                qr.shell_hide_qr()
             if fin.get("linked"):
                 self.status["linked"] = True
                 self.link_uri = ""
@@ -1276,7 +1284,7 @@ class App:
         t, th = self.term, self.theme
         name = self.overlay
         w = min(t.cols - 6, 72)
-        rows_needed = {"contacts": min(t.rows - 6, 20), "search": min(t.rows - 6, 18), "help": 20, "link": min(t.rows - 4, 40),
+        rows_needed = {"contacts": min(t.rows - 6, 20), "search": min(t.rows - 6, 18), "help": 20, "link": min(t.rows - 4, 32),
                        "quit": 5, "attach": 6, "react": 6}.get(name, 8)
         h = min(t.rows - 4, rows_needed)
         top = max(2, (t.rows - h) // 2)
@@ -1354,6 +1362,18 @@ class App:
             return out
         y = top + 3
         drawn = False
+        if not self.graphics and self.cfg.qr_style in ("auto", "shell") and not self.link_shell_shown:
+            self.link_shell_shown = True
+            try:
+                self.link_shell_ok = qr.shell_show_qr(qr.qr_png_file(self.link_uri, self.paths.run_dir))
+            except qr.QrUnavailable:
+                self.link_shell_ok = False
+        if not self.graphics and self.link_shell_ok:
+            for line in ("The QR code is showing on your screen (Omarchy shell).",
+                         "Esc there only hides it; this window keeps waiting."):
+                out.append(T.move(y, left + 2) + bg + T.fg(th.foreground) + truncate(line, w - 4) + T.RESET)
+                y += 1
+            drawn = True
         if self.graphics:
             try:
                 if not self.link_png_id:
@@ -1369,7 +1389,8 @@ class App:
                 drawn = False
         if not drawn:
             try:
-                qr_lines = qr.qr_text_lines(self.link_uri)
+                text_style = self.cfg.qr_style if self.cfg.qr_style in qr.TEXT_STYLES else "half"
+                qr_lines = qr.qr_text_lines(self.link_uri, text_style)
             except qr.QrUnavailable:
                 qr_lines = []
             if qr_lines:

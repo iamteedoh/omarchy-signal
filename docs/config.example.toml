@@ -43,6 +43,15 @@ image_max_rows = 14
 # (Ghostty, kitty, WezTerm). The text fallback is about 11 rows regardless.
 qr_rows = 9
 
+# How to show the linking QR code:
+#   auto     image in a graphics terminal, else a popup in the Omarchy shell, else "half"
+#   image    kitty graphics protocol only (Ghostty, kitty, WezTerm)
+#   shell    always the Omarchy shell popup
+#   half     text, one column per module (square, ~43x21)
+#   quad     text, quarter blocks (~22x22, tall)
+#   braille  text, braille dots (~22x11, square, may not scan)
+qr_style = "auto"
+
 # Name shown in Signal's "Linked devices" list.
 device_name = "omarchy-signal"
 

@@ -20,17 +20,30 @@ class QrTests(unittest.TestCase):
                 self.assertRaises(qr.QrUnavailable, qr.qr_text_lines, bad)
 
     @unittest.skipUnless(shutil.which("qrencode"), "qrencode not installed")
-    def test_text_qr_is_small(self):
-        lines = qr.qr_text_lines(URI)
-        self.assertLessEqual(len(lines), 23)
-        self.assertLessEqual(max(len(l) for l in lines), 24)
-        # Finder pattern top edge: quiet row above, seven dark modules on row 1 → ▗▄▄▄▖ shape.
-        self.assertEqual(lines[0][:5], "▗▄▄▄ ")
-        self.assertTrue(all(ch in qr._QUADRANTS for line in lines for ch in line))
-        # Quiet zone: the first column and row are blank.
-        self.assertTrue(all(line[0] in " ▝▗▐" for line in lines))
+    def test_text_styles(self):
         m = qr.qr_matrix(URI)
-        self.assertTrue(m[1][1] and m[1][7] and not m[0][0])   # finder pattern corner inside the margin
+        self.assertEqual(len(m), 43)
+        self.assertTrue(m[1][1] and m[1][7] and not m[0][0])   # finder pattern inside the quiet zone
+        half = qr.qr_text_lines(URI, "half")
+        self.assertEqual((len(half), len(half[0])), (22, 43))
+        self.assertEqual(half[0][:9], " ▄▄▄▄▄▄▄ ")
+        self.assertTrue(all(ch in " ▀▄█" for line in half for ch in line))
+        quad = qr.qr_text_lines(URI, "quad")
+        self.assertEqual((len(quad), len(quad[0])), (22, 22))
+        self.assertEqual(quad[0][:5], "▗▄▄▄ ")
+        braille = qr.qr_text_lines(URI, "braille")
+        self.assertEqual((len(braille), len(braille[0])), (11, 22))
+        self.assertTrue(all(0x2800 <= ord(ch) <= 0x28FF for line in braille for ch in line))
+        self.assertEqual(qr.qr_text_lines(URI, "nonsense"), half)
+
+    @unittest.skipUnless(shutil.which("qrencode"), "qrencode not installed")
+    def test_png_file_is_private(self):
+        import os, stat, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = qr.qr_png_file(URI, os.path.join(d, "run"))
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+            self.assertTrue(path.read_bytes().startswith(b"\x89PNG"))
 
     @unittest.skipUnless(shutil.which("qrencode"), "qrencode not installed")
     def test_image_sequence(self):

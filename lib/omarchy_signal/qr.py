@@ -61,26 +61,88 @@ def qr_matrix(uri: str) -> list[list[bool]]:
 # Quadrant block glyphs indexed by bits: top-left=1, top-right=2, bottom-left=4, bottom-right=8.
 _QUADRANTS = " ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█"
 
+TEXT_STYLES = ("half", "quad", "braille")
 
-def qr_text_lines(uri: str) -> list[str]:
-    """Quarter-block rendering: each character carries a 2x2 block of modules.
-    Draw it with a dark foreground on a light background."""
+
+def _bit(m: list[list[bool]], y: int, x: int) -> int:
+    return 1 if (0 <= y < len(m) and 0 <= x < len(m[y]) and m[y][x]) else 0
+
+
+def qr_text_lines(uri: str, style: str = "half") -> list[str]:
+    """Text rendering of the code, dark modules on a light background.
+
+    half     one column per module, two modules per row (▀▄█). Square on a
+             normal 1:2 terminal cell and solid; ~43 x 21 for a link URI.
+             The smallest rendering every scanner reads.
+    quad     two modules per column and per row (quarter blocks); half the
+             width of ``half`` but twice as tall as it is wide.
+    braille  two per column, four per row: ~22 x 11 and square, but dotted;
+             some phone cameras refuse it.
+    """
     m = qr_matrix(uri)
     h = len(m)
     w = max(len(r) for r in m)
-    if h % 2:
-        m = m + [[False] * w]
-        h += 1
-    lines = []
-    for y in range(0, h, 2):
-        chars = []
-        for x in range(0, w, 2):
-            def bit(yy, xx):
-                return 1 if (yy < len(m) and xx < len(m[yy]) and m[yy][xx]) else 0
-            idx = bit(y, x) + bit(y, x + 1) * 2 + bit(y + 1, x) * 4 + bit(y + 1, x + 1) * 8
-            chars.append(_QUADRANTS[idx])
-        lines.append("".join(chars))
+    lines: list[str] = []
+    if style == "quad":
+        for y in range(0, h, 2):
+            lines.append("".join(_QUADRANTS[_bit(m, y, x) + _bit(m, y, x + 1) * 2 + _bit(m, y + 1, x) * 4 + _bit(m, y + 1, x + 1) * 8]
+                                 for x in range(0, w, 2)))
+    elif style == "braille":
+        # Braille dot numbering: (row, col) -> bit: (0,0)=1 (1,0)=2 (2,0)=4 (0,1)=8 (1,1)=16 (2,1)=32 (3,0)=64 (3,1)=128
+        weights = {(0, 0): 1, (1, 0): 2, (2, 0): 4, (0, 1): 8, (1, 1): 16, (2, 1): 32, (3, 0): 64, (3, 1): 128}
+        for y in range(0, h, 4):
+            chars = []
+            for x in range(0, w, 2):
+                code = 0x2800
+                for (dy, dx), weight in weights.items():
+                    if _bit(m, y + dy, x + dx):
+                        code |= weight
+                chars.append(chr(code))
+            lines.append("".join(chars))
+    else:
+        for y in range(0, h, 2):
+            row = []
+            for x in range(w):
+                top, bottom = _bit(m, y, x), _bit(m, y + 1, x)
+                row.append("█" if top and bottom else "▀" if top else "▄" if bottom else " ")
+            lines.append("".join(row))
     return lines
+
+
+def qr_png_file(uri: str, directory) -> "Path":
+    """Write the PNG to an owner-only file for the shell popup to load."""
+    import os
+    from pathlib import Path
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    os.chmod(directory, 0o700)
+    path = directory / "link-qr.png"
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(qr_png(uri))
+    return path
+
+
+def shell_show_qr(path) -> bool:
+    """Ask the Omarchy shell (our Service.qml) to display the PNG. Returns
+    True if the shell acknowledged; False if it is not running or the
+    plugin is not loaded, in which case the caller falls back to text."""
+    exe = shutil.which("omarchy-shell")
+    if not exe:
+        return False
+    try:
+        res = subprocess.run([exe, "iamteedoh.signal", "showQr", str(path)], capture_output=True, timeout=3, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return res.returncode == 0 and b"ok" in res.stdout
+
+
+def shell_hide_qr() -> None:
+    exe = shutil.which("omarchy-shell")
+    if not exe:
+        return
+    with __import__("contextlib").suppress(OSError, subprocess.SubprocessError):
+        subprocess.run([exe, "-q", "iamteedoh.signal", "hideQr"], capture_output=True, timeout=3, check=False)
 
 
 def qr_cells(cell_w: int, cell_h: int, *, rows: int = QR_ROWS) -> tuple[int, int]:

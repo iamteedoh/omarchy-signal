@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import shutil
@@ -211,9 +212,12 @@ def cmd_link(args) -> int:
         uri = res["uri"]
         qr_rows = max(5, min(40, args.qr_size)) if args.qr_size else cfg.qr_rows
         print("Open Signal on your phone → Settings → Linked devices → Link new device, then scan:\n")
-        graphics = (not args.text) and sys.stdout.isatty() and kitty.terminal_supports_graphics()
-        shown = False
-        if graphics:
+        style = args.qr_style or cfg.qr_style
+        if args.text:
+            style = "half"
+        shown = ""
+        want_image = style in ("auto", "image")
+        if want_image and sys.stdout.isatty() and kitty.terminal_supports_graphics():
             try:
                 import fcntl, struct, termios
                 packed = fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, b"\x00" * 8)
@@ -223,13 +227,23 @@ def cmd_link(args) -> int:
                 seq, cols, rows = qr.qr_image_sequence(uri, kitty.image_id_for(uri), cell_w=cell_w, cell_h=cell_h, rows=qr_rows)
                 sys.stdout.write("  " + seq + "\n" * (rows + 1))
                 sys.stdout.flush()
-                shown = True
+                shown = "image"
             except (qr.QrUnavailable, OSError):
-                shown = False
+                shown = ""
+        if not shown and style in ("auto", "shell"):
+            try:
+                png_path = qr.qr_png_file(uri, _paths().run_dir)
+                if qr.shell_show_qr(png_path):
+                    shown = "shell"
+                    print("  The QR code is on your screen (Omarchy shell). Esc hides it; the link keeps waiting.")
+                    print("  Prefer it in the terminal? Ctrl-C and rerun with --qr-style half.")
+            except qr.QrUnavailable:
+                shown = ""
         if not shown:
+            text_style = style if style in qr.TEXT_STYLES else "half"
             try:
                 # Dark modules on a light background, as a scanner expects.
-                for line in qr.qr_text_lines(uri):
+                for line in qr.qr_text_lines(uri, text_style):
                     print("  \x1b[48;2;255;255;255m\x1b[38;2;0;0;0m" + line + "\x1b[0m")
             except qr.QrUnavailable as exc:
                 print(f"({exc}; paste this into another QR tool)\n{uri}")
@@ -242,13 +256,29 @@ def cmd_link(args) -> int:
         task = asyncio.ensure_future(client.request("linkFinish", timeout=620))
         frames = "◐◓◑◒"
         i = 0
-        while not task.done():
-            elapsed = int(asyncio.get_running_loop().time() - started)
-            sys.stdout.write(f"\r  {frames[i % 4]} waiting for the phone… {elapsed:>3}s  (Ctrl-C cancels)")
-            sys.stdout.flush()
-            i += 1
-            await asyncio.wait({task}, timeout=0.25)
+        try:
+            while not task.done():
+                elapsed = int(asyncio.get_running_loop().time() - started)
+                sys.stdout.write(f"\r  {frames[i % 4]} waiting for the phone… {elapsed:>3}s  (Ctrl-C cancels)")
+                sys.stdout.flush()
+                i += 1
+                await asyncio.wait({task}, timeout=0.25)
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            # Ctrl-C: tidy up quietly. The pending link simply expires; nothing
+            # on the account has changed.
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await asyncio.wait({task}, timeout=1)
+            if not task.cancelled() and task.done():
+                task.exception()
+            if shown == "shell":
+                qr.shell_hide_qr()
+            sys.stdout.write("\r" + " " * 60 + "\r")
+            print("  Linking cancelled. Nothing was changed; run `omarchy-signal link` again any time.")
+            raise
         sys.stdout.write("\r" + " " * 60 + "\r")
+        if shown == "shell":
+            qr.shell_hide_qr()
         fin = task.result()
         if not fin.get("linked"):
             print("linking did not complete")
@@ -341,7 +371,7 @@ def _run(fn) -> int:
         print(f"omarchy-signal: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
-        return 130
+        return 0
 
 
 # ----------------------------------------------------------------------------- parser
@@ -396,6 +426,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--force", action="store_true")
     s.add_argument("--text", action="store_true", help="draw the QR code with block characters even if the terminal can show images")
     s.add_argument("--qr-size", type=int, metavar="ROWS", help="height of the image QR code in rows (default from config, 9)")
+    s.add_argument("--qr-style", choices=["auto", "image", "shell", "half", "quad", "braille"],
+                   help="auto: image in a graphics terminal, else an Omarchy shell popup, else half-block text")
     s.set_defaults(fn=cmd_link)
 
     s = sub.add_parser("demo", help="show a sample notification popup (nothing is sent)")

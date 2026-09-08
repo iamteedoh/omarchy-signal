@@ -44,6 +44,27 @@ Item {
 
   readonly property string cliPath: Qt.resolvedUrl("bin/omarchy-signal").toString().replace("file://", "")
 
+  // Device-linking QR code, shown for terminals that cannot draw images.
+  property bool qrOpen: false
+  property string qrPath: ""
+  readonly property string runDir: (Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omarchy-signal/"
+
+  function showQr(path) {
+    var p = String(path || "")
+    // Only a PNG the CLI wrote into our own runtime directory.
+    if (!root.runDir.startsWith("/") || p.indexOf(root.runDir) !== 0 || p.indexOf("..") >= 0 || !/\.png$/.test(p)) return false
+    root.qrPath = ""
+    root.qrPath = p
+    root.qrOpen = true
+    Qt.callLater(function() { if (root.qrOpen) qrKeys.forceActiveFocus() })
+    return true
+  }
+
+  function hideQr() {
+    root.qrOpen = false
+    root.qrPath = ""
+  }
+
   signal unreadChangedExternally(int total)
 
   // ---------------------------------------------------------------- event stream
@@ -221,6 +242,8 @@ Item {
     function close(): string { root.closeReply(); return "ok" }
     function demo(): string { Util.execArgv([root.cliPath, "demo"]); return "ok" }
     function toasts(): string { return String(root.toasts.length) }
+    function showQr(path: string): string { return root.showQr(path) ? "ok" : "refused" }
+    function hideQr(): string { root.hideQr(); return "ok" }
     function unread(): string { return String(root.unread) }
     function state(): string { return JSON.stringify({ connected: root.connected, linked: root.linked, unread: root.unread }) }
   }
@@ -503,6 +526,93 @@ Item {
             }
             Button { text: "Open in terminal"; onClicked: root.openTerminal(root.replyKey) }
             Button { text: "Send"; enabled: !root.sending && root.linked; onClicked: root.sendReply() }
+          }
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- linking QR popup
+
+  PanelWindow {
+    id: qrWindow
+    visible: root.qrOpen
+    anchors { top: true; bottom: true; left: true; right: true }
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.namespace: "omarchy-signal-qr"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: root.qrOpen ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+
+    Rectangle {
+      anchors.fill: parent
+      color: Color.menu.scrim
+      MouseArea { anchors.fill: parent; onClicked: root.hideQr() }
+    }
+
+    Item {
+      id: qrKeys
+      anchors.fill: parent
+      focus: true
+      Keys.onEscapePressed: root.hideQr()
+
+      BorderSurface {
+        anchors.centerIn: parent
+        width: qrLayout.implicitWidth + Style.space(48)
+        height: qrLayout.implicitHeight + Style.space(48)
+        color: Util.alpha(Color.popups.background, 0.98)
+        borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+        radius: Style.cornerRadius
+        MouseArea { anchors.fill: parent; onClicked: {} }
+
+        ColumnLayout {
+          id: qrLayout
+          anchors.centerIn: parent
+          spacing: Style.space(14)
+
+          Text {
+            Layout.alignment: Qt.AlignHCenter
+            text: "LINK THIS DEVICE"
+            textFormat: Text.PlainText
+            color: Color.accent
+            font.family: Style.font.family
+            font.pixelSize: Style.font.title
+            font.bold: true
+            font.letterSpacing: 2
+          }
+          Rectangle {
+            Layout.alignment: Qt.AlignHCenter
+            width: Style.space(300)
+            height: width
+            radius: Style.cornerRadius / 2
+            color: "white"
+            Image {
+              anchors.fill: parent
+              anchors.margins: Style.space(12)
+              source: root.qrPath ? "file://" + root.qrPath : ""
+              cache: false
+              smooth: false
+              fillMode: Image.PreserveAspectFit
+            }
+          }
+          Text {
+            Layout.alignment: Qt.AlignHCenter
+            Layout.maximumWidth: Style.space(360)
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            text: "Signal on your phone → Settings → Linked devices → Link new device.\nAfter the scan, nothing shows on the phone until the link finishes (10–60 s)."
+            textFormat: Text.PlainText
+            color: Color.popups.text
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
+          }
+          Text {
+            Layout.alignment: Qt.AlignHCenter
+            text: "Esc hides this; the terminal keeps waiting"
+            textFormat: Text.PlainText
+            color: Util.alpha(Color.popups.text, 0.5)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
           }
         }
       }
