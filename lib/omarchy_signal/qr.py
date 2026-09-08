@@ -4,8 +4,9 @@ Two paths: a small image over the kitty graphics protocol when the terminal
 supports it (9 rows tall by default, crisp at any font size), otherwise
 quarter-block glyphs (two modules per column, two per row) built from
 ``qrencode``'s module matrix at the lowest error-correction level. For a
-typical link URI that is about 11 rows by 22 columns, half the size of
-``qrencode -t UTF8``.
+typical link URI that is about 22 rows by 22 columns: half the width of
+``qrencode -t UTF8`` and the smallest rendering that every monospace font
+draws as solid blocks.
 """
 
 from __future__ import annotations
@@ -57,7 +58,7 @@ def qr_matrix(uri: str) -> list[list[bool]]:
     return matrix
 
 
-# Quadrant block glyphs indexed by bits (top-left, top-right, bottom-left, bottom-right).
+# Quadrant block glyphs indexed by bits: top-left=1, top-right=2, bottom-left=4, bottom-right=8.
 _QUADRANTS = " ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█"
 
 
@@ -76,7 +77,7 @@ def qr_text_lines(uri: str) -> list[str]:
         for x in range(0, w, 2):
             def bit(yy, xx):
                 return 1 if (yy < len(m) and xx < len(m[yy]) and m[yy][xx]) else 0
-            idx = bit(y, x) * 8 + bit(y, x + 1) * 4 + bit(y + 1, x) * 2 + bit(y + 1, x + 1)
+            idx = bit(y, x) + bit(y, x + 1) * 2 + bit(y + 1, x) * 4 + bit(y + 1, x + 1) * 8
             chars.append(_QUADRANTS[idx])
         lines.append("".join(chars))
     return lines

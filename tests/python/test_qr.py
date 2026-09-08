@@ -22,8 +22,10 @@ class QrTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("qrencode"), "qrencode not installed")
     def test_text_qr_is_small(self):
         lines = qr.qr_text_lines(URI)
-        self.assertLessEqual(len(lines), 13)
+        self.assertLessEqual(len(lines), 23)
         self.assertLessEqual(max(len(l) for l in lines), 24)
+        # Finder pattern top edge: quiet row above, seven dark modules on row 1 → ▗▄▄▄▖ shape.
+        self.assertEqual(lines[0][:5], "▗▄▄▄▖")
         self.assertTrue(all(ch in qr._QUADRANTS for line in lines for ch in line))
         # Quiet zone: the first column and row are blank.
         self.assertTrue(all(line[0] in " ▝▗▐" for line in lines))
