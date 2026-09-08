@@ -118,9 +118,8 @@ hl.unbind("SUPER + SHIFT + G")
 o.bind("SUPER + SHIFT + G", "Signal", "omarchy-signal open")
 -- New conversation from anywhere: the bar widget's searchable contact list.
 o.bind("SUPER + CTRL + G", "Signal: new conversation", "omarchy-shell iamteedoh.signal.bar toggle")
--- Detached conversation windows (Quickshell toplevels) float at a chat-sized box;
--- SUPER+ALT+S moves one to the scratchpad, SUPER+S brings it back.
-o.window({ class = "^org.quickshell$", title = "^Signal · " }, { float = true, size = { 720, 640 }, center = true })
+-- Detached conversation windows float themselves (720x640, centred) when they
+-- open; SUPER+ALT+S moves one to the scratchpad, SUPER+S brings it back.
 -- END omarchy-signal
 LUA
     say "Added SUPER+SHIFT+G → omarchy-signal tui to $BINDINGS"
