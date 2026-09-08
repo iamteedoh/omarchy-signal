@@ -186,6 +186,199 @@ Item {
   }
   QtObject { id: toastHover; property bool hovered: false }
 
+  function openReply(key, name) {
+    if (!Model.isConversationKey(key)) return
+    root.dismissKey(key)
+    root.replyKey = key
+    root.replyName = Model.singleLine(name || key, 80)
+    root.replyOpen = true
+    replyView.load(key, root.replyName)
+  }
+
+  function closeReply() {
+    root.replyOpen = false
+  }
+
+  function openWindow(key, name) {
+    if (!Model.isConversationKey(key)) return false
+    if (root.windows.indexOf(key) < 0) root.windows = root.windows.concat([key])
+    root.dismissKey(key)
+    return true
+  }
+
+  function closeWindow(key) {
+    root.windows = root.windows.filter(function(k) { return k !== key })
+  }
+
+  function openTerminal(key) {
+    var argv = Model.tuiArgv(key)
+    argv[0] = root.cliPath
+    Util.execArgv(argv)
+    root.closeReply()
+    if (key) root.dismissKey(key)
+  }
+
+  IpcHandler {
+    target: "iamteedoh.signal"
+    function open(): string { Util.execArgv(Model.tuiArgv("")); return "ok" }
+    function reply(key: string): string { root.openReply(key, ""); return "ok" }
+    function window(key: string): string {
+      if (!key) { Util.execArgv([root.cliPath, "open"]); return "ok" }
+      return root.openWindow(key, "") ? "ok" : "refused"
+    }
+    function closeWindow(key: string): string { root.closeWindow(key); return "ok" }
+    function dismiss(): string { root.dismissAll(); return "ok" }
+    function close(): string { root.closeReply(); return "ok" }
+    function demo(): string { Util.execArgv([root.cliPath, "demo"]); return "ok" }
+    function toasts(): string { return String(root.toasts.length) }
+    function showQr(path: string): string { return root.showQr(path) ? "ok" : "refused" }
+    function hideQr(): string { root.hideQr(); return "ok" }
+    function unread(): string { return String(root.unread) }
+    function state(): string { return JSON.stringify({ connected: root.connected, linked: root.linked, unread: root.unread, mode: root.notificationMode, dnd: root.dnd, respectDnd: root.respectDnd }) }
+  }
+
+  // ---------------------------------------------------------------- toast surface
+
+  PanelWindow {
+    id: toastWindow
+    visible: root.toasts.length > 0
+    anchors { top: true; right: true }
+    margins { top: Style.gapsOut + Style.bar.sizeHorizontal; right: Style.gapsOut }
+    implicitWidth: Style.space(380)
+    implicitHeight: toastColumn.implicitHeight + Style.space(8)
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.namespace: "omarchy-signal-toast"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+    Column {
+      id: toastColumn
+      anchors.top: parent.top
+      anchors.right: parent.right
+      width: parent.width
+      spacing: Style.space(8)
+
+      Repeater {
+        model: root.toasts
+        delegate: BorderSurface {
+          id: card
+          required property var modelData
+          width: toastColumn.width
+          implicitHeight: cardLayout.implicitHeight + Style.space(24)
+          color: Util.alpha(Color.notifications.background, 0.96)
+          borderSpec: Border.surfaceSpec("notifications", "border", Color.notifications.border, Math.max(1, Style.space(2)))
+          radius: Style.cornerRadius
+
+          // Slide in from the right, like a message decrypting into place.
+          transform: Translate { id: slide; x: Style.space(40) }
+          opacity: 0
+          Component.onCompleted: { enter.start() }
+          ParallelAnimation {
+            id: enter
+            NumberAnimation { target: slide; property: "x"; to: 0; duration: 220; easing.type: Easing.OutCubic }
+            NumberAnimation { target: card; property: "opacity"; to: 1; duration: 220 }
+          }
+
+          // Accent stripe on the left edge.
+          Rectangle {
+            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+            anchors.margins: Math.max(1, Style.space(2))
+            width: Style.space(3)
+            radius: width / 2
+            color: Color.accent
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+            onEntered: toastHover.hovered = true
+            onExited: toastHover.hovered = false
+            onClicked: function(mouse) {
+              if (mouse.button === Qt.RightButton) root.dismissToast(card.modelData.id)
+              else if (mouse.button === Qt.MiddleButton) root.openTerminal(card.modelData.key)
+              else root.openReply(card.modelData.key, card.modelData.convName)
+            }
+          }
+
+          ColumnLayout {
+            id: cardLayout
+            anchors.fill: parent
+            anchors.margins: Style.space(12)
+            anchors.leftMargin: Style.space(16)
+            spacing: Style.space(4)
+
+            RowLayout {
+              Layout.fillWidth: true
+              spacing: Style.space(8)
+              Text {
+                text: "󰭹"
+                textFormat: Text.PlainText
+                color: Color.accent
+                font.family: Style.font.family
+                font.pixelSize: Style.font.icon
+              }
+              Text {
+                Layout.fillWidth: true
+                text: card.modelData.title
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                color: Color.notifications.text
+                font.family: Style.font.family
+                font.pixelSize: Style.font.subtitle
+                font.bold: true
+              }
+              Text {
+                text: "SIGNAL"
+                textFormat: Text.PlainText
+                color: Util.alpha(Color.notifications.text, 0.5)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                font.letterSpacing: 2
+              }
+            }
+            Text {
+              Layout.fillWidth: true
+              text: card.modelData.body + (card.modelData.attachments > 0 ? "  󰁦" + card.modelData.attachments : "")
+              textFormat: Text.PlainText
+              wrapMode: Text.Wrap
+              maximumLineCount: 4
+              elide: Text.ElideRight
+              color: Color.notifications.text
+              font.family: Style.font.family
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              Layout.fillWidth: true
+              text: "click to reply  ·  middle-click for terminal  ·  right-click to dismiss"
+              textFormat: Text.PlainText
+              color: Util.alpha(Color.notifications.text, 0.45)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          // Countdown bar along the bottom edge.
+          Rectangle {
+            anchors.left: parent.left; anchors.bottom: parent.bottom
+            anchors.margins: Math.max(1, Style.space(2))
+            height: Math.max(1, Style.space(2))
+            radius: height / 2
+            color: Color.notifications.countdown
+            width: {
+              var total = root.toastTimeoutMs
+              var left = Math.max(0, card.modelData.expires - Date.now())
+              return toastHover.hovered ? card.width * 0.98 : card.width * 0.98 * (left / total)
+            }
+            Behavior on width { NumberAnimation { duration: 240 } }
+            Connections { target: toastTick; function onTriggered() { } }
+          }
+        }
+      }
+    }
+  }
+
   // ---------------------------------------------------------------- reply window (click a toast)
 
   PanelWindow {
