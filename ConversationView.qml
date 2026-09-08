@@ -299,6 +299,7 @@ Item {
       spacing: Style.space(6)
       model: view.thread
       boundsBehavior: Flickable.StopAtBounds
+      cacheBuffer: Style.space(3000)     // keep delegates alive well beyond the viewport
       // Follow the conversation: stay pinned to the newest message while the
       // user has not scrolled up, including when images finish loading.
       onContentHeightChanged: if (view.stickToBottom) positionViewAtEnd()
@@ -364,16 +365,25 @@ Item {
               font.pixelSize: Style.font.caption
               font.italic: true
             }
-            Image {
+            // Photos are decoded once at thumbnail size and cached, and their
+            // box is sized from Signal's metadata before the decode finishes,
+            // so scrolling never re-decodes or re-lays out the thread.
+            Item {
               visible: row.modelData.image.length > 0
-              Layout.preferredWidth: Math.min(Style.space(360), list.width * 0.7)
-              Layout.preferredHeight: visible ? Math.min(Style.space(300), Layout.preferredWidth * Math.max(0.3, implicitHeight / Math.max(1, implicitWidth))) : 0
-              source: row.modelData.image ? "file://" + row.modelData.image : ""
-              asynchronous: true
-              cache: false
-              fillMode: Image.PreserveAspectFit
-              sourceSize.width: 720
-              MouseArea { anchors.fill: parent; onClicked: Util.execArgv(["xdg-open", row.modelData.image]) }
+              readonly property real boxW: Math.min(Style.space(360), list.width * 0.7)
+              readonly property real ratio: (row.modelData.imageW > 0 && row.modelData.imageH > 0) ? row.modelData.imageH / row.modelData.imageW : 0.66
+              Layout.preferredWidth: boxW
+              Layout.preferredHeight: visible ? Math.min(Style.space(300), boxW * ratio) : 0
+              Image {
+                anchors.fill: parent
+                source: row.modelData.image ? "file://" + row.modelData.image : ""
+                asynchronous: true
+                cache: true
+                smooth: true
+                fillMode: Image.PreserveAspectFit
+                sourceSize.width: 480
+                MouseArea { anchors.fill: parent; onClicked: Util.execArgv(["xdg-open", row.modelData.image]) }
+              }
             }
             Text {
               visible: row.modelData.body.length > 0

@@ -158,9 +158,14 @@ function threadRows(rows, limit) {
     var body = cleanText(m.body || "", 4000)
     var atts = Array.isArray(m.attachments) ? m.attachments : []
     if (m.deleted) body = "(message deleted)"
-    var image = ""
+    var image = "", imageW = 0, imageH = 0
     for (var i = 0; i < atts.length; i++) {
-      if (atts[i] && typeof atts[i].path === "string" && /^image\//.test(atts[i].contentType || "")) { image = atts[i].path; break }
+      if (atts[i] && typeof atts[i].path === "string" && /^image\//.test(atts[i].contentType || "")) {
+        image = atts[i].path
+        imageW = Number(atts[i].width) || 0
+        imageH = Number(atts[i].height) || 0
+        break
+      }
     }
     var files = atts.map(function(a) { return singleLine(a.filename || "attachment", 80) })
     var reactions = []

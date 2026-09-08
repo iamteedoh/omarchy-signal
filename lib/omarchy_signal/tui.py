@@ -159,6 +159,8 @@ class App:
         self.frame = 0
         self.hover_link: str = ""
         self.link_map: dict[int, list[tuple[int, int, str]]] = {}   # screen row -> [(col_start, col_end, href)]
+        self._line_cache: dict[tuple, list] = {}                  # message signature -> rendered lines
+        self._line_cache_epoch: tuple = ()
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -1881,6 +1883,15 @@ class App:
         msgs = self.messages.get(self.active_key, [])
         lines: list[Line] = []
         last_day = None
+        # Rendering every message each frame costs ~7 ms for a long thread; the
+        # cache makes a scroll frame almost free. The epoch covers everything
+        # that changes how a message looks without the message itself changing.
+        epoch = (self.term.cols, self.term.rows, self.cfg.message_layout, self.cfg.inline_images, self.graphics,
+                 self.theme.source_mtime, self.theme.name, tuple(sorted(self.revealed)), tuple(sorted(self.hidden)),
+                 tuple(sorted((k, v.failed, v.cols, v.rows) for k, v in self.images.items())))
+        if epoch != self._line_cache_epoch:
+            self._line_cache.clear()
+            self._line_cache_epoch = epoch
         for m in msgs:
             ts = m.get("ts", 0)
             day = datetime.fromtimestamp(ts / 1000).date() if ts else None
@@ -1889,7 +1900,16 @@ class App:
                 deco = f"┈┈ {label} ┈┈"
                 lines.append(Line(T.fg(th.muted) + pad(deco, inner, align="center") + T.RESET, inner))
                 last_day = day
-            lines.extend(self._render_message(m, bubble_w, inner))
+            sig = (self.active_key, ts, m.get("sender"), m.get("status"), m.get("edited"), m.get("deleted"),
+                   m.get("body"), m.get("_pending"), m.get("expiresIn"), repr(m.get("reactions")),
+                   tuple((a.get("id"), a.get("path"), a.get("filename")) for a in m.get("attachments", [])))
+            cached = self._line_cache.get(sig)
+            if cached is None or m.get("status") == "sending":
+                cached = self._render_message(m, bubble_w, inner)
+                self._line_cache[sig] = cached
+                if len(self._line_cache) > 2000:
+                    self._line_cache.clear()
+            lines.extend(Line(l.text, l.width, l.image, l.right) for l in cached)
             lines.append(Line("", 0))
         if self.typing.get(self.active_key):
             name = clean_name(self.typing[self.active_key][0]) or "someone"
