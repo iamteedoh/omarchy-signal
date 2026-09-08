@@ -455,12 +455,19 @@ Item {
       onVisibleChanged: if (!visible && winView.conversationKey) root.closeWindow(modelData)
       Component.onCompleted: {
         winView.load(modelData, modelData.split(":").slice(1).join(":"))
-        Qt.callLater(function() { win.visible = true })
+        Qt.callLater(function() {
+          win.visible = true
+          // Float, size and centre it once mapped; from then on it is an
+          // ordinary window Hyprland can tile, move or park in the scratchpad.
+          floatProc.command = [root.cliPath, "float-window", "--", win.title]
+          floatProc.running = true
+        })
         nameProc.command = [root.cliPath, "conversations", "--json", "--all"]
         nameProc.running = true
         contactsProc.command = [root.cliPath, "contacts", "--json"]
         contactsProc.running = true
       }
+      Process { id: floatProc }
       // The title comes from the conversation list, else the contact/group
       // directory (which is where "Note to Self" and never-messaged contacts live).
       Process {

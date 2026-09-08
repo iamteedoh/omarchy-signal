@@ -105,6 +105,40 @@ def cmd_pick_file(args) -> int:
     return 0
 
 
+def cmd_float_window(args) -> int:
+    """Float, size and centre the Hyprland window with the given title (used by
+    the shell for detached conversation windows; window rules proved flaky)."""
+    import json as _json
+    import time as _time
+    hyprctl = shutil.which("hyprctl")
+    if not hyprctl:
+        return 1
+    wanted = args.title
+    address = ""
+    for _ in range(40):
+        try:
+            clients = _json.loads(subprocess.run([hyprctl, "clients", "-j"], capture_output=True, text=True, timeout=5, check=False).stdout or "[]")
+        except ValueError:
+            clients = []
+        for c in clients:
+            if c.get("class") == "org.quickshell" and (c.get("title") == wanted or c.get("initialTitle") == wanted):
+                address = c.get("address", "")
+                floating = c.get("floating", False)
+                break
+        if address:
+            break
+        _time.sleep(0.05)
+    if not address:
+        return 1
+    w, h = max(320, args.width), max(240, args.height)
+    if not floating:
+        subprocess.run([hyprctl, "dispatch", "setfloating", f"address:{address}"], capture_output=True, timeout=5, check=False)
+    subprocess.run([hyprctl, "dispatch", "resizewindowpixel", f"exact {w} {h},address:{address}"], capture_output=True, timeout=5, check=False)
+    subprocess.run([hyprctl, "dispatch", "focuswindow", f"address:{address}"], capture_output=True, timeout=5, check=False)
+    subprocess.run([hyprctl, "dispatch", "centerwindow"], capture_output=True, timeout=5, check=False)
+    return 0
+
+
 def cmd_window(args) -> int:
     """Open a conversation in its own window (Quickshell), detached from the client."""
     key = ""
@@ -559,6 +593,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--remove", action="store_true")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_react)
+
+    s = sub.add_parser("float-window", help=argparse.SUPPRESS)
+    s.add_argument("title")
+    s.add_argument("--width", type=int, default=720)
+    s.add_argument("--height", type=int, default=640)
+    s.set_defaults(fn=cmd_float_window)
 
     s = sub.add_parser("pick-file", help=argparse.SUPPRESS)
     s.add_argument("dirs", nargs="*")
