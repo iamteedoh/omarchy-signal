@@ -109,7 +109,7 @@ if (( DO_BIND )); then
 -- BEGIN omarchy-signal
 -- SUPER+SHIFT+G is Omarchy's Signal key; point it at the terminal client.
 hl.unbind("SUPER + SHIFT + G")
-o.bind("SUPER + SHIFT + G", "Signal", "omarchy-launch-or-focus-tui --app-id=org.omarchy.signal omarchy-signal tui")
+o.bind("SUPER + SHIFT + G", "Signal", "omarchy-signal open")
 -- END omarchy-signal
 LUA
     say "Added SUPER+SHIFT+G → omarchy-signal tui to $BINDINGS"
@@ -126,7 +126,7 @@ if (( DO_MENU )) && [[ -f $MENU ]]; then
 import re, sys
 path = sys.argv[1]
 src = open(path, encoding="utf-8").read()
-entry = '  "signal-tui": {"icon":"󰭹","label":"Signal (terminal)","action":"omarchy-launch-or-focus-tui --app-id=org.omarchy.signal omarchy-signal tui"},\n'
+entry = '  "signal-tui": {"icon":"󰭹","label":"Signal (terminal)","action":"omarchy-signal open"},\n'
 # Insert before the final closing brace of the top-level object.
 idx = src.rstrip().rfind("}")
 if idx < 0:

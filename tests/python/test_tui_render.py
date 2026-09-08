@@ -214,6 +214,7 @@ class RenderTests(unittest.TestCase):
     def test_outgoing_bubble_wraps_as_one_block(self):
         app = make_app(cols=120, rows=40)
         seed(app)
+        app.cfg.message_layout = "bubbles"
         key = app.active_key
         app.messages[key] = [{"conversation": key, "ts": 1700000050000, "sender": "number:+15550001111", "senderName": "You",
                               "outgoing": True, "body": "Oh, and I'm just testing signal from the command line. If you do get this, send me a picture. Any picture is fine. I want to see if it shows up",
@@ -224,6 +225,12 @@ class RenderTests(unittest.TestCase):
         self.assertGreaterEqual(len(cols), 2, "expected a wrapped bubble")
         self.assertEqual(len(set(cols)), 1, f"bubble lines start at different columns: {cols}")
         self.assertGreater(cols[0], tui.LIST_WIDTH + 10)   # still on the right-hand side
+        # Default layout keeps everything on the left.
+        app.cfg.message_layout = "left"
+        app.term.out.clear()
+        app.draw()
+        cols = [int(m.group(1)) for m in re.finditer(r"\x1b\[\d+;(\d+)H\x1b\[38;2;\d+;\d+;\d+m▏", app.term.text())]
+        self.assertEqual(set(cols), {tui.LIST_WIDTH + 3})
 
     def test_mouse_selects_conversation(self):
         app = make_app()
@@ -305,6 +312,45 @@ class AttachmentFlowTests(unittest.TestCase):
         self.assertIn("64×48", app.term.text())        # image dimensions shown in the dropdown
         await app.handle_key(Key("enter"))             # Enter on a file candidate attaches it
         self.assertEqual(app.overlay, "")
+
+    def test_inline_images_click_mode(self):
+        app = self.app
+        app.graphics = True
+        app.cfg.inline_images = "click"
+        key = app.active_key
+        att = {"id": "a1", "contentType": "image/png", "filename": "cat.png", "size": 91, "path": str(self.img)}
+        app.messages[key] = [{"conversation": key, "ts": 1700000000000, "sender": "number:+15550002222", "senderName": "Trinity",
+                              "outgoing": False, "body": "", "attachments": [att], "status": "", "reactions": {}}]
+        app.draw()
+        out = app.term.text()
+        self.assertIn("click to show", out)
+        self.assertNotIn("\x1b_Ga=p", out)              # not placed yet
+        row = next(r for r, spans in app.link_map.items() if any(h.startswith("file://") for _, _, h in spans))
+        start, _, _ = app.link_map[row][0]
+        asyncio.run(app._handle_mouse(Key("mouse", x=start + 1, y=row, button=0)))
+        self.assertEqual(app.overlay, "")                 # revealed directly, no menu
+        app.term.out.clear()
+        app.draw()
+        out = app.term.text()
+        self.assertIn("\x1b_Ga=t,f=100", out)             # transmitted once…
+        self.assertIn("\x1b_Ga=p,i=", out)                # …and placed
+        self.assertNotIn("click to show", out)
+        # Second click now opens the menu, and v hides it again.
+        app.draw()
+        row = next(r for r, spans in app.link_map.items() if any(h.startswith("file://") for _, _, h in spans))
+        start, _, _ = app.link_map[row][0]
+        asyncio.run(app._handle_mouse(Key("mouse", x=start + 1, y=row, button=0)))
+        self.assertEqual(app.overlay, "attachment")
+        asyncio.run(app.handle_key(Key("char", char="v")))
+        app.term.out.clear()
+        app.draw()
+        self.assertIn("click to show", app.term.text())
+        # never: no hint, no image, menu still offers open/save
+        app.cfg.inline_images = "never"
+        app.hidden.clear(); app.revealed.clear()
+        app.term.out.clear()
+        app.draw()
+        self.assertNotIn("\x1b_Ga=p", app.term.text())
 
     def test_attachment_menu_open_save_saveas(self):
         app = self.app

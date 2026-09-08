@@ -70,10 +70,8 @@ test("relativeTime", () => {
 })
 
 test("argv builders never produce shell strings and validate keys", () => {
-  assert.deepEqual(M.tuiArgv("number:+15550002222"),
-    ["omarchy-launch-or-focus-tui", "--app-id=org.omarchy.signal", "omarchy-signal", "tui", "number:+15550002222"])
-  assert.deepEqual(M.tuiArgv("number:+1; rm -rf ~"),
-    ["omarchy-launch-or-focus-tui", "--app-id=org.omarchy.signal", "omarchy-signal", "tui"])
+  assert.deepEqual(M.tuiArgv("number:+15550002222"), ["omarchy-signal", "open", "number:+15550002222"])
+  assert.deepEqual(M.tuiArgv("number:+1; rm -rf ~"), ["omarchy-signal", "open"])
   assert.deepEqual(M.tuiArgv("$(evil)"), M.tuiArgv(""))
   assert.deepEqual(M.sendArgv("group:Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYg==", "-m looks like a flag"),
     ["omarchy-signal", "send", "--json", "--message=-m looks like a flag", "--", "group:Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYg=="])

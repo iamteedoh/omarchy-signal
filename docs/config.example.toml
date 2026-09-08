@@ -37,6 +37,21 @@ typing_indicators = true
 
 # Inline images in the terminal: "auto" probes the terminal, "on"/"off" force it.
 terminal_images = "auto"
+
+# When to show a received image inside the conversation:
+#   always  as soon as it arrives
+#   click   only after you click it (or press v in its menu); good for privacy
+#   never   names only; open them with the attachment menu
+inline_images = "always"
+
+# Conversation layout: "left" keeps every message on the left (sender names
+# tell them apart); "bubbles" puts your own messages on the right.
+message_layout = "left"
+
+# Terminal used when the shell, the keybinding or `omarchy-signal open` starts
+# the client. "auto" uses Omarchy's default terminal (omarchy default terminal
+# <name>). Inline images need ghostty, kitty or wezterm.
+terminal = "auto"
 image_max_rows = 14
 
 # Height of the device-linking QR code in terminal rows when drawn as an image

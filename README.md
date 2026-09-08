@@ -27,7 +27,9 @@ count. It follows whichever Omarchy theme is active.
   groups, history, quotes, reactions, attachments, typing indicators, read
   receipts. Images render inline through the kitty graphics protocol in
   Ghostty, kitty, WezTerm and Konsole; URLs and attachments are clickable
-  OSC 8 hyperlinks. Falls back to text on other terminals.
+  OSC 8 hyperlinks. Falls back to text on other terminals, so make one of
+  those Omarchy's default (`omarchy default terminal ghostty`) or set
+  `terminal = "ghostty"` in the config; `omarchy-signal doctor` checks this.
 - **Popup notifications** (Quickshell): an incoming message slides in at the
   top right. Click it and a reply window opens front and centre with the
   recent thread and a text field. Middle-click opens the conversation in the

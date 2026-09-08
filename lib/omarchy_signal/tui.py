@@ -112,6 +112,8 @@ class App:
         self.overlay_message = ""
         self.att_items: list[dict] = []      # attachments shown in the "attachment" overlay
         self.att_index = 0
+        self.revealed: set[str] = set()      # attachment paths shown inline on request
+        self.hidden: set[str] = set()        # attachment paths hidden on request
         self.link_uri = ""
         self.link_started = 0.0
         self.link_png_id = 0
@@ -168,6 +170,8 @@ class App:
                 await asyncio.sleep(0.12)
         if self.client:
             await self._load_initial()
+        if not self.graphics and self.cfg.terminal_images != "off":
+            self.show_toast("This terminal cannot draw images. For inline photos: omarchy default terminal ghostty", 8)
 
     async def _connect(self) -> None:
         self.client = BridgeClient(self.paths, on_event=self._on_event)
@@ -720,6 +724,13 @@ class App:
             elif key.name == "char" and key.char == "c":
                 self._copy_to_clipboard(self.att_items[self.att_index]["path"])
                 self.close_overlay()
+            elif key.name == "char" and key.char == "v":
+                att = self.att_items[self.att_index]
+                if str(att.get("contentType", "")).startswith("image/") and self.graphics:
+                    self.toggle_inline(att["path"])
+                    self.close_overlay()
+                else:
+                    self.show_toast("inline view needs an image and a graphics terminal")
             return
         if name in ("search", "attach", "saveas", "react"):
             path_mode = name in ("attach", "saveas")
@@ -844,7 +855,14 @@ class App:
                     if href.startswith("file://"):
                         found = self._attachment_for_path(href[7:])
                         if found:
-                            self.open_attachment_menu(*found)
+                            atts, i = found
+                            att = atts[i]
+                            # A hidden image reveals itself on click; anything else gets the menu.
+                            if (str(att.get("contentType", "")).startswith("image/") and self.graphics
+                                    and not self._inline_wanted(att["path"])):
+                                self.toggle_inline(att["path"])
+                                return
+                            self.open_attachment_menu(atts, i)
                             return
                     self._open_href(href)
                     return
@@ -1219,6 +1237,7 @@ class App:
         th = self.theme
         out: list[Line] = []
         outgoing = bool(m.get("outgoing"))
+        align_right = outgoing and self.cfg.message_layout == "bubbles"
         # The bridge sanitises everything it forwards; do it again here so a
         # bug on the other side of the socket can never reach the terminal.
         who = "You" if outgoing else (clean_name(m.get("senderName")) or clean_name(m.get("sender", "?")).split(":", 1)[-1])
@@ -1230,30 +1249,30 @@ class App:
                   + ("  " + T.fg(th.dim) + "(edited)" + T.RESET if m.get("edited") else "")
                   + ("  " + T.fg(tick_color) + tick + T.RESET if tick else ""))
         header_w = str_width(who) + 3 + str_width(self._fmt_time(m.get("ts", 0))) + (10 if m.get("edited") else 0) + (2 + str_width(tick) if tick else 0)
-        out.append(Line(header, header_w, right=outgoing))
+        out.append(Line(header, header_w, right=align_right))
         border = T.fg(mix(hue, th.background, 0.55))
         if m.get("deleted"):
-            out.append(Line(border + "▏" + T.RESET + " " + T.fg(th.dim) + T.ITALIC + "message deleted" + T.RESET, 17, right=outgoing))
+            out.append(Line(border + "▏" + T.RESET + " " + T.fg(th.dim) + T.ITALIC + "message deleted" + T.RESET, 17, right=align_right))
             return out
         if m.get("quoteText"):
             q = truncate(clean_text(m["quoteText"], single_line=True), bubble_w - 4)
-            out.append(Line(border + "┃ " + T.fg(th.dim) + T.ITALIC + q + T.RESET, str_width(q) + 2, right=outgoing))
+            out.append(Line(border + "┃ " + T.fg(th.dim) + T.ITALIC + q + T.RESET, str_width(q) + 2, right=align_right))
         body = clean_text(m.get("body", ""))
         if body:
             for raw in wrap(body, bubble_w - 2):
-                out.append(Line(border + "▏" + T.RESET + " " + self._linkify(raw) + T.RESET, str_width(raw) + 2, right=outgoing))
+                out.append(Line(border + "▏" + T.RESET + " " + self._linkify(raw) + T.RESET, str_width(raw) + 2, right=align_right))
         for a in m.get("attachments", [])[:8]:
-            out.extend(self._render_attachment(a, bubble_w, right=outgoing, border=border))
+            out.extend(self._render_attachment(a, bubble_w, right=align_right, border=border))
         reactions = m.get("reactions") or {}
         if reactions:
             counts: dict[str, int] = {}
             for e in reactions.values():
                 counts[e] = counts.get(e, 0) + 1
             text = "  ".join(f"{clean_name(e, max_length=8)}{n if n > 1 else ''}" for e, n in counts.items())
-            out.append(Line(T.fg(th.yellow) + "  " + text + T.RESET, str_width(text) + 2, right=outgoing))
+            out.append(Line(T.fg(th.yellow) + "  " + text + T.RESET, str_width(text) + 2, right=align_right))
         if m.get("expiresIn"):
-            out.append(Line(T.fg(th.dim) + f"  ⏱ {self._fmt_duration(m['expiresIn'])}" + T.RESET, 12, right=outgoing))
-        if outgoing and len(out) > 1:
+            out.append(Line(T.fg(th.dim) + f"  ⏱ {self._fmt_duration(m['expiresIn'])}" + T.RESET, 12, right=align_right))
+        if align_right and len(out) > 1:
             # Right-aligned bubbles move as one block: every line below the
             # header is padded to the widest line, so the border bar forms a
             # straight edge and wrapped text stays left-aligned inside it.
@@ -1290,6 +1309,23 @@ class App:
         out.append(T.fg(th.foreground) + text[pos:])
         return "".join(out)
 
+    def _inline_wanted(self, path: str) -> bool:
+        mode = self.cfg.inline_images
+        if path in self.hidden:
+            return False
+        if path in self.revealed:
+            return True
+        return mode == "always"
+
+    def toggle_inline(self, path: str) -> None:
+        if self._inline_wanted(path):
+            self.hidden.add(path)
+            self.revealed.discard(path)
+        else:
+            self.revealed.add(path)
+            self.hidden.discard(path)
+        self.dirty = True
+
     def _render_attachment(self, a: dict, bubble_w: int, *, right: bool, border: str) -> list[Line]:
         th = self.theme
         ctype = str(a.get("contentType", ""))
@@ -1299,7 +1335,10 @@ class App:
         label = f"{name} · {self._fmt_size(size)}" if size else name
         icon = {"image": "🖼", "video": "🎞", "audio": "🎤" if a.get("voiceNote") else "🎵"}.get(ctype.split("/")[0], "📎")
         out: list[Line] = []
-        if ctype.startswith("image/") and path and self.graphics:
+        is_image = ctype.startswith("image/") and bool(path)
+        if is_image and self.graphics and not self._inline_wanted(path):
+            label += "  · click to show"
+        if is_image and self.graphics and self._inline_wanted(path):
             slot = self._image_slot(path, bubble_w)
             if slot and not slot.failed:
                 for r in range(slot.rows):
@@ -1459,7 +1498,7 @@ class App:
         rows_needed = {"contacts": min(t.rows - 6, 20), "search": min(t.rows - 6, 18), "help": 20, "link": min(t.rows - 4, 32),
                        "quit": 5, "attach": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
                        "saveas": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
-                       "react": 6, "attachment": min(t.rows - 6, 7 + min(6, len(self.att_items)))}.get(name, 8)
+                       "react": 6, "attachment": min(t.rows - 6, 8 + min(6, len(self.att_items)))}.get(name, 8)
         h = min(t.rows - 4, rows_needed)
         top = max(2, (t.rows - h) // 2)
         left = max(2, (t.cols - w) // 2)
@@ -1554,7 +1593,10 @@ class App:
                            + T.fg(th.dim if not selected else th.bright_foreground) + pad(right, 22, align="right") + T.RESET)
                 y += 1
             y += 1
-            actions = [("Enter / o", "open (larger view)"), ("s", f"save to {self.cfg.save_dir}"), ("a", "save as…"), ("c", "copy path"), ("Esc", "back")]
+            cur = self.att_items[self.att_index] if self.att_items else {}
+            is_img = str(cur.get("contentType", "")).startswith("image/") and self.graphics
+            view_label = ("hide from the chat" if self._inline_wanted(str(cur.get("path", ""))) else "show in the chat") if is_img else "show in the chat (images only)"
+            actions = [("Enter / o", "open (larger view)"), ("v", view_label), ("s", f"save to {self.cfg.save_dir}"), ("a", "save as…"), ("c", "copy path"), ("Esc", "back")]
             for k, v in actions:
                 if y < top + h - 1:
                     out.append(T.move(y, body_left) + bg + T.fg(th.accent) + pad(k, 12) + T.fg(th.foreground) + truncate(v, body_w - 12) + T.RESET)

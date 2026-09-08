@@ -317,6 +317,38 @@ def cmd_demo(args) -> int:
     return _run(go)
 
 
+TERMINAL_ARGV = {
+    # terminal -> argv prefix that sets the Wayland app id and runs a command
+    "ghostty": ["ghostty", "--class=org.omarchy.signal", "-e"],
+    "kitty": ["kitty", "--class", "org.omarchy.signal", "-e"],
+    "wezterm": ["wezterm", "start", "--class", "org.omarchy.signal", "--"],
+    "foot": ["foot", "--app-id=org.omarchy.signal", "--"],
+    "alacritty": ["alacritty", "--class", "org.omarchy.signal", "-e"],
+}
+
+
+def cmd_open(args) -> int:
+    """Open (or focus) the client in a terminal window. Used by the keybinding,
+    the menu, the bar widget and the popup's "Open in terminal" button."""
+    import shlex
+    cfg = Config.load(_paths())
+    me = os.path.realpath(sys.argv[0]) if sys.argv and sys.argv[0] else "omarchy-signal"
+    tui = [me, "tui"] + ([args.conversation] if args.conversation else [])
+    if cfg.terminal != "auto" and shutil.which(cfg.terminal):
+        launch = TERMINAL_ARGV[cfg.terminal] + tui
+        if shutil.which("uwsm-app"):
+            launch = ["uwsm-app", "--"] + launch   # same session scoping Omarchy uses for every app
+    else:
+        launch = ["omarchy-launch-tui", "--app-id=org.omarchy.signal"] + tui
+    focus = shutil.which("omarchy-launch-or-focus")
+    if focus:
+        # omarchy-launch-or-focus <app-id> <command string>: focuses a window
+        # with that app id, else runs the command.
+        os.execv(focus, [focus, "org.omarchy.signal", " ".join(shlex.quote(a) for a in launch)])
+    os.execvp(launch[0], launch)
+    return 0
+
+
 def cmd_bridge(args) -> int:
     from .bridge import main as bridge_main
     return bridge_main(["--stderr"] if args.stderr else [])
@@ -356,7 +388,16 @@ def cmd_doctor(args) -> int:
     except BridgeUnavailable as exc:
         check("bridge answers", False, str(exc).split(";")[0])
     from .kitty import terminal_supports_graphics
-    print(f"  [..] terminal graphics: {'yes' if terminal_supports_graphics(probe=False) else 'not detected (probe runs in the TUI)'}")
+    print(f"  [..] this terminal draws images: {'yes' if terminal_supports_graphics(probe=False) else 'no'}")
+    default_term = ""
+    try:
+        default_term = subprocess.run(["omarchy-default-terminal"], capture_output=True, text=True, timeout=5, check=False).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    chosen = cfg.terminal if cfg.terminal != "auto" else (default_term or "unknown")
+    good = any(t in chosen for t in ("ghostty", "kitty", "wezterm"))
+    check(f"client terminal can draw images ({chosen})", good,
+          "omarchy default terminal ghostty   (or terminal = \"ghostty\" in config.toml)")
     return 0 if ok else 1
 
 
@@ -383,6 +424,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("tui", help="open the terminal client")
     s.add_argument("conversation", nargs="?", help="contact name, number, group or conversation key to open")
     s.set_defaults(fn=cmd_tui)
+
+    s = sub.add_parser("open", help="open or focus the client in a terminal window")
+    s.add_argument("conversation", nargs="?")
+    s.set_defaults(fn=cmd_open)
 
     s = sub.add_parser("send", help="send a message from the command line")
     s.add_argument("recipient", help="contact name, +number, username.NN or group:ID")

@@ -110,7 +110,7 @@ Item {
       }
       if (root.notificationMode === "system") {
         Util.execArgv(["omarchy-notification-send", "--app-name", "Signal", "-g", "󰭹", toast.title, toast.body,
-                       "--exec", "omarchy-launch-or-focus-tui", "--app-id=org.omarchy.signal", "omarchy-signal", "tui", toast.key])
+                       "--exec", "omarchy-signal", "open", toast.key])
         return
       }
       if (root.notificationMode !== "popup") return
@@ -187,7 +187,9 @@ Item {
   }
 
   function openTerminal(key) {
-    Util.execArgv(Model.tuiArgv(key))
+    var argv = Model.tuiArgv(key)
+    argv[0] = root.cliPath
+    Util.execArgv(argv)
     root.closeReply()
     if (key) root.dismissKey(key)
   }

@@ -54,12 +54,16 @@ Panel {
   }
 
   function activate() {
+    var argv
     if (root.rows.length === 0) {
-      if (root.query.trim()) Util.execArgv(Model.tuiArgv(""))
-      return
+      if (!root.query.trim()) return
+      argv = Model.tuiArgv("")
+    } else {
+      var row = root.rows[Math.max(0, Math.min(root.rows.length - 1, root.cursor))]
+      argv = Model.tuiArgv(row.key)
     }
-    var row = root.rows[Math.max(0, Math.min(root.rows.length - 1, root.cursor))]
-    Util.execArgv(Model.tuiArgv(row.key))
+    argv[0] = root.cliPath
+    Util.execArgv(argv)
     root.close()
   }
 
@@ -138,7 +142,7 @@ Panel {
     tooltipText: root.linked ? (root.unread > 0 ? root.unread + " unread Signal message" + (root.unread === 1 ? "" : "s") : "Signal")
                              : (root.connected ? "Signal: not linked (omarchy-signal link)" : "Signal: bridge offline")
     onPressed: function(b) {
-      if (b === Qt.RightButton) Util.execArgv(Model.tuiArgv(""))
+      if (b === Qt.RightButton) { var argv = Model.tuiArgv(""); argv[0] = root.cliPath; Util.execArgv(argv) }
       else if (b === Qt.MiddleButton) root.refresh()
       else root.toggle()
     }

@@ -81,7 +81,10 @@ class Config:
     notification_preview: bool = True      # show message text in popup (False = "New message")
     notification_timeout_ms: int = 8000
     typing_indicators: bool = True
-    terminal_images: str = "auto"          # auto | on | off
+    terminal_images: str = "auto"          # auto | on | off   (can the terminal draw images at all)
+    inline_images: str = "always"          # always | click | never   (show received images in the thread)
+    message_layout: str = "left"           # left (everything left-aligned) | bubbles (yours on the right)
+    terminal: str = "auto"                 # terminal for `omarchy-signal open`: auto (system default) | ghostty | kitty | wezterm | foot | alacritty
     image_max_rows: int = 14
     qr_rows: int = 9                       # height of the linking QR code in terminal rows (image mode)
     qr_style: str = "auto"                 # auto (shell popup, else image, else text) | shell | image | half | quad | braille
@@ -129,6 +132,12 @@ class Config:
             cfg.notifications = "popup"
         if cfg.terminal_images not in ("auto", "on", "off"):
             cfg.terminal_images = "auto"
+        if cfg.inline_images not in ("always", "click", "never"):
+            cfg.inline_images = "always"
+        if cfg.message_layout not in ("left", "bubbles"):
+            cfg.message_layout = "left"
+        if cfg.terminal not in ("auto", "ghostty", "kitty", "wezterm", "foot", "alacritty"):
+            cfg.terminal = "auto"
         if cfg.trust_new_identities not in ("always", "on-first-use", "never"):
             cfg.trust_new_identities = "on-first-use"
         cfg.image_max_rows = max(2, min(60, cfg.image_max_rows))

@@ -105,7 +105,7 @@ function isConversationKey(key) {
 // The argv used to launch the terminal client for a conversation. Always an
 // array: it goes through Util.execArgv, never through a shell string.
 function tuiArgv(conversationKey) {
-  var argv = ["omarchy-launch-or-focus-tui", "--app-id=org.omarchy.signal", "omarchy-signal", "tui"]
+  var argv = ["omarchy-signal", "open"]
   if (isConversationKey(conversationKey)) argv.push(conversationKey)
   return argv
 }
