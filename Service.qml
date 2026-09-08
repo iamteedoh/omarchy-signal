@@ -218,6 +218,9 @@ Item {
     function open(): string { Util.execArgv(Model.tuiArgv("")); return "ok" }
     function reply(key: string): string { root.openReply(key, ""); return "ok" }
     function dismiss(): string { root.dismissAll(); return "ok" }
+    function close(): string { root.closeReply(); return "ok" }
+    function demo(): string { Util.execArgv([root.cliPath, "demo"]); return "ok" }
+    function toasts(): string { return String(root.toasts.length) }
     function unread(): string { return String(root.unread) }
     function state(): string { return JSON.stringify({ connected: root.connected, linked: root.linked, unread: root.unread }) }
   }
