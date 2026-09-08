@@ -23,7 +23,7 @@ Item {
   property string account: ""            // our own number, for reacting to our own messages
   property bool emojiAutoconvert: true   // :smile: / :D become emoji after the space (setting)
   property bool thumbnails: true         // picture tiles in the attachment picker (setting); off = plain list
-  property int scrollSpeed: 3            // trackpad/wheel multiplier (setting)
+  property int scrollSpeed: 6            // trackpad/wheel multiplier (setting)
 
   // Qt Quick moves a Flickable by the raw trackpad pixel delta, which on a
   // Wayland touchpad is a few pixels per event; terminals and GTK apps scale
