@@ -206,8 +206,10 @@ def cmd_link(args) -> int:
         if hello.get("linked") and not args.force:
             print("an account is already linked; pass --force to link another")
             return 1
-        res = await client.request("link", deviceName=args.name or Config.load(_paths()).device_name)
+        cfg = Config.load(_paths())
+        res = await client.request("link", deviceName=args.name or cfg.device_name)
         uri = res["uri"]
+        qr_rows = max(5, min(40, args.qr_size)) if args.qr_size else cfg.qr_rows
         print("Open Signal on your phone → Settings → Linked devices → Link new device, then scan:\n")
         graphics = (not args.text) and sys.stdout.isatty() and kitty.terminal_supports_graphics()
         shown = False
@@ -218,7 +220,7 @@ def cmd_link(args) -> int:
                 rows_, cols_, xpix, ypix = struct.unpack("HHHH", packed)
                 cell_w = max(1, xpix // max(1, cols_)) if xpix else 10
                 cell_h = max(1, ypix // max(1, rows_)) if ypix else 20
-                seq, cols, rows = qr.qr_image_sequence(uri, kitty.image_id_for(uri), cell_w=cell_w, cell_h=cell_h)
+                seq, cols, rows = qr.qr_image_sequence(uri, kitty.image_id_for(uri), cell_w=cell_w, cell_h=cell_h, rows=qr_rows)
                 sys.stdout.write("  " + seq + "\n" * (rows + 1))
                 sys.stdout.flush()
                 shown = True
@@ -226,8 +228,9 @@ def cmd_link(args) -> int:
                 shown = False
         if not shown:
             try:
+                # Dark modules on a light background, as a scanner expects.
                 for line in qr.qr_text_lines(uri):
-                    print("  " + line)
+                    print("  \x1b[48;2;255;255;255m\x1b[38;2;0;0;0m" + line + "\x1b[0m")
             except qr.QrUnavailable as exc:
                 print(f"({exc}; paste this into another QR tool)\n{uri}")
         print()
@@ -392,6 +395,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-n", "--name", help="device name shown in Signal")
     s.add_argument("--force", action="store_true")
     s.add_argument("--text", action="store_true", help="draw the QR code with block characters even if the terminal can show images")
+    s.add_argument("--qr-size", type=int, metavar="ROWS", help="height of the image QR code in rows (default from config, 9)")
     s.set_defaults(fn=cmd_link)
 
     s = sub.add_parser("demo", help="show a sample notification popup (nothing is sent)")

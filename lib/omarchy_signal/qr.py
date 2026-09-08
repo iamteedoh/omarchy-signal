@@ -1,9 +1,11 @@
 """QR code rendering for device linking.
 
-Two paths: a compact image over the kitty graphics protocol when the terminal
-supports it (about 14 rows tall, crisp at any font size), otherwise half-block
-Unicode from ``qrencode -t UTF8`` at the lowest error-correction level, which
-is the smallest text rendering ``qrencode`` offers.
+Two paths: a small image over the kitty graphics protocol when the terminal
+supports it (9 rows tall by default, crisp at any font size), otherwise
+quarter-block glyphs (two modules per column, two per row) built from
+``qrencode``'s module matrix at the lowest error-correction level. For a
+typical link URI that is about 11 rows by 22 columns, half the size of
+``qrencode -t UTF8``.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ import subprocess
 
 from . import kitty
 
-QR_ROWS = 14           # image height in terminal rows
+QR_ROWS = 9            # image height in terminal rows (override with qr_rows / --qr-size)
 QR_TIMEOUT = 5
 
 
@@ -41,9 +43,43 @@ def qr_png(uri: str) -> bytes:
     return _qrencode(["-o", "-", "-t", "PNG", "-s", "8", "-m", "2", "-l", "L"], uri)
 
 
+def qr_matrix(uri: str) -> list[list[bool]]:
+    """Module matrix (True = dark) including a one-module quiet zone."""
+    out = _qrencode(["-t", "ASCII", "-m", "1", "-l", "L"], uri).decode("ascii", "replace")
+    rows = [line for line in out.splitlines() if line]
+    width = max((len(r) for r in rows), default=0)
+    matrix = []
+    for line in rows:
+        line = line.ljust(width)
+        matrix.append([line[i] == "#" for i in range(0, width, 2)])
+    if not matrix or len(matrix) < 21:
+        raise QrUnavailable("qrencode produced an unexpected matrix")
+    return matrix
+
+
+# Quadrant block glyphs indexed by bits (top-left, top-right, bottom-left, bottom-right).
+_QUADRANTS = " ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█"
+
+
 def qr_text_lines(uri: str) -> list[str]:
-    out = _qrencode(["-t", "UTF8", "-m", "1", "-l", "L"], uri).decode("utf-8", "replace")
-    return [line for line in out.splitlines() if line.strip()]
+    """Quarter-block rendering: each character carries a 2x2 block of modules.
+    Draw it with a dark foreground on a light background."""
+    m = qr_matrix(uri)
+    h = len(m)
+    w = max(len(r) for r in m)
+    if h % 2:
+        m = m + [[False] * w]
+        h += 1
+    lines = []
+    for y in range(0, h, 2):
+        chars = []
+        for x in range(0, w, 2):
+            def bit(yy, xx):
+                return 1 if (yy < len(m) and xx < len(m[yy]) and m[yy][xx]) else 0
+            idx = bit(y, x) * 8 + bit(y, x + 1) * 4 + bit(y + 1, x) * 2 + bit(y + 1, x + 1)
+            chars.append(_QUADRANTS[idx])
+        lines.append("".join(chars))
+    return lines
 
 
 def qr_cells(cell_w: int, cell_h: int, *, rows: int = QR_ROWS) -> tuple[int, int]:

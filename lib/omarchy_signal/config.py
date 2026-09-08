@@ -83,6 +83,7 @@ class Config:
     typing_indicators: bool = True
     terminal_images: str = "auto"          # auto | on | off
     image_max_rows: int = 14
+    qr_rows: int = 9                       # height of the linking QR code in terminal rows (image mode)
     device_name: str = "omarchy-signal"
     log_level: str = "info"
     trust_new_identities: str = "on-first-use"  # passed to signal-cli verbatim (allow-listed)
@@ -129,6 +130,7 @@ class Config:
         if cfg.trust_new_identities not in ("always", "on-first-use", "never"):
             cfg.trust_new_identities = "on-first-use"
         cfg.image_max_rows = max(2, min(60, cfg.image_max_rows))
+        cfg.qr_rows = max(5, min(40, cfg.qr_rows))
         cfg.notification_timeout_ms = max(1000, min(120000, cfg.notification_timeout_ms))
         cfg.history_retain_days = max(0, cfg.history_retain_days)
         return cfg

@@ -1360,7 +1360,7 @@ class App:
                     png = qr.qr_png(self.link_uri)
                     self.link_png_id = kitty.image_id_for("link:" + self.link_uri)
                     out.append(kitty.encode_transmit_only(png, self.link_png_id))
-                cols, rows = qr.qr_cells(self.term.cell_w, self.term.cell_h, rows=min(qr.QR_ROWS, h - 8))
+                cols, rows = qr.qr_cells(self.term.cell_w, self.term.cell_h, rows=min(self.cfg.qr_rows, h - 8))
                 x = left + max(2, (w - cols) // 2)
                 out.append(T.move(y, x) + kitty.encode_place(self.link_png_id, cols=cols, rows=rows))
                 y += rows

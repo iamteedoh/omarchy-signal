@@ -39,6 +39,10 @@ typing_indicators = true
 terminal_images = "auto"
 image_max_rows = 14
 
+# Height of the device-linking QR code in terminal rows when drawn as an image
+# (Ghostty, kitty, WezTerm). The text fallback is about 11 rows regardless.
+qr_rows = 9
+
 # Name shown in Signal's "Linked devices" list.
 device_name = "omarchy-signal"
 
