@@ -53,14 +53,16 @@ Panel {
     if (!contactsProc.running) contactsProc.running = true
   }
 
-  function activate() {
+  // Enter opens the conversation in its own window (the popup look, detached);
+  // Ctrl+Enter or right-click on a row opens the full terminal client instead.
+  function activate(inTerminal) {
     var argv
     if (root.rows.length === 0) {
       if (!root.query.trim()) return
       argv = Model.tuiArgv("")
     } else {
       var row = root.rows[Math.max(0, Math.min(root.rows.length - 1, root.cursor))]
-      argv = Model.tuiArgv(row.key)
+      argv = inTerminal ? Model.tuiArgv(row.key) : [root.cliPath, "window", "--", row.key]
     }
     argv[0] = root.cliPath
     Util.execArgv(argv)
@@ -182,7 +184,7 @@ Panel {
       // navigation keys itself below.
       blocked: searchField.activeFocus
       onMoveRequested: function(dx, dy) { if (dy !== 0) root.moveCursor(dy); else if (dx !== 0) root.toggleMode() }
-      onActivateRequested: root.activate()
+      onActivateRequested: root.activate(false)
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -234,7 +236,7 @@ Panel {
             else if (event.key === Qt.Key_Up || (ctrl && event.key === Qt.Key_P)) { root.moveCursor(-1); event.accepted = true }
             else if (event.key === Qt.Key_PageDown) { root.moveCursor(8); event.accepted = true }
             else if (event.key === Qt.Key_PageUp) { root.moveCursor(-8); event.accepted = true }
-            else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.activate(); event.accepted = true }
+            else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.activate(!!(event.modifiers & Qt.ControlModifier)); event.accepted = true }
             else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) { root.toggleMode(); event.accepted = true }
             else if (event.key === Qt.Key_Escape) {
               if (searchField.text.length > 0) searchField.text = ""; else root.close()
@@ -285,8 +287,9 @@ Panel {
               id: rowHover
               anchors.fill: parent
               hoverEnabled: true
+              acceptedButtons: Qt.LeftButton | Qt.RightButton
               onEntered: root.cursor = rowItem.index
-              onClicked: { root.cursor = rowItem.index; root.activate() }
+              onClicked: function(mouse) { root.cursor = rowItem.index; root.activate(mouse.button === Qt.RightButton) }
             }
 
             Row {
@@ -350,7 +353,7 @@ Panel {
             id: footerHints
             anchors.left: parent.left
             width: parent.width - footerPos.implicitWidth - Style.space(8)
-            text: "↑↓ move · Enter open · Tab " + (root.showContacts ? "conversations" : "contacts") + " · Esc " + (root.query ? "clear" : "close")
+            text: "↑↓ move · Enter window · Ctrl+Enter terminal · Tab " + (root.showContacts ? "conversations" : "contacts") + " · Esc " + (root.query ? "clear" : "close")
             textFormat: Text.PlainText
             elide: Text.ElideRight
             color: Util.alpha(root.bar.foreground, 0.5)

@@ -45,8 +45,9 @@ count. It follows whichever Omarchy theme is active.
   the whole client. Middle-click on the toast opens the terminal; right-click
   dismisses.
 - **Bar widget**: Signal glyph with a pulsing unread dot and count. Click for a
-  keyboard-driven list of conversations and contacts (type to filter, Enter
-  opens it in the terminal).
+  keyboard-driven list of conversations and contacts: type to filter, Enter
+  opens the chat in its own window, Ctrl+Enter (or right-click) in the
+  terminal client.
 - **Command line**: `omarchy-signal send "Trinity" -m "on my way"`,
   `omarchy-signal send +15550002222 -a photo.jpg`, `conversations`, `contacts`,
   `history`, `status`, `doctor`.

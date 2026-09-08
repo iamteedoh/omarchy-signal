@@ -13,8 +13,9 @@ import unittest
 import _helpers  # noqa: F401
 from omarchy_signal import tui
 from omarchy_signal.config import Config, Paths
-from omarchy_signal.term import Key
+from omarchy_signal.term import Key, str_width
 from omarchy_signal.theme import Theme
+tui.str_width = str_width
 
 
 class FakeTerminal:
@@ -304,6 +305,39 @@ class EmojiPickerTests(unittest.TestCase):
             self.assertEqual(app.emoji_suggestions, [])
             self.assertIn(":zzzzq:", app.composer.text)
         asyncio.run(go())
+
+
+class ListAlignmentTests(unittest.TestCase):
+    def test_separator_column_is_stable(self):
+        app = make_app(cols=120, rows=40)
+        app.conversations = [
+            {"key": "number:+15550000001", "kind": "number", "name": "Note to Self", "lastTs": 1700000000000, "preview": "Testing", "unread": 0},
+            {"key": "number:+15550000002", "kind": "number", "name": "Giselle Valentín", "lastTs": 1699990000000, "preview": "You’re welcome ☺\ufe0f", "unread": 0},
+            {"key": "number:+15550000003", "kind": "number", "name": "A very long contact name indeed", "lastTs": 1690000000000, "preview": "x" * 80, "unread": 120},
+        ]
+        app.active_key = app.conversations[0]["key"]
+        app.draw()
+        out = app.term.text()
+        strip = lambda t: re.sub(r"\x1b\[[0-9;?]* ?[A-Za-z]", "", t)
+        cols = set()
+        for m in re.finditer(r"\x1b\[(\d+);1H(.*?)(?=\x1b\[\d+;\d+H)", out, re.S):
+            seg = strip(m.group(2))
+            if "│" in seg and 3 <= int(m.group(1)) <= 8:
+                cols.add(tui.str_width(seg[:seg.index("│")]) + 1)
+        self.assertEqual(cols, {tui.LIST_WIDTH}, cols)
+
+    def test_picker_ranks_me_as_note_to_self(self):
+        app = make_app()
+        seed(app)
+        app.contacts = [{"key": "number:+15550000009", "displayName": "James", "number": "+15550000009"},
+                        {"key": "number:+15550000001", "displayName": "Note to Self", "number": "+15550000001"}]
+        app.open_overlay("contacts")
+        app.overlay_query = "me"
+        app._filter_overlay()
+        self.assertEqual(app.overlay_results[0]["name"], "Note to Self")
+        app.overlay_query = "jam"
+        app._filter_overlay()
+        self.assertEqual(app.overlay_results[0]["name"], "James")
 
 
 class FooterAndImageLifecycleTests(unittest.TestCase):

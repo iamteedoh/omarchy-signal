@@ -151,7 +151,9 @@ def cmd_float_window(args) -> int:
 def cmd_window(args) -> int:
     """Open a conversation in its own window (Quickshell), detached from the client."""
     key = ""
-    if args.conversation:
+    if args.conversation and re.fullmatch(r"(number|uuid|group|username):[A-Za-z0-9+/=_.\-]{1,120}", args.conversation):
+        key = args.conversation
+    elif args.conversation:
         async def go(client, hello):
             res = await client.request("resolve", query=args.conversation)
             if "key" not in res:

@@ -40,7 +40,20 @@ def char_width(ch: str) -> int:
 
 
 def str_width(s: str) -> int:
-    return sum(char_width(ch) for ch in s)
+    """Display width. U+FE0F after a one-cell glyph turns it into a two-cell
+    emoji (☺︎ vs ☺️), which is how terminals render it."""
+    total = 0
+    prev_w = 0
+    for ch in s:
+        if ch == "\ufe0f":
+            if prev_w == 1:
+                total += 1
+                prev_w = 2
+            continue
+        w = char_width(ch)
+        total += w
+        prev_w = w
+    return total
 
 
 def truncate(s: str, width: int, *, ellipsis: str = "…") -> str:

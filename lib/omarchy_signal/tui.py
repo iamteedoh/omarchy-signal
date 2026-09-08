@@ -311,9 +311,15 @@ class App:
         elif name == "sent":
             key = data.get("conversation", "")
             self._touch_conversation(key, data.get("ts", 0), data.get("text") or "[attachment]")
-            if key in self.messages:
-                if not any(m.get("ts") == data.get("ts") and m.get("outgoing") for m in self.messages[key]):
-                    self.messages[key].append({
+            msgs = self.messages.setdefault(key, [])
+            pending = next((m for m in msgs if m.get("_pending") and m.get("body") == data.get("text", "")), None)
+            if pending is not None:
+                # The bridge confirmed it before the send call returned: settle it now.
+                pending["ts"] = data.get("ts", pending["ts"])
+                pending["status"] = data.get("status", "sent")
+                pending.pop("_pending", None)
+            elif not any(m.get("ts") == data.get("ts") and m.get("outgoing") for m in msgs):
+                    msgs.append({
                         "conversation": key, "ts": data.get("ts", 0), "sender": "me", "senderName": "You",
                         "outgoing": True, "body": data.get("text", ""), "attachments": data.get("attachments", []),
                         "status": data.get("status", "sent"), "reactions": {}, "quoteText": "", "quoteAuthor": ""})
@@ -452,12 +458,17 @@ class App:
         try:
             before = self.messages[key][0]["ts"] if older and self.messages.get(key) else 0
             msgs = await self.client.request("history", conversation=key, before=before, limit=60)
+            existing = self.messages.get(key, [])
             if older:
-                self.messages[key] = msgs + self.messages.get(key, [])
+                self.messages[key] = msgs + existing
                 if not msgs:
                     self.show_toast("beginning of history")
             else:
-                self.messages[key] = msgs
+                # Merge rather than replace: a message sent (or received) while
+                # this request was in flight must not vanish from the thread.
+                seen = {(m.get("ts"), bool(m.get("outgoing"))) for m in msgs}
+                extra = [m for m in existing if m.get("_pending") or (m.get("ts"), bool(m.get("outgoing"))) not in seen]
+                self.messages[key] = sorted(msgs + extra, key=lambda m: m.get("ts", 0))
         except BridgeError as exc:
             self.show_toast(f"history: {exc}")
         finally:
@@ -484,7 +495,8 @@ class App:
         self.overlay_message = message
         self.focus = "overlay"
         if name in ("contacts", "forward"):
-            self.overlay_items = [{"key": c["key"], "name": c["displayName"], "sub": c.get("number") or c.get("username") or "", "kind": "contact"}
+            self.overlay_items = [{"key": c["key"], "name": c["displayName"], "sub": c.get("number") or c.get("username") or "", "kind": "contact",
+                                   "aliases": "me myself self notes" if c["displayName"] == "Note to Self" else ""}
                                   for c in self.contacts]
             self.overlay_items += [{"key": g["key"], "name": g["name"], "sub": f"{len(g.get('members', []))} members", "kind": "group"}
                                    for g in self.groups]
@@ -906,7 +918,17 @@ class App:
         if self.overlay in ("contacts", "forward", "members"):
             items = self.overlay_items
             if q:
-                items = [i for i in items if q in i["name"].lower() or q in i["sub"].lower()]
+                def rank(i):
+                    name = i["name"].lower()
+                    aliases = i.get("aliases", "").split()
+                    if name == q or q in aliases:
+                        return 0
+                    if name.startswith(q):
+                        return 1
+                    if q in name or q in i["sub"].lower():
+                        return 2
+                    return 9
+                items = sorted([i for i in items if rank(i) < 9], key=lambda i: (rank(i), i["name"].lower()))
             self.overlay_results = items[:200]
             self.overlay_index = min(self.overlay_index, max(0, len(self.overlay_results) - 1))
 
@@ -1454,7 +1476,8 @@ class App:
         pending = {"conversation": key, "ts": local_ts, "sender": "me", "senderName": "You", "outgoing": True,
                    "body": text, "attachments": [{"filename": Path(a).name, "contentType": _guess_mime(Path(a)),
                                                   "size": Path(a).stat().st_size if Path(a).exists() else 0, "path": a} for a in attachments],
-                   "status": "sending", "reactions": {}, "quoteText": params.get("quoteText", ""), "quoteAuthor": "", "_pending": True}
+                   "status": "sending", "reactions": {}, "quoteText": params.get("quoteText", ""), "quoteAuthor": "", "_pending": True,
+                   "_started": time.monotonic()}
         self.messages.setdefault(key, []).append(pending)
         self.composer.clear()
         self.scroll = 0
@@ -1474,7 +1497,8 @@ class App:
             return
         ts = int(res.get("ts", 0) or 0)
         pending["ts"] = ts or pending["ts"]
-        pending["status"] = res.get("status", "sent")
+        if pending.get("status") in ("sending", ""):
+            pending["status"] = res.get("status", "sent")
         pending.pop("_pending", None)
         if res.get("failures"):
             self.show_toast("delivered with errors: " + ", ".join(res["failures"])[:80], 5)
@@ -1752,8 +1776,8 @@ class App:
                 name = truncate(clean_name(c.get("name")) or clean_name(c["key"]).split(":", 1)[-1], width - 8)
                 if c.get("muted"):
                     name = "󰖁 " + truncate(name, width - 10)
-                badge = f" {unread:>2} " if unread else "    "
-                when = self._fmt_time(c.get("lastTs", 0), short=True)
+                badge = pad(f" {min(unread, 99):>2} ", 5, align="right") if unread else "     "
+                when = truncate(self._fmt_time(c.get("lastTs", 0), short=True), 5, ellipsis="")
                 typing_name = self.typing.get(c["key"])
                 preview = "typing…" if typing_name else clean_text(c.get("preview", ""), single_line=True)
                 preview = truncate(preview, width - 2)
@@ -1765,8 +1789,9 @@ class App:
                     marker = " "
                 name_style = T.BOLD + T.fg(th.bright_foreground if unread else th.foreground)
                 badge_style = T.bg(th.accent) + T.fg(th.background) + T.BOLD if unread else ""
-                line = (T.move(row, 1) + bg + marker + name_style + " " + pad(name, width - 8) + T.RESET + bg
-                        + (badge_style + badge + T.RESET + bg if unread else T.fg(th.dim) + pad(when, 4, align="right"))
+                name = truncate(name, width - 9)
+                line = (T.move(row, 1) + bg + marker + name_style + " " + pad(name, width - 9) + T.RESET + bg
+                        + (badge_style + badge + T.RESET + bg if unread else T.fg(th.dim) + pad(when, 5, align="right"))
                         + " " + T.RESET + sep)
                 out.append(line)
                 if i + 1 < rows and (unread or is_active or preview) and False:
@@ -1793,12 +1818,13 @@ class App:
                             name = "󰖁 " + name
                         name = truncate(name, width - 8)
                         when = self._fmt_time(c.get("lastTs", 0), short=True)
-                        badge = f" {unread:>2} " if unread else pad(when, 4, align="right")
+                        badge = pad(f" {min(unread, 99):>2} ", 5, align="right") if unread else pad(truncate(when, 5, ellipsis=""), 5, align="right")
                         badge_style = (T.bg(th.accent) + T.fg(th.background) + T.BOLD) if unread else T.fg(th.dim)
                         hue = self._hue(c["key"])
+                        name = truncate(name, width - 10)
                         line = (T.move(row, 1) + bg + marker + T.BOLD + T.fg(th.bright_foreground if unread else th.foreground)
                                 + " " + T.fg(hue) + "●" + T.fg(th.bright_foreground if unread else th.foreground) + " "
-                                + pad(name, width - 9) + T.RESET + bg + badge_style + badge + T.RESET + bg + " " + T.RESET + sep)
+                                + pad(name, width - 10) + T.RESET + bg + badge_style + badge + T.RESET + bg + " " + T.RESET + sep)
                     else:
                         typing_name = self.typing.get(c["key"])
                         preview = "✎ typing…" if typing_name else clean_text(c.get("preview", ""), single_line=True)
@@ -1860,6 +1886,8 @@ class App:
         hue = th.accent if outgoing else self._hue(m.get("sender", ""))
         status = m.get("status", "")
         tick = {"sending": "◌ sending", "sent": "✓", "delivered": "✓✓", "read": "✓✓", "viewed": "✓✓", "failed": "✗ failed"}.get(status, "")
+        if status == "sending" and m.get("_started"):
+            tick += f" {int(time.monotonic() - m['_started'])}s"
         tick_color = th.red if status == "failed" else (th.accent if status in ("read", "viewed") else th.dim)
         header = (T.fg(hue) + T.BOLD + who + T.RESET + T.fg(th.dim) + " · " + self._fmt_time(m.get("ts", 0)) + T.RESET
                   + ("  " + T.fg(th.dim) + "(edited)" + T.RESET if m.get("edited") else "")
