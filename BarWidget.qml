@@ -20,6 +20,7 @@ Panel {
   property bool linked: false
   property var conversations: []
   property var contacts: []
+  property var openWindows: []           // [{key, name}] detached conversation windows
   property string query: ""
   property int cursor: 0
   property bool showContacts: false
@@ -29,7 +30,10 @@ Panel {
   readonly property var rows: {
     var list = root.showContacts
       ? root.contacts.map(function(c) { return { key: c.key, name: Model.singleLine(c.displayName || c.key, 60), sub: Model.singleLine(c.number || c.username || "", 40), unread: 0, ts: 0 } })
-      : Model.sortConversations(root.conversations).map(function(c) { return { key: c.key, name: Model.singleLine(c.name || c.key, 60), sub: Model.singleLine(c.preview || "", 80), unread: c.unread || 0, ts: c.lastTs || 0, typing: c.typing === true } })
+      : Model.sortConversations(root.conversations).map(function(c) {
+          var open = root.openWindows.some(function(w) { return w.key === c.key })
+          return { key: c.key, name: (open ? "⧉ " : "") + Model.singleLine(c.name || c.key, 60), sub: Model.singleLine(c.preview || "", 80), unread: c.unread || 0, ts: c.lastTs || 0, typing: c.typing === true }
+        })
     return Model.filterRows(list, root.query).slice(0, 500)
   }
 
@@ -51,6 +55,20 @@ Panel {
   function refresh() {
     if (!convProc.running) convProc.running = true
     if (!contactsProc.running) contactsProc.running = true
+    if (!windowsProc.running) windowsProc.running = true
+  }
+
+  Process {
+    id: windowsProc
+    command: ["omarchy-shell", "iamteedoh.signal", "windows"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var rows = []
+        try { rows = JSON.parse(text) } catch (e) { rows = [] }
+        root.openWindows = Array.isArray(rows) ? rows : []
+      }
+    }
   }
 
   // Enter opens the conversation in its own window (the popup look, detached);
@@ -215,7 +233,8 @@ Panel {
           Text {
             id: headerState
             anchors.right: parent.right
-            text: root.linked ? "◉ " + (root.unread > 0 ? root.unread + " unread" : "secure") : (root.connected ? "◌ not linked" : "◌ offline")
+            text: (root.linked ? "◉ " + (root.unread > 0 ? root.unread + " unread" : "secure") : (root.connected ? "◌ not linked" : "◌ offline"))
+                  + (root.openWindows.length > 0 ? "  ⧉ " + root.openWindows.length + (root.openWindows.length === 1 ? " window" : " windows") : "")
             textFormat: Text.PlainText
             color: root.linked ? Color.accent : Color.urgent
             font.family: root.bar.fontFamily

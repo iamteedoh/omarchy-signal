@@ -34,6 +34,25 @@ Item {
   property bool emojiAutoconvert: true
   property bool attachmentThumbnails: true
   property var windows: []               // conversation keys open as detached windows
+  property var windowTabs: []            // [{key, name}] for the tab strip in every detached window
+  property int windowSeq: 0              // cascade index for newly opened windows
+
+  function refreshTabs() {
+    var tabs = []
+    for (var i = 0; i < windowRepeater.count; i++) {
+      var w = windowRepeater.objectAt(i)
+      if (w && w.view) tabs.push({ key: w.modelData, name: w.view.conversationName })
+    }
+    root.windowTabs = tabs
+  }
+
+  function raiseWindow(key) {
+    for (var i = 0; i < windowRepeater.count; i++) {
+      var w = windowRepeater.objectAt(i)
+      if (w && w.modelData === key) { Util.execArgv([root.cliPath, "raise-window", "--", w.title]); return true }
+    }
+    return false
+  }
   property bool dnd: false
   property string lastError: ""
 
@@ -205,7 +224,8 @@ Item {
 
   function openWindow(key, name) {
     if (!Model.isConversationKey(key)) return false
-    if (root.windows.indexOf(key) < 0) root.windows = root.windows.concat([key])
+    if (root.windows.indexOf(key) < 0) { root.windowSeq += 1; root.windows = root.windows.concat([key]) }
+    else root.raiseWindow(key)
     root.dismissKey(key)
     return true
   }
@@ -231,6 +251,8 @@ Item {
       return root.openWindow(key, "") ? "ok" : "refused"
     }
     function closeWindow(key: string): string { root.closeWindow(key); return "ok" }
+    function windows(): string { return JSON.stringify(root.windowTabs) }
+    function raise(key: string): string { return root.raiseWindow(key) ? "ok" : "unknown" }
     function dismiss(): string { root.dismissAll(); return "ok" }
     function close(): string { root.closeReply(); return "ok" }
     function demo(): string { Util.execArgv([root.cliPath, "demo"]); return "ok" }
@@ -446,10 +468,12 @@ Item {
   Instantiator {
     id: windowRepeater
     model: root.windows
+    onObjectRemoved: root.refreshTabs()
     delegate: FloatingWindow {
       id: win
       required property string modelData
       property alias view: winView
+      readonly property int cascade: root.windowSeq
       title: "Signal · " + winView.conversationName
       color: Util.alpha(Color.popups.background, 1.0)
       implicitWidth: Style.space(640)
@@ -465,8 +489,9 @@ Item {
           win.visible = true
           // Float, size and centre it once mapped; from then on it is an
           // ordinary window Hyprland can tile, move or park in the scratchpad.
-          floatProc.command = [root.cliPath, "float-window", "--", win.title]
+          floatProc.command = [root.cliPath, "float-window", "--offset", String((win.cascade - 1) % 6), "--", win.title]
           floatProc.running = true
+          root.refreshTabs()
         })
         nameProc.command = [root.cliPath, "conversations", "--json", "--all"]
         nameProc.running = true
@@ -517,8 +542,11 @@ Item {
         emojiAutoconvert: root.emojiAutoconvert
         thumbnails: root.attachmentThumbnails
         detached: true
+        siblings: root.windowTabs
+        onConversationNameChanged: root.refreshTabs()
         onRequestClose: root.closeWindow(win.modelData)
         onRequestTerminal: root.openTerminal(win.modelData)
+        onRequestRaise: function(key) { root.raiseWindow(key) }
       }
     }
   }

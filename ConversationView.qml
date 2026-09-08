@@ -29,6 +29,18 @@ Item {
   signal requestClose()
   signal requestDetach()
   signal requestTerminal()
+  signal requestRaise(string key)
+
+  property var siblings: []              // other detached windows: [{key, name}]
+
+  function cycleWindow(delta) {
+    var tabs = Array.isArray(view.siblings) ? view.siblings : []
+    if (tabs.length < 2) return
+    var idx = -1
+    for (var i = 0; i < tabs.length; i++) if (tabs[i].key === view.conversationKey) idx = i
+    var next = tabs[(idx + delta + tabs.length) % tabs.length]
+    if (next) view.requestRaise(next.key)
+  }
 
   property var thread: []                // Model.threadRows output
   property var quote: null               // {ts, author, text, who}
@@ -205,6 +217,45 @@ Item {
       }
     }
     Rectangle { Layout.fillWidth: true; height: 1; color: Util.alpha(Color.popups.border, 0.6) }
+
+    // Tab strip: every detached conversation, so a stack of windows in the
+    // scratchpad is still one click (or Ctrl+Tab) away from any of them.
+    Flow {
+      visible: view.detached && Array.isArray(view.siblings) && view.siblings.length > 1
+      Layout.fillWidth: true
+      spacing: Style.space(6)
+      Repeater {
+        model: view.detached ? view.siblings : []
+        delegate: Rectangle {
+          required property var modelData
+          readonly property bool current: modelData.key === view.conversationKey
+          width: tabText.implicitWidth + Style.space(20)
+          height: tabText.implicitHeight + Style.space(10)
+          radius: height / 2
+          color: current ? Util.alpha(Color.accent, 0.25) : Util.alpha(Color.popups.text, 0.06)
+          border.width: 1
+          border.color: current ? Color.accent : Util.alpha(Color.popups.border, 0.5)
+          Text {
+            id: tabText
+            anchors.centerIn: parent
+            text: (current ? "● " : "○ ") + Model.singleLine(modelData.name || modelData.key, 28)
+            textFormat: Text.PlainText
+            color: current ? Color.popups.text : Util.alpha(Color.popups.text, 0.8)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+          }
+          MouseArea { anchors.fill: parent; onClicked: if (!current) view.requestRaise(modelData.key) }
+        }
+      }
+      Text {
+        text: "  Ctrl+Tab cycles"
+        textFormat: Text.PlainText
+        color: Util.alpha(Color.popups.text, 0.4)
+        font.family: Style.font.family
+        font.pixelSize: Style.font.caption
+        anchors.verticalCenter: parent.verticalCenter
+      }
+    }
 
     // Thread
     ListView {
@@ -590,6 +641,12 @@ Item {
           if (r) { text = r.text; cursorPosition = r.cursor }
         }
         Keys.onEscapePressed: function(event) { if (view.quote) view.quote = null; else view.requestClose(); event.accepted = true }
+        Keys.onPressed: function(event) {
+          if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && (event.modifiers & Qt.ControlModifier)) {
+            view.cycleWindow((event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab ? -1 : 1)
+            event.accepted = true
+          }
+        }
       }
       Button { text: "Send"; enabled: !view.sending && view.linked; onClicked: view.send() }
     }

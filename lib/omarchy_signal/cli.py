@@ -167,7 +167,51 @@ def cmd_float_window(args) -> int:
         dispatch(f'hl.dsp.window.float({{ window = "{win}", action = "toggle" }})')
     dispatch(f'hl.dsp.window.resize({{ window = "{win}", x = {w}, y = {h} }})')
     dispatch(f'hl.dsp.window.center({{ window = "{win}" }})')
+    if args.offset:
+        # Cascade: the n-th window sits a little down and right of the last, so
+        # several chats parked together (scratchpad) stay individually clickable.
+        step = 36 * max(0, min(args.offset, 12))
+        try:
+            mons = _json.loads(subprocess.run([hyprctl, "monitors", "-j"], capture_output=True, text=True, timeout=5, check=False).stdout or "[]")
+            mon = next((m for m in mons if m.get("focused")), mons[0] if mons else None)
+        except (ValueError, IndexError):
+            mon = None
+        if mon:
+            mx, my = int(mon.get("x", 0)), int(mon.get("y", 0))
+            mw, mh = int(mon.get("width", 0) / max(0.01, float(mon.get("scale", 1)))), int(mon.get("height", 0) / max(0.01, float(mon.get("scale", 1))))
+            x = mx + max(0, (mw - w) // 2 + step)
+            y = my + max(0, (mh - h) // 2 + step)
+            dispatch(f'hl.dsp.window.move({{ window = "{win}", x = {x}, y = {y} }})')
     dispatch(f'hl.dsp.focus({{ window = "{win}" }})')
+    return 0
+
+
+def _find_window(title: str) -> dict | None:
+    import json as _json
+    hyprctl = shutil.which("hyprctl")
+    if not hyprctl:
+        return None
+    try:
+        clients = _json.loads(subprocess.run([hyprctl, "clients", "-j"], capture_output=True, text=True, timeout=5, check=False).stdout or "[]")
+    except ValueError:
+        return None
+    for c in clients:
+        if c.get("class") == "org.quickshell" and (c.get("title") == title or c.get("initialTitle") == title):
+            return c
+    return None
+
+
+def cmd_raise_window(args) -> int:
+    """Bring one detached conversation window to the front and focus it, also
+    when it is parked in the scratchpad (focusing shows that workspace)."""
+    c = _find_window(args.title)
+    hyprctl = shutil.which("hyprctl")
+    if not c or not hyprctl or not re.fullmatch(r"0x[0-9a-f]+", str(c.get("address", ""))):
+        return 1
+    win = f'address:{c["address"]}'
+    for lua in (f'hl.dsp.focus({{ window = "{win}" }})',
+                f'hl.dsp.window.alter_zorder({{ window = "{win}", mode = "top" }})'):
+        subprocess.run([hyprctl, "dispatch", lua], capture_output=True, timeout=5, check=False)
     return 0
 
 
@@ -632,7 +676,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("title")
     s.add_argument("--width", type=int, default=720)
     s.add_argument("--height", type=int, default=640)
+    s.add_argument("--offset", type=int, default=0, help="cascade step index")
     s.set_defaults(fn=cmd_float_window)
+
+    s = sub.add_parser("raise-window", help=argparse.SUPPRESS)
+    s.add_argument("title")
+    s.set_defaults(fn=cmd_raise_window)
 
     s = sub.add_parser("ls-files", help=argparse.SUPPRESS)
     s.add_argument("dir", nargs="?")
