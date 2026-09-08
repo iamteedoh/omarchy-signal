@@ -33,7 +33,7 @@ Item {
   property string account: ""
   property bool emojiAutoconvert: true
   property bool attachmentThumbnails: true
-  property int scrollSpeed: 6
+  property int scrollSpeed: 9
   property var windows: []               // conversation keys open as tabs of the chat window
   property string activeTab: ""          // which tab the chat window shows
   property var tabNames: ({})            // key -> resolved name
