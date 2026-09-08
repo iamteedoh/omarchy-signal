@@ -116,7 +116,7 @@ plugin directory for the CLI, service and keybinding.
 | `Ctrl-R` / `Ctrl-Q` | react to / quote the last message |
 | `Ctrl-G` | pick any message: react, quote, edit, delete for everyone, forward, copy, info |
 | `Ctrl-T` | conversation: disappearing messages, mute, archive, block, safety number, group members/rename/leave, new group |
-| `:smile:` | emoji shortcodes with a picker as you type |
+| `:smile:` / `:D` | emoji shortcodes and emoticons convert after the space (setting: "Convert :smile: and :D"); a picker opens as you type |
 | `Ctrl-O`, or click an attachment | open it larger, save to `~/Downloads`, save as…, or copy its path |
 | `Ctrl-E` | mute conversation |
 | `?` | help · `Ctrl-C` quit |

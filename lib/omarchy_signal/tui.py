@@ -1077,7 +1077,7 @@ class App:
             self.open_overlay("contacts")
 
     def _update_emoji_suggestions(self) -> None:
-        partial = emoji.partial_at(self.composer.text, self.composer.cursor)
+        partial = emoji.partial_at(self.composer.text, self.composer.cursor) if self.cfg.emoji_autoconvert else None
         self.emoji_suggestions = emoji.search(partial[1]) if partial else []
         self.emoji_index = 0
 
@@ -1144,16 +1144,14 @@ class App:
             self.scroll = max(0, self.scroll - 1)
         elif key.name == "char" and not key.ctrl:
             if len(c.text) < 60000:
-                if key.char == ":":
-                    # Closing colon on a known code converts it right away.
-                    partial = emoji.partial_at(c.text, c.cursor)
-                    glyph = emoji.lookup(partial[1]) if partial else None
-                    if glyph:
-                        c.text = c.text[:partial[0]] + glyph + c.text[c.cursor:]
-                        c.cursor = partial[0] + len(glyph)
-                        self.emoji_suggestions = []
-                        return
                 c.insert(key.char)
+                if key.char == " " and self.cfg.emoji_autoconvert:
+                    # The space after :smile: or :D turns it into the emoji, so
+                    # you see what you are about to send.
+                    converted = emoji.convert_before_cursor(c.text, c.cursor)
+                    if converted:
+                        c.text, c.cursor = converted
+                        self.emoji_suggestions = []
                 await self._maybe_typing()
         elif key.name == "paste":
             c.insert(key.char)

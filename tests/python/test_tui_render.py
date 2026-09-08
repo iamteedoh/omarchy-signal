@@ -290,20 +290,34 @@ class EmojiPickerTests(unittest.TestCase):
             self.assertEqual(app.composer.text, "hi 😄")
             self.assertEqual(app.composer.cursor, len("hi 😄"))
             self.assertEqual(app.emoji_suggestions, [])
-            # closing colon converts a known code on its own; Enter with a picker open never sends
-            for ch in " :+1:":
+            # the space after :+1: converts it, so you see it before sending
+            for ch in " :+1: ":
                 await app.handle_key(Key("char", char=ch))
-            self.assertEqual(app.composer.text, "hi 😄 👍")
-            for ch in " :thum":
+            self.assertEqual(app.composer.text, "hi 😄 👍 ")
+            # emoticons too, standalone only
+            for ch in ":D ":
+                await app.handle_key(Key("char", char=ch))
+            self.assertEqual(app.composer.text, "hi 😄 👍 😃 ")
+            for ch in "http://x/ ":
+                await app.handle_key(Key("char", char=ch))
+            self.assertTrue(app.composer.text.endswith("http://x/ "))
+            # Enter with a picker open never sends
+            for ch in ":thum":
                 await app.handle_key(Key("char", char=ch))
             self.assertTrue(app.emoji_suggestions)
             await app.handle_key(Key("enter"))
-            self.assertEqual(app.composer.text, "hi 😄 👍 👍")
+            self.assertTrue(app.composer.text.endswith("👍"))
             # unknown code stays literal and shows no picker after a space
             for ch in " :zzzzq: x":
                 await app.handle_key(Key("char", char=ch))
             self.assertEqual(app.emoji_suggestions, [])
             self.assertIn(":zzzzq:", app.composer.text)
+            # setting off: raw text, no picker
+            app.cfg.emoji_autoconvert = False
+            for ch in " :D :smile: ":
+                await app.handle_key(Key("char", char=ch))
+            self.assertTrue(app.composer.text.endswith(" :D :smile: "))
+            self.assertEqual(app.emoji_suggestions, [])
         asyncio.run(go())
 
 

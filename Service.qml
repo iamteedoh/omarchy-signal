@@ -31,6 +31,7 @@ Item {
   property bool respectDnd: true
   property string notificationSound: ""
   property string account: ""
+  property bool emojiAutoconvert: true
   property var windows: []               // conversation keys open as detached windows
   property bool dnd: false
   property string lastError: ""
@@ -112,6 +113,7 @@ Item {
       if ("respectDnd" in d) root.respectDnd = d.respectDnd !== false
       if (typeof d.notificationSound === "string") root.notificationSound = d.notificationSound
       if (typeof d.account === "string") root.account = d.account
+      if ("emojiAutoconvert" in d) root.emojiAutoconvert = d.emojiAutoconvert !== false
       root.lastError = Model.singleLine(d.error || "", 200)
       return
     }
@@ -423,6 +425,7 @@ Item {
           connected: root.connected
           linked: root.linked
           account: root.account
+          emojiAutoconvert: root.emojiAutoconvert
           onRequestClose: root.closeReply()
           onRequestTerminal: root.openTerminal(root.replyKey)
           onRequestDetach: { var k = root.replyKey; root.closeReply(); root.openWindow(k, root.replyName) }
@@ -508,6 +511,7 @@ Item {
         connected: root.connected
         linked: root.linked
         account: root.account
+        emojiAutoconvert: root.emojiAutoconvert
         detached: true
         onRequestClose: root.closeWindow(win.modelData)
         onRequestTerminal: root.openTerminal(win.modelData)

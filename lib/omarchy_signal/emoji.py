@@ -100,7 +100,19 @@ SHORTCODES: dict[str, str] = {
     "eggplant": "🍆", "hot_beverage": "☕", "wavy_dash": "〰️", "bomb": "💣", "hole": "🕳️", "black_cat": "🐈‍⬛",
 }
 
+# Classic emoticons, converted only when they stand alone (space or line
+# boundaries on both sides), so "http://x" and "10:30" are never touched.
+EMOTICONS: dict[str, str] = {
+    ":)": "🙂", ":-)": "🙂", "(:": "🙂", ":D": "😃", ":-D": "😃", ":(": "🙁", ":-(": "🙁", ";)": "😉", ";-)": "😉",
+    ":P": "😛", ":p": "😛", ":-P": "😛", ":O": "😮", ":o": "😮", ":-O": "😮", ":'(": "😢", ":'-(": "😢",
+    "<3": "❤️", "</3": "💔", "xD": "😆", "XD": "😆", ":|": "😐", ":-|": "😐", ":/": "😕", ":-/": "😕",
+    ":*": "😘", ":-*": "😘", "B)": "😎", "B-)": "😎", ">:(": "😠", ":3": "😊", "^^": "😊", "^_^": "😊",
+    "-_-": "😑", "o_O": "😳", "O_o": "😳", ":$": "😳", ":x": "🤐", ":X": "🤐", "8)": "😎", "D:": "😱",
+    ":')": "😂", ":,(": "😢", "<(\"\")": "🐧", "\\o/": "🙌",
+}
+
 _TOKEN = re.compile(r"(?<![A-Za-z0-9_]):([A-Za-z0-9_+\-]{1,40}):")
+_EMOTICON_TOKEN = re.compile(r"(?:(?<=\s)|^)(" + "|".join(re.escape(k) for k in sorted(EMOTICONS, key=len, reverse=True)) + r")(?=\s|$)")
 
 
 def lookup(code: str) -> str | None:
@@ -119,15 +131,39 @@ def search(prefix: str, *, limit: int = 8) -> list[tuple[str, str]]:
     return (starts + inside)[:limit]
 
 
-def replace_shortcodes(text: str) -> str:
-    """Replace every complete, known ``:code:`` in ``text``; unknown codes stay."""
-    if ":" not in text:
-        return text
+def replace_shortcodes(text: str, *, emoticons: bool = True) -> str:
+    """Replace every complete, known ``:code:`` (and, by default, standalone
+    emoticons like ``:D``) in ``text``; unknown codes stay."""
+    if ":" in text:
+        def sub(m: re.Match) -> str:
+            emoji = lookup(m.group(1))
+            return emoji if emoji else m.group(0)
+        text = _TOKEN.sub(sub, text)
+    if emoticons and any(k[0] in text for k in EMOTICONS):
+        text = _EMOTICON_TOKEN.sub(lambda m: EMOTICONS[m.group(1)], text)
+    return text
 
-    def sub(m: re.Match) -> str:
-        emoji = lookup(m.group(1))
-        return emoji if emoji else m.group(0)
-    return _TOKEN.sub(sub, text)
+
+def convert_before_cursor(text: str, cursor: int) -> tuple[str, int] | None:
+    """After the user typed a space: if the word before it is a known
+    ``:code:`` or emoticon, replace it. Returns (text, cursor) or None."""
+    if cursor < 2 or cursor > len(text) or text[cursor - 1] != " ":
+        return None
+    head = text[:cursor - 1]
+    start = max(head.rfind(" "), head.rfind("\n")) + 1
+    token = head[start:]
+    if not token:
+        return None
+    glyph = None
+    m = re.fullmatch(r":([A-Za-z0-9_+\-]{1,40}):", token)
+    if m:
+        glyph = lookup(m.group(1))
+    elif token in EMOTICONS:
+        glyph = EMOTICONS[token]
+    if not glyph:
+        return None
+    new = text[:start] + glyph + " " + text[cursor:]
+    return new, start + len(glyph) + 1
 
 
 _PARTIAL = re.compile(r"(?<![A-Za-z0-9_]):([A-Za-z0-9_+\-]{1,40})$")

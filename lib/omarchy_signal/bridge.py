@@ -292,6 +292,7 @@ class Bridge:
             "notificationPreview": self.cfg.notification_preview,
             "notificationContent": self.cfg.notification_content,
             "respectDnd": self.cfg.respect_dnd,
+            "emojiAutoconvert": self.cfg.emoji_autoconvert,
             "notificationSound": self.cfg.notification_sound if self.cfg.notification_sound and os.path.isfile(os.path.expanduser(self.cfg.notification_sound)) else "",
             "account": self.account,
             "notificationTimeoutMs": self.cfg.notification_timeout_ms,
@@ -606,7 +607,9 @@ class Bridge:
     async def op_send(self, p: dict) -> dict:
         account = self._require_account()
         rec = parse_conversation_key(p["conversation"])
-        text = emoji.replace_shortcodes(clean_text(p.get("text", "")))
+        text = clean_text(p.get("text", ""))
+        if self.cfg.emoji_autoconvert:
+            text = emoji.replace_shortcodes(text)
         paths = [str(safe_attachment_path(a)) for a in p.get("attachments", [])]
         if not text.strip() and not paths:
             raise ValueError("nothing to send")
@@ -844,7 +847,9 @@ class Bridge:
         msg = self.store.message(rec.key, p["ts"])
         if not msg or not msg.outgoing:
             raise ValueError("you can only edit your own messages")
-        text = emoji.replace_shortcodes(clean_text(p["text"]))
+        text = clean_text(p["text"])
+        if self.cfg.emoji_autoconvert:
+            text = emoji.replace_shortcodes(text)
         if not text.strip():
             raise ValueError("nothing to send")
         params: dict[str, Any] = {"account": account, "message": text, "editTimestamp": p["ts"]}

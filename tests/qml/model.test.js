@@ -116,3 +116,13 @@ test("threadRows normalises history rows", () => {
   assert.equal(rows[1].body, "(message deleted)"); assert.equal(rows[1].who, "You"); assert.equal(rows[1].edited, true)
   assert.deepEqual(M.threadRows(null), [])
 })
+
+test("Emoji.js converts after a space", () => {
+  const E = require(path.join(__dirname, "..", "..", "Emoji.js"))
+  // cursor positions are UTF-16 units, which is what a QML TextField uses
+  assert.deepEqual(E.convertBeforeCursor("hey :D ", 7), { text: "hey 😃 ", cursor: 7 })
+  assert.deepEqual(E.convertBeforeCursor("a :smile: ", 10), { text: "a 😄 ", cursor: 5 })
+  assert.equal(E.convertBeforeCursor("see http://x/ ", 14), null)
+  assert.equal(E.convertBeforeCursor("a :nope: ", 9), null)
+  assert.equal(E.lookup("SMILE"), "😄")
+})

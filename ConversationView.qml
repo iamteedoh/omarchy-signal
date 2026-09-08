@@ -5,6 +5,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
+import "Emoji.js" as Emoji
 
 // One conversation: thread, composer, attachments, quote, reactions. Used by
 // the click-to-reply popup and, unchanged, by the detached windows, so both
@@ -20,6 +21,8 @@ Item {
   property bool linked: false
   property bool detached: false          // true inside a FloatingWindow
   property string account: ""            // our own number, for reacting to our own messages
+  property bool emojiAutoconvert: true   // :smile: / :D become emoji after the space (setting)
+  property bool stickToBottom: true      // follow new messages unless the user scrolled up
   property string typingName: ""
 
   signal requestClose()
@@ -39,6 +42,7 @@ Item {
   implicitHeight: Style.space(560)
 
   function load(key, name) {
+    view.stickToBottom = true
     view.conversationKey = key
     view.conversationName = Model.singleLine(name || key, 80)
     view.thread = []
@@ -113,7 +117,7 @@ Item {
       onStreamFinished: {
         var rows = []
         try { rows = JSON.parse(text) } catch (e) { rows = [] }
-        if (Array.isArray(rows)) { view.thread = Model.threadRows(rows, 60); Qt.callLater(list.positionViewAtEnd) }
+        if (Array.isArray(rows)) { view.thread = Model.threadRows(rows, 60); if (view.stickToBottom) Qt.callLater(list.positionViewAtEnd) }
       }
     }
   }
@@ -179,6 +183,12 @@ Item {
       spacing: Style.space(6)
       model: view.thread
       boundsBehavior: Flickable.StopAtBounds
+      // Follow the conversation: stay pinned to the newest message while the
+      // user has not scrolled up, including when images finish loading.
+      onContentHeightChanged: if (view.stickToBottom) positionViewAtEnd()
+      onCountChanged: if (view.stickToBottom) Qt.callLater(positionViewAtEnd)
+      onMovementEnded: view.stickToBottom = atYEnd
+      onFlickEnded: view.stickToBottom = atYEnd
       delegate: Item {
         id: row
         required property var modelData
@@ -373,6 +383,11 @@ Item {
         placeholderText: view.linked ? "Message… (Enter sends, :smile: works)" : "No account linked: omarchy-signal link"
         enabled: !view.sending && view.linked
         onAccepted: view.send()
+        onTextEdited: {
+          if (!view.emojiAutoconvert) return
+          var r = Emoji.convertBeforeCursor(text, cursorPosition)
+          if (r) { text = r.text; cursorPosition = r.cursor }
+        }
         Keys.onEscapePressed: function(event) { if (view.quote) view.quote = null; else view.requestClose(); event.accepted = true }
       }
       Button { text: "Send"; enabled: !view.sending && view.linked; onClicked: view.send() }

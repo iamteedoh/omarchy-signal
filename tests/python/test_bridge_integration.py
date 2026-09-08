@@ -357,6 +357,20 @@ class BridgeIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await c.request("edit", conversation="number:+15550002222", ts=1700000000009, text="x")
             await c.close()
 
+    async def test_emoji_setting_off_sends_raw(self):
+        from omarchy_signal.config import save_config
+        async with BridgeHarness() as h:
+            c, _ = await self._client(h)
+            disk = Config.from_dict({k: getattr(h.cfg, k) for k in h.cfg.__dataclass_fields__})
+            disk.emoji_autoconvert = False
+            save_config(disk, h.paths)
+            await c.request("reloadConfig")
+            await c.request("send", conversation="number:+15550002222", text="raw :smile: :D")
+            sent = [s for s in h.sent() if s["method"] == "send"][-1]
+            self.assertEqual(sent["params"]["message"], "raw :smile: :D")
+            self.assertFalse((await c.request("status"))["emojiAutoconvert"])
+            await c.close()
+
     async def test_conversation_actions(self):
         async with BridgeHarness() as h:
             c, _ = await self._client(h)

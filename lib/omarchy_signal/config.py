@@ -87,6 +87,7 @@ class Config:
     terminal_images: str = "auto"          # auto | on | off   (can the terminal draw images at all)
     inline_images: str = "always"          # always | click | never   (show received images in the thread)
     message_layout: str = "left"           # left (everything left-aligned) | bubbles (yours on the right)
+    emoji_autoconvert: bool = True         # turn :smile: and :D into emoji as you type (and on send); off sends them raw
     terminal: str = "auto"                 # terminal for `omarchy-signal open`: auto (system default) | ghostty | kitty | wezterm | foot | alacritty
     image_max_rows: int = 14
     qr_rows: int = 9                       # height of the linking QR code in terminal rows (image mode)
@@ -186,6 +187,8 @@ SETTINGS: list[dict] = [
      "restart": True, "help": "Fetch attachments as messages arrive"},
     {"section": "Chats & media", "key": "save_dir", "label": "Save attachments to", "type": "path",
      "help": "Folder used by the attachment menu's save action"},
+    {"section": "Chats & media", "key": "emoji_autoconvert", "label": "Convert :smile: and :D to emoji", "type": "bool",
+     "help": "As you type (after the space) and on send; off sends them exactly as written"},
     {"section": "Chats & media", "key": "message_layout", "label": "Message layout", "type": "choice",
      "choices": ["left", "bubbles"], "help": "left: everything left-aligned · bubbles: yours on the right"},
     {"section": "Appearance", "key": "terminal", "label": "Terminal for the client", "type": "choice",
