@@ -57,6 +57,11 @@ if ! command -v signal-cli >/dev/null; then
   fi
 fi
 
+# --- preflight -----------------------------------------------------------------
+# Refuse to deploy QML the shell cannot load: a broken Service.qml means no
+# popups and no chat window until the next install.
+"$HERE/scripts/qml-check.sh" || { warn "QML check failed; nothing was installed"; exit 1; }
+
 # --- plugin --------------------------------------------------------------------
 mkdir -p "$PLUGINS_DIR" "$BIN_DIR" "$UNIT_DIR" "$CONFIG_DIR"
 if [[ -L $PLUGIN_DIR || -d $PLUGIN_DIR ]]; then

@@ -2,7 +2,10 @@
 
 PY := python3
 
-test: python qml bash validate
+test: python qml bash validate qmlcheck
+
+qmlcheck:
+	./scripts/qml-check.sh
 
 python:
 	cd tests/python && $(PY) -m unittest -q
