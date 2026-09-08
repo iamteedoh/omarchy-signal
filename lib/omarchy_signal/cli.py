@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import contextlib
 import json
 import os
@@ -131,11 +132,19 @@ def cmd_float_window(args) -> int:
     if not address:
         return 1
     w, h = max(320, args.width), max(240, args.height)
+    if not re.fullmatch(r"0x[0-9a-f]+", address):
+        return 1
+    win = f'address:{address}'
+
+    def dispatch(lua: str) -> None:
+        # Hyprland ≥ 0.55 takes Lua dispatchers; the classic "setfloating address:…" form is refused.
+        subprocess.run([hyprctl, "dispatch", lua], capture_output=True, timeout=5, check=False)
+
     if not floating:
-        subprocess.run([hyprctl, "dispatch", "setfloating", f"address:{address}"], capture_output=True, timeout=5, check=False)
-    subprocess.run([hyprctl, "dispatch", "resizewindowpixel", f"exact {w} {h},address:{address}"], capture_output=True, timeout=5, check=False)
-    subprocess.run([hyprctl, "dispatch", "focuswindow", f"address:{address}"], capture_output=True, timeout=5, check=False)
-    subprocess.run([hyprctl, "dispatch", "centerwindow"], capture_output=True, timeout=5, check=False)
+        dispatch(f'hl.dsp.window.float({{ window = "{win}", action = "toggle" }})')
+    dispatch(f'hl.dsp.window.resize({{ window = "{win}", x = {w}, y = {h} }})')
+    dispatch(f'hl.dsp.window.center({{ window = "{win}" }})')
+    dispatch(f'hl.dsp.focus({{ window = "{win}" }})')
     return 0
 
 
