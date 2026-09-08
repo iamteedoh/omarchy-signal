@@ -383,6 +383,16 @@ class AttachmentFlowTests(unittest.TestCase):
         start, _, _ = app.link_map[row][0]
         asyncio.run(app._handle_mouse(Key("mouse", x=start + 1, y=row, button=0)))
         self.assertEqual(app.overlay, "attachment")
+        app.close_overlay()
+        # Clicking the picture itself (the rows above the name) opens the menu too.
+        app.term.out.clear()
+        app.draw()
+        image_rows = [r for r, spans in app.link_map.items() if any(h.startswith("file://") for _, _, h in spans)]
+        self.assertGreaterEqual(len(image_rows), 2, "image rows should be click targets")
+        top_row = min(image_rows)
+        x0, _, _ = app.link_map[top_row][0]
+        asyncio.run(app._handle_mouse(Key("mouse", x=x0 + 1, y=top_row, button=0)))
+        self.assertEqual(app.overlay, "attachment")
         asyncio.run(app.handle_key(Key("char", char="v")))
         app.term.out.clear()
         app.draw()
@@ -409,6 +419,8 @@ class AttachmentFlowTests(unittest.TestCase):
             self.assertIn("ATTACHMENT", out)
             self.assertIn("cat.png", out)               # extension inferred from the content type
             self.assertIn("64×48", out)
+            self.assertIn("Trinity · ", out)            # sender and time on the row
+            self.assertIn(app._fmt_time(1700000000000), out)
             await app.handle_key(Key("char", char="s"))  # save to save_dir
             self.assertEqual(app.overlay, "")
             saved = self.root / "saved" / "cat.png"

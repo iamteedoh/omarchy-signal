@@ -1025,22 +1025,35 @@ class App:
         return None
 
     def _open_last(self) -> None:
+        atts = self._all_attachments()
+        if atts:
+            self.open_attachment_menu(atts, 0)
+            return
         for m in reversed(self.messages.get(self.active_key, [])):
-            atts = [a for a in m.get("attachments", []) if a.get("path")]
-            if atts:
-                self.open_attachment_menu(atts, len(atts) - 1)
-                return
             for _, _, url in reversed(links.find_urls(m.get("body", ""))):
                 self._open_href(url)
                 return
         self.show_toast("nothing to open")
 
-    def _attachment_for_path(self, path: str) -> tuple[list[dict], int] | None:
+    def _all_attachments(self) -> list[dict]:
+        """Every downloaded attachment in the open conversation, newest first,
+        each tagged with the message time and sender for the picker."""
+        out: list[dict] = []
         for m in reversed(self.messages.get(self.active_key, [])):
-            atts = [a for a in m.get("attachments", []) if a.get("path")]
-            for i, a in enumerate(atts):
-                if a.get("path") == path:
-                    return atts, i
+            who = "You" if m.get("outgoing") else (clean_name(m.get("senderName")) or "?")
+            for a in reversed(m.get("attachments", [])):
+                if a.get("path"):
+                    tagged = dict(a)
+                    tagged["_ts"] = m.get("ts", 0)
+                    tagged["_who"] = who
+                    out.append(tagged)
+        return out
+
+    def _attachment_for_path(self, path: str) -> tuple[list[dict], int] | None:
+        atts = self._all_attachments()
+        for i, a in enumerate(atts):
+            if a.get("path") == path:
+                return atts, i
         return None
 
     @staticmethod
@@ -1525,6 +1538,12 @@ class App:
             self._record_links(y, col, line.text)
             if line.image and self.graphics:
                 placements.append((y, col + 2, line.image))
+                image_id, icols, irows = line.image
+                slot = next((sl for sl in self.images.values() if sl.image_id == image_id), None)
+                if slot is not None:
+                    # Clicking anywhere on the picture opens its menu, like the name line.
+                    for r in range(irows):
+                        self.link_map.setdefault(y + r, []).append((col + 2, col + 2 + icols, "file://" + slot.path))
             y += 1
         if self.scroll:
             out.append(T.move(top + 2, left + width - 8) + T.fg(th.accent) + f"↑ {self.scroll}" + T.RESET)
@@ -1610,7 +1629,7 @@ class App:
         rows_needed = {"contacts": min(t.rows - 6, 20), "search": min(t.rows - 6, 18), "help": 20, "link": min(t.rows - 4, 32),
                        "quit": 5, "attach": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
                        "saveas": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
-                       "react": 6, "attachment": min(t.rows - 6, 8 + min(6, len(self.att_items))),
+                       "react": 6, "attachment": min(t.rows - 6, 9 + min(10, len(self.att_items))),
                        "settings": min(t.rows - 4, len(SETTINGS) + len({x["section"] for x in SETTINGS}) * 2 + 5),
                        "setting-text": min(t.rows - 6, 5 + min(10, len(self.overlay_results)))}.get(name, 8)
         h = min(t.rows - 4, rows_needed)
@@ -1708,7 +1727,9 @@ class App:
             out.append(T.move(top + 2, body_left) + bg + T.fg(th.foreground) + pad("Leave the channel? [y/N]", body_w, align="center") + T.RESET)
         elif name == "attachment":
             y = top + 1
-            for i, att in enumerate(self.att_items[:6]):
+            visible = min(10, len(self.att_items))
+            first = max(0, min(self.att_index - visible + 1, len(self.att_items) - visible))
+            for i, att in enumerate(self.att_items[first:first + visible], start=first):
                 selected = i == self.att_index
                 style = T.bg(th.selection) + T.fg(th.bright_foreground) if selected else bg + T.fg(th.foreground)
                 label = self._attachment_filename(att)
@@ -1719,9 +1740,16 @@ class App:
                     if info and info.width:
                         right = f"{info.width}×{info.height} · " + right
                 icon = {"image": "󰋩", "video": "󰕧", "audio": "󰎈"}.get(ctype.split("/")[0], "󰈔")
-                out.append(T.move(y, body_left) + style + ("▶ " if selected else "  ") + icon + " " + pad(truncate(label, body_w - 26), body_w - 26)
-                           + T.fg(th.dim if not selected else th.bright_foreground) + pad(right, 22, align="right") + T.RESET)
+                when = self._fmt_time(int(att.get("_ts", 0) or 0))
+                who = truncate(str(att.get("_who", "")), 14)
+                meta = f"{who} · {when}" if who and when else (who or when)
+                name_w = max(10, body_w - 24 - 28)
+                out.append(T.move(y, body_left) + style + ("▶ " if selected else "  ") + icon + " " + pad(truncate(label, name_w), name_w)
+                           + T.fg(th.accent if selected else th.dim) + pad(truncate(meta, 27), 28)
+                           + T.fg(th.bright_foreground if selected else th.dim) + pad(right, 22, align="right") + T.RESET)
                 y += 1
+            if len(self.att_items) > visible:
+                out.append(T.move(y, body_left) + bg + T.fg(th.dim) + f"{self.att_index + 1} / {len(self.att_items)}" + T.RESET)
             y += 1
             cur = self.att_items[self.att_index] if self.att_items else {}
             is_img = str(cur.get("contentType", "")).startswith("image/") and self.graphics
