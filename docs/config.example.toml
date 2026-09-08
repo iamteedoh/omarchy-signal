@@ -1,0 +1,50 @@
+# omarchy-signal configuration. Every key is optional; these are the defaults.
+# Restart the bridge after editing: systemctl --user restart omarchy-signal
+
+# Phone number (E.164) of the account to use when signal-cli knows several.
+# Leave empty to use the first linked account.
+account = ""
+
+# Path or name of the signal-cli binary.
+signal_cli = "signal-cli"
+
+# Tell senders when you have read their messages (blue ticks).
+send_read_receipts = true
+
+# Download attachments so they can be shown inline. They land in
+# ~/.local/share/signal-cli/attachments (owner-only permissions).
+download_attachments = true
+
+# Keep a local message history (SQLite, owner-only). Signal has no server-side
+# history: with this off, only messages received while a client is open are
+# visible and nothing survives a restart.
+history_enabled = true
+
+# Delete messages older than this many days (0 = keep forever).
+history_retain_days = 0
+
+# "popup"  — Quickshell toast you can click to reply in place (default)
+# "system" — plain Omarchy notification
+# "off"    — no desktop notifications
+notifications = "popup"
+
+# Show message text in the popup (false = "New message" only).
+notification_preview = true
+notification_timeout_ms = 8000
+
+# Send / show typing indicators.
+typing_indicators = true
+
+# Inline images in the terminal: "auto" probes the terminal, "on"/"off" force it.
+terminal_images = "auto"
+image_max_rows = 14
+
+# Name shown in Signal's "Linked devices" list.
+device_name = "omarchy-signal"
+
+# debug | info | warning | error  (message contents are never logged)
+log_level = "info"
+
+# What to do when a contact's safety number changes:
+# on-first-use (default, like Signal's own clients) | always | never
+trust_new_identities = "on-first-use"

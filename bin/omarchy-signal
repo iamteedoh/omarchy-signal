@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""Launcher: finds the bundled library next to this script and runs the CLI."""
+import os
+import sys
+
+# The library lives inside the Omarchy plugin folder, which the shell watches
+# with inotify and hot-reloads on any write. Never drop .pyc files in there.
+sys.dont_write_bytecode = True
+
+_here = os.path.dirname(os.path.realpath(__file__))
+_lib = os.path.join(os.path.dirname(_here), "lib")
+if os.path.isdir(_lib) and _lib not in sys.path:
+    sys.path.insert(0, _lib)
+
+from omarchy_signal.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

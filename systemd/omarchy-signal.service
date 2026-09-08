@@ -1,0 +1,31 @@
+[Unit]
+Description=omarchy-signal bridge (signal-cli supervisor and local message store)
+Documentation=https://github.com/iamteedoh/omarchy-signal
+After=graphical-session.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/omarchy-signal bridge
+Restart=on-failure
+RestartSec=3
+# Hardening. The bridge needs: its own XDG dirs, signal-cli's data dir, the
+# runtime dir for the socket, and outbound network (signal-cli).
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/omarchy-signal %h/.local/share/signal-cli %h/.local/state/omarchy-signal %t/omarchy-signal
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+
+[Install]
+WantedBy=default.target

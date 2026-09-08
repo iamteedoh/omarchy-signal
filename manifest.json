@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "iamteedoh.signal",
+  "name": "Signal",
+  "version": "0.1.0",
+  "author": "iamteedoh",
+  "license": "MIT",
+  "description": "Signal messenger: terminal client, popup notifications you can answer in place, and a bar widget with unread count",
+  "kinds": ["bar-widget", "service"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "service": "Service.qml"
+  },
+  "barWidget": {
+    "displayName": "Signal",
+    "description": "Unread Signal messages; opens the conversation list",
+    "category": "Communication",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "hideWhenZero": false
+    },
+    "schema": [
+      { "key": "hideWhenZero", "type": "boolean", "label": "Hide the icon when there is nothing unread" }
+    ]
+  }
+}
