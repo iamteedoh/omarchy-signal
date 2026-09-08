@@ -27,36 +27,63 @@ Item {
 
   // Qt Quick moves a Flickable by the raw trackpad pixel delta, which on a
   // Wayland touchpad is a few pixels per event; terminals and GTK apps scale
-  // it. Take over wheel events and apply the multiplier ourselves.
+  // it. Take over wheel events, apply the multiplier, and add inertia: a
+  // swipe keeps gliding and eases out, a wheel notch glides instead of
+  // stepping.
+  property var kineticTarget: null
+  property real velocity: 0          // px per second, positive = content moving up (scrolling down)
+  property real lastWheelAt: 0
+
+  function clampY(flick, y) {
+    var maxY = Math.max(0, flick.contentHeight - flick.height)
+    return Math.max(0, Math.min(maxY, y))
+  }
+
   function scrollBy(flick, ev) {
     if (view.scrollSpeed <= 0) { ev.accepted = false; return }   // 0 = leave scrolling to Qt
     var dy = 0
+    var discrete = false
     if (ev.pixelDelta && ev.pixelDelta.y !== 0) dy = ev.pixelDelta.y * view.scrollSpeed
-    else if (ev.angleDelta && ev.angleDelta.y !== 0) dy = (ev.angleDelta.y / 120) * 60 * view.scrollSpeed
+    else if (ev.angleDelta && ev.angleDelta.y !== 0) { dy = (ev.angleDelta.y / 120) * 60 * view.scrollSpeed; discrete = true }
     if (dy === 0) { ev.accepted = false; return }
     if (flick.moving) flick.cancelFlick()
-    var maxY = Math.max(0, flick.contentHeight - flick.height)
-    flick.contentY = Math.max(0, Math.min(maxY, flick.contentY - dy))
+    var now = Date.now()
+    var dt = Math.max(8, Math.min(120, now - view.lastWheelAt))
+    view.lastWheelAt = now
+    if (view.kineticTarget !== flick) { view.velocity = 0; view.kineticTarget = flick }
+    if (discrete) {
+      // Mouse wheel: each notch is a kick that the inertia loop plays out smoothly.
+      view.velocity = view.velocity * 0.6 - dy * 14
+      inertia.start()
+    } else {
+      // Trackpad: follow the finger now, remember its speed for the glide after release.
+      flick.contentY = view.clampY(flick, flick.contentY - dy)
+      var instant = -dy / (dt / 1000)
+      view.velocity = view.velocity * 0.5 + instant * 0.5
+      inertia.stop()
+      gestureEnd.restart()
+    }
     ev.accepted = true
   }
-  property bool stickToBottom: true      // follow new messages unless the user scrolled up
-  property string typingName: ""
 
-  signal requestClose()
-  signal requestDetach()
-  signal requestTerminal()
-  signal requestRaise(string key)
-  signal requestCloseTab(string key)
+  Timer {
+    id: gestureEnd
+    interval: 70
+    onTriggered: if (Math.abs(view.velocity) > 60) inertia.start(); else view.velocity = 0
+  }
 
-  property var siblings: []              // other detached windows: [{key, name}]
-
-  // Esc peels one layer at a time: picker → message actions → quote → the window.
-  function handleEscape() {
-    if (view.pickerOpen) { view.pickerOpen = false; composer.forceActiveFocus(); return true }
-    if (view.emojiRowOpen || view.selectedTs) { view.emojiRowOpen = false; view.selectedTs = 0; return true }
-    if (view.quote) { view.quote = null; return true }
-    view.requestClose()
-    return true
+  Timer {
+    id: inertia
+    interval: 16
+    repeat: true
+    onTriggered: {
+      var flick = view.kineticTarget
+      if (!flick) { stop(); return }
+      var before = flick.contentY
+      flick.contentY = view.clampY(flick, before + view.velocity * (interval / 1000))
+      view.velocity *= 0.93                         // friction per frame
+      if (Math.abs(view.velocity) < 25 || flick.contentY === before) { view.velocity = 0; stop() }
+    }
   }
 
   function cycleWindow(delta) {
