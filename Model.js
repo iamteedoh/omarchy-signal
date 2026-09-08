@@ -167,7 +167,7 @@ function threadRows(rows, limit) {
         break
       }
     }
-    var files = atts.map(function(a) { return singleLine(a.filename || "attachment", 80) })
+    var filesText = atts.map(function(a) { return singleLine(a.filename || "attachment", 80) }).join(", ")
     var reactions = []
     if (m.reactions && typeof m.reactions === "object") for (var k in m.reactions) reactions.push(singleLine(m.reactions[k], 8))
     return {
@@ -176,7 +176,7 @@ function threadRows(rows, limit) {
       sender: typeof m.sender === "string" ? m.sender : "",
       outgoing: m.outgoing === true,
       body: body,
-      files: files,
+      filesText: filesText,
       image: image,
       status: singleLine(m.status || "", 20),
       edited: m.edited === true,

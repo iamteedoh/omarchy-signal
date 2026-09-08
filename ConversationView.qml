@@ -121,7 +121,33 @@ Item {
     if (next) view.requestRaise(next.key)
   }
 
-  property var thread: []                // Model.threadRows output
+  property var thread: []                // Model.threadRows output (last applied)
+  ListModel { id: threadModel }
+
+  // Sync the list in place: untouched rows keep their delegates, so a send
+  // or an incoming message does not rebuild (and flicker) the whole thread.
+  function applyThread(rows) {
+    var wanted = {}
+    for (var i = 0; i < rows.length; i++) wanted[rows[i].ts + ":" + (rows[i].outgoing ? 1 : 0)] = true
+    for (var j = threadModel.count - 1; j >= 0; j--) {
+      var cur = threadModel.get(j)
+      if (!wanted[cur.ts + ":" + (cur.outgoing ? 1 : 0)]) threadModel.remove(j)
+    }
+    for (var k = 0; k < rows.length; k++) {
+      var row = rows[k]
+      if (k < threadModel.count) {
+        var have = threadModel.get(k)
+        if (have.ts === row.ts && have.outgoing === row.outgoing) {
+          if (have.body !== row.body || have.status !== row.status || have.reactions !== row.reactions || have.edited !== row.edited
+              || have.image !== row.image || have.filesText !== row.filesText || have.quote !== row.quote) threadModel.set(k, row)
+          continue
+        }
+      }
+      threadModel.insert(k, row)
+    }
+    while (threadModel.count > rows.length) threadModel.remove(threadModel.count - 1)
+    view.thread = rows
+  }
   property var quote: null               // {ts, author, text, who}
   property var attachments: []           // absolute paths
   property bool sending: false
@@ -137,6 +163,7 @@ Item {
     view.stickToBottom = true
     view.conversationKey = key
     view.conversationName = Model.singleLine(name || key.split(":").slice(1).join(":"), 80)
+    threadModel.clear()
     view.thread = []
     view.quote = null
     view.attachments = []
@@ -289,7 +316,7 @@ Item {
         var rows = []
         try { rows = JSON.parse(text) } catch (e) { rows = [] }
         if (Array.isArray(rows)) {
-          view.thread = Model.threadRows(rows, 60)
+          view.applyThread(Model.threadRows(rows, 60))
           // A model swap resets the list to the top; put it back where it was,
           // or at the end when following the conversation.
           var y = view.savedY
@@ -400,7 +427,7 @@ Item {
       Layout.fillHeight: true
       clip: true
       spacing: Style.space(6)
-      model: view.thread
+      model: threadModel
       boundsBehavior: Flickable.StopAtBounds
       cacheBuffer: Style.space(3000)     // keep delegates alive well beyond the viewport
       // Follow the conversation only while the user is at the bottom. The
@@ -514,8 +541,8 @@ Item {
               font.pixelSize: Style.font.body
             }
             Text {
-              visible: row.modelData.files.length > 0 && !row.modelData.image
-              text: "󰁦 " + row.modelData.files.join(", ")
+              visible: row.modelData.filesText.length > 0 && !row.modelData.image
+              text: "󰁦 " + row.modelData.filesText
               textFormat: Text.PlainText
               elide: Text.ElideRight
               Layout.fillWidth: true

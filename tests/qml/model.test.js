@@ -112,7 +112,7 @@ test("threadRows normalises history rows", () => {
     { ts: 2, outgoing: true, body: "x", deleted: true, status: "read", edited: true, quoteText: "hi" },
     "junk"
   ].filter(x => typeof x === "object"), 10)
-  assert.equal(rows[0].who, "Trinity"); assert.equal(rows[0].image, "/p/a.png"); assert.equal(rows[0].reactions, "👍")
+  assert.equal(rows[0].who, "Trinity"); assert.equal(rows[0].image, "/p/a.png"); assert.equal(rows[0].reactions, "👍"); assert.equal(rows[0].filesText, "a.png")
   assert.equal(rows[1].body, "(message deleted)"); assert.equal(rows[1].who, "You"); assert.equal(rows[1].edited, true)
   assert.deepEqual(M.threadRows(null), [])
 })
