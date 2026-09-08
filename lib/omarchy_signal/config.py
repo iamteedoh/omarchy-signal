@@ -86,6 +86,7 @@ class Config:
     qr_rows: int = 9                       # height of the linking QR code in terminal rows (image mode)
     qr_style: str = "auto"                 # auto (shell popup, else image, else text) | shell | image | half | quad | braille
     device_name: str = "omarchy-signal"
+    save_dir: str = "~/Downloads"          # where "save" puts received attachments
     log_level: str = "info"
     trust_new_identities: str = "on-first-use"  # passed to signal-cli verbatim (allow-listed)
 

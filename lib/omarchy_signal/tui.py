@@ -20,10 +20,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, kitty, links, qr
+from . import __version__, kitty, links, pathcomplete, qr
 from .client import BridgeClient, BridgeError, BridgeUnavailable
 from .config import Config, Paths
-from .sanitize import InvalidAttachment, clean_name, clean_text, safe_attachment_path
+from .sanitize import InvalidAttachment, clean_name, clean_text, safe_attachment_path, safe_filename
 from .term import Key, KeyParser, Terminal, pad, str_width, truncate, wrap
 from .theme import Theme, mix
 
@@ -110,6 +110,8 @@ class App:
         self.overlay_items: list[dict] = []
         self.overlay_results: list[dict] = []
         self.overlay_message = ""
+        self.att_items: list[dict] = []      # attachments shown in the "attachment" overlay
+        self.att_index = 0
         self.link_uri = ""
         self.link_started = 0.0
         self.link_png_id = 0
@@ -447,8 +449,25 @@ class App:
             self.overlay_items.sort(key=lambda x: x["name"].lower())
         elif name == "link":
             asyncio.ensure_future(self._start_link())
+        elif name in ("attach", "saveas"):
+            self.overlay_query = message or "~/"
+            self._path_candidates()
         self._filter_overlay()
         self.dirty = True
+
+    def open_attachment_menu(self, atts: list[dict], index: int = 0) -> None:
+        atts = [a for a in atts if a.get("path")]
+        if not atts:
+            self.show_toast("that attachment has not been downloaded")
+            return
+        self.att_items = atts
+        self.att_index = max(0, min(len(atts) - 1, index))
+        self.open_overlay("attachment")
+
+    def _path_candidates(self) -> None:
+        _, cands = pathcomplete.complete(self.overlay_query)
+        self.overlay_results = cands
+        self.overlay_index = 0
 
     def close_overlay(self) -> None:
         if self.overlay == "link" and self.link_shell_ok:
@@ -683,17 +702,58 @@ class App:
                 self.overlay_query += key.char
                 self._filter_overlay()
             return
-        if name in ("search", "attach", "react"):
+        if name == "attachment":
+            n = len(self.att_items)
+            if key.name == "down" or (key.name == "char" and key.char == "j"):
+                self.att_index = min(n - 1, self.att_index + 1)
+            elif key.name == "up" or (key.name == "char" and key.char == "k"):
+                self.att_index = max(0, self.att_index - 1)
+            elif key.name == "enter" or (key.name == "char" and key.char == "o"):
+                self._open_href("file://" + self.att_items[self.att_index]["path"])
+                self.close_overlay()
+            elif key.name == "char" and key.char == "s":
+                self._save_attachment(self.att_items[self.att_index], os.path.expanduser(self.cfg.save_dir))
+                self.close_overlay()
+            elif key.name == "char" and key.char == "a":
+                att = self.att_items[self.att_index]
+                self.open_overlay("saveas", message=self.cfg.save_dir.rstrip("/") + "/" + self._attachment_filename(att))
+            elif key.name == "char" and key.char == "c":
+                self._copy_to_clipboard(self.att_items[self.att_index]["path"])
+                self.close_overlay()
+            return
+        if name in ("search", "attach", "saveas", "react"):
+            path_mode = name in ("attach", "saveas")
             if key.name == "enter":
                 await self._overlay_submit()
+            elif key.name == "tab" and path_mode:
+                if self.overlay_results:
+                    self.overlay_query = pathcomplete.accept(self.overlay_query, self.overlay_results[self.overlay_index])
+                    self._path_candidates()
+                    self.overlay_message = ""
             elif key.name == "backspace":
                 self.overlay_query = self.overlay_query[:-1]
-            elif key.name == "down" and name == "search":
+                if path_mode:
+                    self._path_candidates()
+            elif key.ctrl and key.char == "u" and path_mode:
+                self.overlay_query = "~/"
+                self._path_candidates()
+            elif key.ctrl and key.char == "w" and path_mode:
+                q = self.overlay_query.rstrip("/")
+                self.overlay_query = q[:q.rfind("/") + 1] if "/" in q else "~/"
+                self._path_candidates()
+            elif key.name == "down" and name in ("search", "attach", "saveas"):
                 self.overlay_index = min(max(0, len(self.overlay_results) - 1), self.overlay_index + 1)
-            elif key.name == "up" and name == "search":
+            elif key.name == "up" and name in ("search", "attach", "saveas"):
                 self.overlay_index = max(0, self.overlay_index - 1)
+            elif key.name == "pagedown" and path_mode:
+                self.overlay_index = min(max(0, len(self.overlay_results) - 1), self.overlay_index + 10)
+            elif key.name == "pageup" and path_mode:
+                self.overlay_index = max(0, self.overlay_index - 10)
             elif key.name == "char" and not key.ctrl:
                 self.overlay_query += key.char
+                if path_mode:
+                    self._path_candidates()
+                    self.overlay_message = ""
                 if name == "search" and self.client and len(self.overlay_query) >= 2:
                     with contextlib.suppress(BridgeError):
                         self.overlay_results = await self.client.request("search", query=self.overlay_query, limit=30)
@@ -703,8 +763,31 @@ class App:
     async def _overlay_submit(self) -> None:
         name = self.overlay
         q = self.overlay_query.strip()
-        if name == "attach":
+        if name in ("attach", "saveas"):
             if not q:
+                self.close_overlay()
+                return
+            expanded = Path(os.path.expanduser(q))
+            # A directory, or a candidate that is a directory: descend instead of submitting.
+            if self.overlay_results and not expanded.is_file():
+                cand = self.overlay_results[self.overlay_index]
+                self.overlay_query = pathcomplete.accept(self.overlay_query, cand)
+                if cand.is_dir:
+                    self._path_candidates()
+                    return
+                if name == "attach":
+                    q = self.overlay_query
+                    expanded = Path(os.path.expanduser(q))
+            if name == "saveas":
+                att = self.att_items[self.att_index] if self.att_items else None
+                if att is None:
+                    self.close_overlay()
+                    return
+                target = Path(os.path.expanduser(self.overlay_query))
+                if target.is_dir():
+                    self._save_attachment(att, str(target))
+                else:
+                    self._save_attachment(att, str(target.parent), filename=target.name)
                 self.close_overlay()
                 return
             try:
@@ -715,7 +798,8 @@ class App:
             if len(self.composer.attachments) >= 8:
                 self.overlay_message = "at most 8 attachments per message"
                 return
-            self.composer.attachments.append(str(path))
+            if str(path) not in self.composer.attachments:
+                self.composer.attachments.append(str(path))
             self.close_overlay()
         elif name == "react":
             target = self._last_incoming()
@@ -757,6 +841,11 @@ class App:
         if key.button == 0:
             for start, end, href in self.link_map.get(key.y, []):
                 if start <= key.x <= end:
+                    if href.startswith("file://"):
+                        found = self._attachment_for_path(href[7:])
+                        if found:
+                            self.open_attachment_menu(*found)
+                            return
                     self._open_href(href)
                     return
 
@@ -807,14 +896,73 @@ class App:
 
     def _open_last(self) -> None:
         for m in reversed(self.messages.get(self.active_key, [])):
-            for a in reversed(m.get("attachments", [])):
-                if a.get("path"):
-                    self._open_href("file://" + a["path"])
-                    return
+            atts = [a for a in m.get("attachments", []) if a.get("path")]
+            if atts:
+                self.open_attachment_menu(atts, len(atts) - 1)
+                return
             for _, _, url in reversed(links.find_urls(m.get("body", ""))):
                 self._open_href(url)
                 return
         self.show_toast("nothing to open")
+
+    def _attachment_for_path(self, path: str) -> tuple[list[dict], int] | None:
+        for m in reversed(self.messages.get(self.active_key, [])):
+            atts = [a for a in m.get("attachments", []) if a.get("path")]
+            for i, a in enumerate(atts):
+                if a.get("path") == path:
+                    return atts, i
+        return None
+
+    @staticmethod
+    def _attachment_filename(att: dict) -> str:
+        import mimetypes
+        name = safe_filename(att.get("filename", ""), fallback="")
+        ctype = str(att.get("contentType", "") or "")
+        if not name:
+            stem = "signal-" + str(att.get("id", "") or "attachment")
+            name = safe_filename(stem, fallback="attachment")
+        if "." not in name and ctype:
+            ext = mimetypes.guess_extension(ctype) or ""
+            if ext == ".jpe":
+                ext = ".jpg"
+            name += ext
+        return name
+
+    def _save_attachment(self, att: dict, directory: str, *, filename: str = "") -> None:
+        src = Path(str(att.get("path", "")))
+        if not src.is_file():
+            self.show_toast("attachment file is gone")
+            return
+        name = safe_filename(filename, fallback="") or self._attachment_filename(att)
+        dest_dir = Path(directory)
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self.show_toast(f"cannot create {dest_dir}: {exc.strerror}")
+            return
+        dest = dest_dir / name
+        stem, ext = os.path.splitext(name)
+        n = 1
+        while dest.exists():
+            dest = dest_dir / f"{stem}-{n}{ext}"
+            n += 1
+        try:
+            shutil.copyfile(src, dest)
+        except OSError as exc:
+            self.show_toast(f"save failed: {exc.strerror}")
+            return
+        self.show_toast(f"saved {dest}", 6)
+
+    def _copy_to_clipboard(self, text: str) -> None:
+        exe = shutil.which("wl-copy")
+        if not exe:
+            self.show_toast("wl-copy not found")
+            return
+        try:
+            subprocess.run([exe, "--", text], input=None, timeout=3, check=False)
+            self.show_toast("path copied")
+        except (OSError, subprocess.SubprocessError):
+            self.show_toast("copy failed")
 
     def _open_href(self, href: str) -> None:
         opener = shutil.which("xdg-open")
@@ -899,7 +1047,7 @@ class App:
         composing; hidden when nothing is being typed."""
         assert self.term
         t = self.term
-        if self.overlay in ("contacts", "search", "attach", "react"):
+        if self.overlay in ("contacts", "search", "attach", "saveas", "react"):
             return "\x1b[5 q" + T.SHOW_CURSOR
         if self.focus != "composer" or self.overlay:
             return T.HIDE_CURSOR
@@ -1248,7 +1396,7 @@ class App:
         import re
         visible = 0
         pos = 0
-        pattern = re.compile(r"\x1b\]8;[^;]*;([^\x1b]*)\x1b\\\\(.*?)\x1b\]8;;\x1b\\\\|\x1b\[[0-9;?]*[A-Za-z]|\x1b_G[^\x1b]*\x1b\\\\")
+        pattern = re.compile(r"\x1b\]8;[^;]*;([^\x1b]*)\x1b\\(.*?)\x1b\]8;;\x1b\\|\x1b\[[0-9;?]*[A-Za-z]|\x1b_G[^\x1b]*\x1b\\")
         for m in pattern.finditer(text):
             visible += str_width(re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text[pos:m.start()]))
             if m.group(1) is not None:
@@ -1309,7 +1457,9 @@ class App:
         name = self.overlay
         w = min(t.cols - 6, 72)
         rows_needed = {"contacts": min(t.rows - 6, 20), "search": min(t.rows - 6, 18), "help": 20, "link": min(t.rows - 4, 32),
-                       "quit": 5, "attach": 6, "react": 6}.get(name, 8)
+                       "quit": 5, "attach": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
+                       "saveas": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
+                       "react": 6, "attachment": min(t.rows - 6, 7 + min(6, len(self.att_items)))}.get(name, 8)
         h = min(t.rows - 4, rows_needed)
         top = max(2, (t.rows - h) // 2)
         left = max(2, (t.cols - w) // 2)
@@ -1323,29 +1473,45 @@ class App:
             out.append(T.move(top + i, left) + bg + T.fg(th.accent) + "│" + T.RESET)
             out.append(T.move(top + i, left + w - 1) + bg + T.fg(th.accent) + "│" + T.RESET)
         titles = {"contacts": "NEW CONVERSATION", "search": "SEARCH HISTORY", "help": "KEYS", "link": "LINK THIS DEVICE",
-                  "quit": "DISCONNECT?", "attach": "ATTACH FILE", "react": "REACT"}
+                  "quit": "DISCONNECT?", "attach": "ATTACH FILE", "saveas": "SAVE AS", "react": "REACT",
+                  "attachment": "ATTACHMENT"}
         title = f" {titles.get(name, name.upper())} "
         out.append(T.move(top, left + 3) + bg + T.fg(th.bright_foreground) + T.BOLD + title + T.RESET)
         body_left = left + 2
         body_w = w - 4
-        if name in ("contacts", "search", "attach", "react"):
-            prompt = {"contacts": "name or number ▸ ", "search": "text ▸ ", "attach": "path ▸ ", "react": "emoji ▸ "}[name]
+        if name in ("contacts", "search", "attach", "saveas", "react"):
+            prompt = {"contacts": "name or number ▸ ", "search": "text ▸ ", "attach": "path ▸ ", "saveas": "save to ▸ ", "react": "emoji ▸ "}[name]
             out.append(T.move(top + 1, body_left) + bg + T.fg(th.accent) + prompt + T.fg(th.bright_foreground)
                        + truncate(clean_text(self.overlay_query, single_line=True), body_w - len(prompt)) + T.RESET)
             if self.overlay_message:
                 out.append(T.move(top + 2, body_left) + bg + T.fg(th.red) + truncate(clean_text(self.overlay_message, single_line=True), body_w) + T.RESET)
-            elif name == "attach":
-                out.append(T.move(top + 2, body_left) + bg + T.fg(th.dim) + truncate("A file under your home directory. Images render inline for the recipient.", body_w) + T.RESET)
+            elif name in ("attach", "saveas"):
+                hint = "Tab completes · ↑↓ pick · Enter " + ("attaches a file / opens a folder" if name == "attach" else "saves here") + " · Ctrl-W up one folder"
+                out.append(T.move(top + 2, body_left) + bg + T.fg(th.dim) + truncate(hint, body_w) + T.RESET)
             elif name == "react":
                 target = self._last_incoming()
                 hint = clean_text(f"to {target.get('senderName', '?')}: {target.get('body', '')[:40]}", single_line=True) if target else "nothing to react to"
                 out.append(T.move(top + 2, body_left) + bg + T.fg(th.dim) + truncate(hint, body_w) + T.RESET)
-            items = self.overlay_results if name in ("contacts", "search") else []
+            items = self.overlay_results if name in ("contacts", "search", "attach", "saveas") else []
             first = max(0, self.overlay_index - (h - 5))
             for i, item in enumerate(items[first:first + h - 4]):
                 y = top + 3 + i
                 selected = (first + i) == self.overlay_index
                 style = T.bg(th.selection) + T.fg(th.bright_foreground) if selected else bg + T.fg(th.foreground)
+                if name in ("attach", "saveas"):
+                    cand = item
+                    color = th.accent if cand.is_dir else (th.cyan if cand.kind == "image" else th.foreground)
+                    right = ""
+                    if not cand.is_dir:
+                        right = self._fmt_size(cand.size)
+                        if cand.kind == "image":
+                            info = kitty.probe_dimensions(Path(cand.path))
+                            if info and info.width:
+                                right = f"{info.width}×{info.height} · " + right
+                    out.append(T.move(y, body_left) + style + (T.fg(th.bright_foreground) if selected else T.fg(color))
+                               + ("▶ " if selected else "  ") + cand.icon + " " + pad(truncate(cand.name, body_w - 26), body_w - 26)
+                               + T.fg(th.dim if not selected else th.bright_foreground) + pad(right, 22, align="right") + T.RESET)
+                    continue
                 if name == "contacts":
                     hue = self._hue(item["key"])
                     text = ("▶ " if selected else "  ") + clean_name(item["name"])
@@ -1364,13 +1530,35 @@ class App:
                     ("Alt-↑/↓, Ctrl-N/P", "switch conversation"), ("Alt-1…9", "jump to conversation"),
                     ("PgUp/PgDn, wheel", "scroll history (loads older messages)"), ("Ctrl-U", "contacts & groups"),
                     ("/", "search history"), ("Ctrl-A", "attach a file"), ("Ctrl-R", "react to last message"),
-                    ("Ctrl-Q", "quote last message"), ("Ctrl-O", "open last link/attachment"),
+                    ("Ctrl-Q", "quote last message"), ("Ctrl-O / click", "open, save or copy an attachment (or open a link)"),
                     ("Ctrl-E / m", "mute conversation"), ("Ctrl-L", "redraw"), ("Ctrl-X", "clear composer"),
                     ("Ctrl-C", "quit")]
             for i, (k, v) in enumerate(keys[:h - 3]):
                 out.append(T.move(top + 1 + i, body_left) + bg + T.fg(th.accent) + pad(k, 22) + T.fg(th.foreground) + truncate(v, body_w - 22) + T.RESET)
         elif name == "quit":
             out.append(T.move(top + 2, body_left) + bg + T.fg(th.foreground) + pad("Leave the channel? [y/N]", body_w, align="center") + T.RESET)
+        elif name == "attachment":
+            y = top + 1
+            for i, att in enumerate(self.att_items[:6]):
+                selected = i == self.att_index
+                style = T.bg(th.selection) + T.fg(th.bright_foreground) if selected else bg + T.fg(th.foreground)
+                label = self._attachment_filename(att)
+                ctype = str(att.get("contentType", "") or "")
+                right = self._fmt_size(int(att.get("size", 0) or 0))
+                if ctype.startswith("image/"):
+                    info = kitty.probe_dimensions(Path(str(att.get("path", ""))))
+                    if info and info.width:
+                        right = f"{info.width}×{info.height} · " + right
+                icon = {"image": "󰋩", "video": "󰕧", "audio": "󰎈"}.get(ctype.split("/")[0], "󰈔")
+                out.append(T.move(y, body_left) + style + ("▶ " if selected else "  ") + icon + " " + pad(truncate(label, body_w - 26), body_w - 26)
+                           + T.fg(th.dim if not selected else th.bright_foreground) + pad(right, 22, align="right") + T.RESET)
+                y += 1
+            y += 1
+            actions = [("Enter / o", "open (larger view)"), ("s", f"save to {self.cfg.save_dir}"), ("a", "save as…"), ("c", "copy path"), ("Esc", "back")]
+            for k, v in actions:
+                if y < top + h - 1:
+                    out.append(T.move(y, body_left) + bg + T.fg(th.accent) + pad(k, 12) + T.fg(th.foreground) + truncate(v, body_w - 12) + T.RESET)
+                    y += 1
         elif name == "link":
             out.extend(self._draw_link(top, left, w, h))
         return "".join(out)

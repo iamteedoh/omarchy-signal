@@ -52,6 +52,9 @@ qr_rows = 9
 #   braille  text, braille dots (~22x11, square, may not scan)
 qr_style = "auto"
 
+# Where the terminal client saves received attachments ("s" in the attachment menu).
+save_dir = "~/Downloads"
+
 # Name shown in Signal's "Linked devices" list.
 device_name = "omarchy-signal"
 

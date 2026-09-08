@@ -258,3 +258,90 @@ class RenderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AttachmentFlowTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        self.tmp = tempfile.TemporaryDirectory(dir=Path.home())
+        self.root = Path(self.tmp.name)
+        (self.root / "Pictures").mkdir()
+        self.img = self.root / "Pictures" / "cat.png"
+        self.img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + (64).to_bytes(4, "big") + (48).to_bytes(4, "big") + b"\x08\x06\x00\x00\x00" + b"0" * 50)
+        (self.root / "notes.txt").write_bytes(b"hi")
+        self.app = make_app(cols=120, rows=40)
+        seed(self.app)
+        self.app.cfg.save_dir = str(self.root / "saved")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_attach_prompt_completes_and_descends(self):
+        app = self.app
+        asyncio.run(self._run_attach())
+        self.assertEqual(app.composer.attachments, [str(self.img)])
+
+    async def _run_attach(self):
+        app = self.app
+        await app.handle_key(Key("char", char="a", ctrl=True))
+        self.assertEqual(app.overlay, "attach")
+        self.assertEqual(app.overlay_query, "~/")
+        self.assertTrue(app.overlay_results)          # home directory listing
+        app.overlay_query = str(self.root) + "/"
+        app._path_candidates()
+        self.assertEqual([c.name for c in app.overlay_results], ["Pictures/", "notes.txt"])
+        app.draw()
+        out = app.term.text()
+        self.assertIn("Pictures/", out)
+        self.assertIn("ATTACH FILE", out)
+        for ch in "Pi":
+            await app.handle_key(Key("char", char=ch))
+        self.assertEqual([c.name for c in app.overlay_results], ["Pictures/"])
+        await app.handle_key(Key("tab"))               # accept → descends into the folder
+        self.assertTrue(app.overlay_query.endswith("/Pictures/"))
+        self.assertEqual([c.name for c in app.overlay_results], ["cat.png"])
+        app.draw()
+        self.assertIn("64×48", app.term.text())        # image dimensions shown in the dropdown
+        await app.handle_key(Key("enter"))             # Enter on a file candidate attaches it
+        self.assertEqual(app.overlay, "")
+
+    def test_attachment_menu_open_save_saveas(self):
+        app = self.app
+        key = app.active_key
+        att = {"id": "a1", "contentType": "image/png", "filename": "cat", "size": 91, "path": str(self.img)}
+        app.messages[key] = [{"conversation": key, "ts": 1700000000000, "sender": "number:+15550002222", "senderName": "Trinity",
+                              "outgoing": False, "body": "", "attachments": [att], "status": "", "reactions": {}}]
+
+        async def go():
+            await app.handle_key(Key("char", char="o", ctrl=True))
+            self.assertEqual(app.overlay, "attachment")
+            app.draw()
+            out = app.term.text()
+            self.assertIn("ATTACHMENT", out)
+            self.assertIn("cat.png", out)               # extension inferred from the content type
+            self.assertIn("64×48", out)
+            await app.handle_key(Key("char", char="s"))  # save to save_dir
+            self.assertEqual(app.overlay, "")
+            saved = self.root / "saved" / "cat.png"
+            self.assertTrue(saved.is_file())
+            self.assertEqual(saved.read_bytes(), self.img.read_bytes())
+            await app.handle_key(Key("char", char="o", ctrl=True))
+            await app.handle_key(Key("char", char="s"))  # again: never overwrites
+            self.assertTrue((self.root / "saved" / "cat-1.png").is_file())
+            # save as: prompt prefilled with save_dir/name, completion works, Enter saves
+            await app.handle_key(Key("char", char="o", ctrl=True))
+            await app.handle_key(Key("char", char="a"))
+            self.assertEqual(app.overlay, "saveas")
+            self.assertTrue(app.overlay_query.endswith("/saved/cat.png"))
+            app.overlay_query = str(self.root / "renamed.png")
+            app._path_candidates()
+            await app.handle_key(Key("enter"))
+            self.assertTrue((self.root / "renamed.png").is_file())
+            # mouse click on the attachment link opens the menu instead of xdg-open
+            app.draw()
+            row = next(r for r, spans in app.link_map.items() if any(h.startswith("file://") for _, _, h in spans))
+            start, _, _ = app.link_map[row][0]
+            await app._handle_mouse(Key("mouse", x=start + 1, y=row, button=0))
+            self.assertEqual(app.overlay, "attachment")
+        asyncio.run(go())

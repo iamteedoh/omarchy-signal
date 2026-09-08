@@ -96,9 +96,9 @@ plugin directory for the CLI, service and keybinding.
 | `PgUp`/`PgDn`, mouse wheel | scroll, loads older history |
 | `Ctrl-U` | contacts and groups (start a conversation) |
 | `/` | search history |
-| `Ctrl-A` | attach a file |
+| `Ctrl-A` | attach a file (path prompt with Tab completion and a file list) |
 | `Ctrl-R` / `Ctrl-Q` | react to / quote the last message |
-| `Ctrl-O` | open the last link or attachment (`xdg-open`) |
+| `Ctrl-O`, or click an attachment | open it larger, save to `~/Downloads`, save as…, or copy its path |
 | `Ctrl-E` | mute conversation |
 | `?` | help · `Ctrl-C` quit |
 
