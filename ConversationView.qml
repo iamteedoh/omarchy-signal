@@ -22,6 +22,7 @@ Item {
   property bool detached: false          // true inside a FloatingWindow
   property string account: ""            // our own number, for reacting to our own messages
   property bool emojiAutoconvert: true   // :smile: / :D become emoji after the space (setting)
+  property bool thumbnails: true         // picture tiles in the attachment picker (setting); off = plain list
   property bool stickToBottom: true      // follow new messages unless the user scrolled up
   property string typingName: ""
 
@@ -358,7 +359,7 @@ Item {
       id: picker
       visible: view.pickerOpen
       Layout.fillWidth: true
-      Layout.preferredHeight: visible ? Math.min(Style.space(420), Math.max(Style.space(220), grid.contentHeight + pickerHead.implicitHeight + Style.space(40))) : 0
+      Layout.preferredHeight: visible ? Math.min(Style.space(420), Math.max(Style.space(220), (view.thumbnails ? grid.contentHeight : plainList.contentHeight) + pickerHead.implicitHeight + Style.space(40))) : 0
       color: Util.alpha(Color.popups.background, 1.0)
       border.color: Util.alpha(Color.accent, 0.5)
       border.width: 1
@@ -393,14 +394,71 @@ Item {
           Button { text: "✕"; onClicked: { view.pickerOpen = false; composer.forceActiveFocus() } }
         }
 
+        // Plain list (setting "Thumbnails when attaching" off)
+        ListView {
+          id: plainList
+          visible: !view.thumbnails
+          Layout.fillWidth: true
+          Layout.fillHeight: true
+          clip: true
+          spacing: Style.space(2)
+          model: view.thumbnails ? [] : view.pickerVisible
+          boundsBehavior: Flickable.StopAtBounds
+          delegate: Rectangle {
+            required property var modelData
+            width: plainList.width
+            implicitHeight: rowText.implicitHeight + Style.space(10)
+            radius: Style.cornerRadius / 2
+            color: rowHover.containsMouse ? Util.alpha(Color.accent, 0.18) : "transparent"
+            RowLayout {
+              anchors.fill: parent
+              anchors.margins: Style.space(6)
+              spacing: Style.space(8)
+              Text {
+                text: modelData.isDir ? "" : (modelData.kind === "image" ? "󰋩" : modelData.kind === "video" ? "󰕧" : modelData.kind === "audio" ? "󰎈" : modelData.kind === "doc" ? "󰈙" : "󰈔")
+                textFormat: Text.PlainText
+                color: modelData.isDir ? Color.accent : Util.alpha(Color.popups.text, 0.8)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.body
+              }
+              Text {
+                id: rowText
+                Layout.fillWidth: true
+                text: modelData.name + (modelData.isDir ? "/" : "")
+                textFormat: Text.PlainText
+                elide: Text.ElideMiddle
+                color: Color.popups.text
+                font.family: Style.font.family
+                font.pixelSize: Style.font.body
+              }
+              Text {
+                text: modelData.isDir ? "" : (modelData.size >= 1048576 ? (modelData.size / 1048576).toFixed(1) + " MB" : modelData.size >= 1024 ? Math.round(modelData.size / 1024) + " KB" : modelData.size + " B")
+                textFormat: Text.PlainText
+                color: Util.alpha(Color.popups.text, 0.5)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+              }
+              Text {
+                text: modelData.mtime ? new Date(modelData.mtime * 1000).toISOString().substring(0, 10) : ""
+                textFormat: Text.PlainText
+                color: Util.alpha(Color.popups.text, 0.5)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+              }
+            }
+            MouseArea { id: rowHover; anchors.fill: parent; hoverEnabled: true; onClicked: view.chooseRow(modelData) }
+          }
+        }
+
         GridView {
           id: grid
+          visible: view.thumbnails
           Layout.fillWidth: true
           Layout.fillHeight: true
           clip: true
           cellWidth: Style.space(132)
           cellHeight: Style.space(132)
-          model: view.pickerVisible
+          model: view.thumbnails ? view.pickerVisible : []
           boundsBehavior: Flickable.StopAtBounds
           delegate: Item {
             required property var modelData

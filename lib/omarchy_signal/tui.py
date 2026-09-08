@@ -1686,7 +1686,8 @@ class App:
             for slot in self.images.values():
                 slot.transmitted = False
             self.reset_images = False
-        self.preview = self._attach_preview() if self.graphics and self.overlay in ("attach", "saveas") else None
+        self.preview = (self._attach_preview() if self.graphics and self.cfg.attachment_thumbnails
+                        and self.overlay in ("attach", "saveas") else None)
         out.append(self._draw_header())
         out.append(self._draw_list())
         out.append(self._draw_messages())

@@ -32,6 +32,7 @@ Item {
   property string notificationSound: ""
   property string account: ""
   property bool emojiAutoconvert: true
+  property bool attachmentThumbnails: true
   property var windows: []               // conversation keys open as detached windows
   property bool dnd: false
   property string lastError: ""
@@ -114,6 +115,7 @@ Item {
       if (typeof d.notificationSound === "string") root.notificationSound = d.notificationSound
       if (typeof d.account === "string") root.account = d.account
       if ("emojiAutoconvert" in d) root.emojiAutoconvert = d.emojiAutoconvert !== false
+      if ("attachmentThumbnails" in d) root.attachmentThumbnails = d.attachmentThumbnails !== false
       root.lastError = Model.singleLine(d.error || "", 200)
       return
     }
@@ -426,6 +428,7 @@ Item {
           linked: root.linked
           account: root.account
           emojiAutoconvert: root.emojiAutoconvert
+          thumbnails: root.attachmentThumbnails
           onRequestClose: root.closeReply()
           onRequestTerminal: root.openTerminal(root.replyKey)
           onRequestDetach: { var k = root.replyKey; root.closeReply(); root.openWindow(k, root.replyName) }
@@ -512,6 +515,7 @@ Item {
         linked: root.linked
         account: root.account
         emojiAutoconvert: root.emojiAutoconvert
+        thumbnails: root.attachmentThumbnails
         detached: true
         onRequestClose: root.closeWindow(win.modelData)
         onRequestTerminal: root.openTerminal(win.modelData)

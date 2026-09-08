@@ -88,6 +88,7 @@ class Config:
     inline_images: str = "always"          # always | click | never   (show received images in the thread)
     message_layout: str = "left"           # left (everything left-aligned) | bubbles (yours on the right)
     emoji_autoconvert: bool = True         # turn :smile: and :D into emoji as you type (and on send); off sends them raw
+    attachment_thumbnails: bool = True     # picture tiles in the attachment picker (off = plain list)
     terminal: str = "auto"                 # terminal for `omarchy-signal open`: auto (system default) | ghostty | kitty | wezterm | foot | alacritty
     image_max_rows: int = 14
     qr_rows: int = 9                       # height of the linking QR code in terminal rows (image mode)
@@ -185,6 +186,8 @@ SETTINGS: list[dict] = [
      "choices": ["always", "click", "never"], "help": "always: as they arrive · click: only after you click · never"},
     {"section": "Chats & media", "key": "download_attachments", "label": "Auto-download attachments", "type": "bool",
      "restart": True, "help": "Fetch attachments as messages arrive"},
+    {"section": "Chats & media", "key": "attachment_thumbnails", "label": "Thumbnails when attaching", "type": "bool",
+     "help": "Picture tiles in the attachment picker; off shows a plain file list"},
     {"section": "Chats & media", "key": "save_dir", "label": "Save attachments to", "type": "path",
      "help": "Folder used by the attachment menu's save action"},
     {"section": "Chats & media", "key": "emoji_autoconvert", "label": "Convert :smile: and :D to emoji", "type": "bool",
