@@ -34,7 +34,7 @@ Item {
   property var attachments: []           // absolute paths
   property bool sending: false
   property string error: ""
-  property int selectedTs: 0             // message with the action row open
+  property real selectedTs: 0            // message with the action row open (Signal timestamps overflow a QML int)
   property bool emojiRowOpen: false
   readonly property var quickEmojis: ["👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "🎉"]
 
@@ -242,6 +242,12 @@ Item {
             acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
             onClicked: function(mouse) {
               if (mouse.button === Qt.MiddleButton) { view.quoteRow(row.modelData); return }
+              if (mouse.button === Qt.RightButton) {
+                // Right-click: straight to the reaction row.
+                view.selectedTs = row.modelData.ts
+                view.emojiRowOpen = true
+                return
+              }
               view.emojiRowOpen = false
               view.selectedTs = view.selectedTs === row.modelData.ts ? 0 : row.modelData.ts
             }
@@ -535,7 +541,7 @@ Item {
       spacing: Style.space(8)
       Text {
         Layout.fillWidth: true
-        text: view.error ? view.error : (view.sending ? "Encrypting…" : "click a message for reply / react · middle-click replies · Esc closes")
+        text: view.error ? view.error : (view.sending ? "Encrypting…" : "click a message: Reply · React · Copy  ·  right-click: react  ·  middle-click: reply  ·  Esc closes")
         textFormat: Text.PlainText
         elide: Text.ElideRight
         color: view.error ? Color.urgent : Util.alpha(Color.popups.text, 0.5)
