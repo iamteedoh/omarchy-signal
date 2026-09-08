@@ -50,6 +50,7 @@ Item {
     else if (ev.angleDelta && ev.angleDelta.y !== 0) { dy = (ev.angleDelta.y / 120) * 60 * view.scrollSpeed; discrete = true }
     if (dy === 0) { ev.accepted = false; return }
     if (flick.moving) flick.cancelFlick()
+    if (flick === list) view.markUserScrolling()
     var now = Date.now()
     var dt = Math.max(8, Math.min(120, now - view.lastWheelAt))
     view.lastWheelAt = now
@@ -84,6 +85,7 @@ Item {
       var flick = view.kineticTarget
       if (!flick) { stop(); return }
       var dt = Math.min(0.05, Math.max(0.001, frameTime))
+      if (flick === list) view.markUserScrolling()
       var before = flick.contentY
       flick.contentY = view.clampY(flick, before + view.velocity * dt)
       view.velocity *= Math.pow(0.012, dt)          // friction: ~1.2% of the speed left after a second
@@ -151,13 +153,22 @@ Item {
 
   property real savedY: 0
   property bool pinning: false
+  property bool userScrolling: false
+
+  function markUserScrolling() {
+    view.userScrolling = true
+    userScrollTimer.restart()
+  }
+  Timer { id: userScrollTimer; interval: 250; onTriggered: view.userScrolling = false }
 
   function pinToBottom() {
     view.pinning = true
     list.positionViewAtEnd()
     view.pinning = false
     view.stickToBottom = true
+    settle.restart()          // rows may still be measuring: pin once more when they are done
   }
+  Timer { id: settle; interval: 120; onTriggered: if (view.stickToBottom && !view.userScrolling) { view.pinning = true; list.positionViewAtEnd(); view.pinning = false } }
 
   function reload() {
     if (!view.conversationKey) return
@@ -396,8 +407,14 @@ Item {
       // pin is derived from the actual scroll position on every change, so
       // any way of scrolling up (wheel, trackpad, drag, scrollbar) releases
       // it, and nothing re-pins except a new message arriving while pinned.
-      onContentYChanged: if (!view.pinning) view.stickToBottom = (contentY >= originY + contentHeight - height - 4)
+      // Only movement the user caused (wheel, trackpad, drag, glide) may
+      // release the pin; movement caused by rows being measured may not, and
+      // while pinned the view follows every height change.
+      onContentYChanged: if (view.userScrolling && !view.pinning) view.stickToBottom = (contentY >= originY + contentHeight - height - 4)
+      onContentHeightChanged: if (view.stickToBottom && !view.userScrolling) view.pinToBottom()
       onCountChanged: if (view.stickToBottom) view.pinToBottom()
+      onDragStarted: view.markUserScrolling()
+      onMovementStarted: view.markUserScrolling()
 
       // A transparent layer above the delegates owns wheel events, so the
       // Flickable's own wheel animation never fights the position we set.
