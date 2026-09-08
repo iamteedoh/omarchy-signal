@@ -29,6 +29,7 @@ Item {
   property int toastTimeoutMs: 8000
   property string notificationMode: "popup"
   property bool respectDnd: true
+  property string notificationSound: ""
   property bool dnd: false
   property string lastError: ""
 
@@ -107,6 +108,7 @@ Item {
       if (typeof d.notificationTimeoutMs === "number") root.toastTimeoutMs = Math.max(1000, Math.min(120000, d.notificationTimeoutMs))
       if (typeof d.notifications === "string") root.notificationMode = d.notifications
       if ("respectDnd" in d) root.respectDnd = d.respectDnd !== false
+      if (typeof d.notificationSound === "string") root.notificationSound = d.notificationSound
       root.lastError = Model.singleLine(d.error || "", 200)
       return
     }
@@ -131,6 +133,8 @@ Item {
       }
       if (root.notificationMode !== "popup") return
       root.pushToast(toast)
+      if (root.notificationSound && /^\/[^\0]+\.(wav|ogg|oga|mp3|flac)$/i.test(root.notificationSound))
+        Util.execArgv(["pw-play", root.notificationSound])
       return
     }
     if (ev.event === "sent" && root.replyOpen && d.conversation === root.replyKey) {

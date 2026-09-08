@@ -292,6 +292,8 @@ class Bridge:
             "notificationPreview": self.cfg.notification_preview,
             "notificationContent": self.cfg.notification_content,
             "respectDnd": self.cfg.respect_dnd,
+            "notificationSound": self.cfg.notification_sound if self.cfg.notification_sound and os.path.isfile(os.path.expanduser(self.cfg.notification_sound)) else "",
+            "account": self.account,
             "notificationTimeoutMs": self.cfg.notification_timeout_ms,
             "linking": self._link_task is not None and not self._link_task.done(),
             "error": self.supervisor.last_error, "uptime": int(time.time() - self.started_at),
@@ -600,7 +602,10 @@ class Bridge:
         if not text.strip() and not paths:
             raise ValueError("nothing to send")
         params: dict[str, Any] = {"account": account, "message": text}
-        params.update(self._target_params(rec))
+        if rec.kind == "number" and rec.value == account:
+            params["noteToSelf"] = True          # Signal's "Note to Self" conversation
+        else:
+            params.update(self._target_params(rec))
         if paths:
             params["attachments"] = paths
         quote_ts = p.get("quoteTs", 0)
@@ -661,9 +666,14 @@ class Bridge:
                 continue
             if sender.kind not in ("number", "uuid"):
                 continue
-            with contextlib.suppress(RpcError, RpcClosed, asyncio.TimeoutError):
-                await self.supervisor.call("sendReceipt", {"account": self.account, "recipient": [sender.value],
+            # sendReceipt takes ONE recipient (signal-cli reads it with getString);
+            # a list is rejected. The read receipt doubles as the read-sync that
+            # clears the notification on the phone and other linked devices.
+            try:
+                await self.supervisor.call("sendReceipt", {"account": self.account, "recipient": sender.value,
                                                            "targetTimestamp": stamps[-32:], "type": "read"}, timeout=30)
+            except (RpcError, RpcClosed, asyncio.TimeoutError) as exc:
+                log.warning("read receipt failed: %s", exc)
         await self._broadcast("unread", {"total": self.store.total_unread(), "conversation": rec.key})
         return {"changed": changed, "receipts": len(unread_msgs)}
 
@@ -804,6 +814,180 @@ class Bridge:
         }
         await self._broadcast("message", payload)
         return {"sent": True}
+
+    async def op_delete(self, p: dict) -> dict:
+        """Delete one of our own messages for everyone (Signal's remote delete)."""
+        account = self._require_account()
+        rec = parse_conversation_key(p["conversation"])
+        msg = self.store.message(rec.key, p["ts"])
+        if not msg or not msg.outgoing:
+            raise ValueError("you can only delete your own messages")
+        params: dict[str, Any] = {"account": account, "targetTimestamp": p["ts"]}
+        params.update(self._target_params(rec))
+        await self.supervisor.call("remoteDelete", params, timeout=60)
+        self.store.delete_own(rec.key, p["ts"])
+        await self._broadcast("deleted", {"conversation": rec.key, "ts": p["ts"]})
+        return {"deleted": True}
+
+    async def op_edit(self, p: dict) -> dict:
+        account = self._require_account()
+        rec = parse_conversation_key(p["conversation"])
+        msg = self.store.message(rec.key, p["ts"])
+        if not msg or not msg.outgoing:
+            raise ValueError("you can only edit your own messages")
+        text = emoji.replace_shortcodes(clean_text(p["text"]))
+        if not text.strip():
+            raise ValueError("nothing to send")
+        params: dict[str, Any] = {"account": account, "message": text, "editTimestamp": p["ts"]}
+        if rec.kind == "number" and rec.value == account:
+            params["noteToSelf"] = True
+        else:
+            params.update(self._target_params(rec))
+        await self.supervisor.call("send", params, timeout=120)
+        self.store.edit_message(rec.key, p["ts"], text)
+        await self._broadcast("edited", {"conversation": rec.key, "ts": p["ts"], "text": text})
+        return {"edited": True}
+
+    async def op_setExpiration(self, p: dict) -> dict:
+        """Disappearing messages timer for a conversation (seconds, 0 = off)."""
+        account = self._require_account()
+        rec = parse_conversation_key(p["conversation"])
+        seconds = max(0, min(int(p["seconds"]), 4 * 7 * 86400))
+        if rec.kind == "group":
+            await self.supervisor.call("updateGroup", {"account": account, "groupId": rec.value, "expiration": seconds}, timeout=60)
+        elif rec.kind in ("number", "uuid"):
+            await self.supervisor.call("updateContact", {"account": account, "recipient": rec.value, "expiration": seconds}, timeout=60)
+        else:
+            raise ValueError("timers are per contact or group")
+        self.store.upsert_conversation(rec)
+        self.store.set_expiration(rec.key, seconds)
+        await self._broadcast("conversation", {"conversation": rec.key, "expiration": seconds})
+        return {"expiration": seconds}
+
+    async def op_block(self, p: dict) -> dict:
+        account = self._require_account()
+        rec = parse_conversation_key(p["conversation"])
+        method = "block" if p["blocked"] else "unblock"
+        params: dict[str, Any] = {"account": account}
+        if rec.kind == "group":
+            params["groupId"] = [rec.value]
+        elif rec.kind in ("number", "uuid"):
+            params["recipient"] = [rec.value]
+        else:
+            raise ValueError("blocking is per contact or group")
+        await self.supervisor.call(method, params, timeout=60)
+        self.store.upsert_conversation(rec)
+        self.store.set_blocked(rec.key, bool(p["blocked"]))
+        await self._broadcast("conversation", {"conversation": rec.key, "blocked": bool(p["blocked"])})
+        return {"blocked": bool(p["blocked"])}
+
+    async def op_messageRequest(self, p: dict) -> dict:
+        """Accept or delete a message request from someone not in your contacts."""
+        account = self._require_account()
+        rec = parse_conversation_key(p["conversation"])
+        params: dict[str, Any] = {"account": account, "type": "accept" if p["accept"] else "delete"}
+        params.update(self._target_params(rec))
+        await self.supervisor.call("sendMessageRequestResponse", params, timeout=60)
+        if not p["accept"]:
+            self.store.set_archived(rec.key, True)
+        return {"accepted": bool(p["accept"])}
+
+    async def op_identities(self, p: dict) -> list[dict]:
+        """Safety numbers for a contact, newest first, as Signal shows them."""
+        account = self._require_account()
+        rec = parse_conversation_key(p["conversation"])
+        if rec.kind not in ("number", "uuid"):
+            raise ValueError("safety numbers are per contact")
+        result = await self.supervisor.call("listIdentities", {"account": account, "number": rec.value}, timeout=60)
+        out = []
+        if isinstance(result, list):
+            for item in result:
+                if not isinstance(item, dict):
+                    continue
+                sn = clean_name(item.get("safetyNumber"), max_length=120)
+                out.append({"safetyNumber": sn, "trustLevel": clean_name(item.get("trustLevel"), max_length=40),
+                            "addedDate": int(item.get("addedDate") or 0) if str(item.get("addedDate", "")).lstrip("-").isdigit() else 0,
+                            "fingerprint": clean_name(item.get("fingerprint"), max_length=200)})
+        out.sort(key=lambda x: -x["addedDate"])
+        return out
+
+    async def op_trust(self, p: dict) -> dict:
+        """Mark a contact's current safety number verified (or trust all known keys)."""
+        account = self._require_account()
+        rec = parse_conversation_key(p["conversation"])
+        if rec.kind not in ("number", "uuid"):
+            raise ValueError("safety numbers are per contact")
+        params: dict[str, Any] = {"account": account, "recipient": rec.value}
+        sn = clean_name(p.get("safetyNumber") or "", max_length=120).replace(" ", "")
+        if sn:
+            if not sn.isdigit():
+                raise ValueError("a safety number is digits only")
+            params["verifiedSafetyNumber"] = sn
+        else:
+            params["trustAllKnownKeys"] = True
+        await self.supervisor.call("trust", params, timeout=60)
+        return {"trusted": True}
+
+    async def op_groupInfo(self, p: dict) -> dict:
+        rec = parse_conversation_key(p["conversation"])
+        if rec.kind != "group":
+            raise ValueError("not a group")
+        for g in self.store.groups():
+            if g["key"] == rec.key:
+                members = [{"key": m, "name": self.store.display_name(m)} for m in g.get("members", [])]
+                conv = self.store.conversation(rec.key)
+                return {"key": rec.key, "name": g["name"], "members": members,
+                        "expiration": conv.expiration if conv else 0}
+        raise ValueError("unknown group (try `refresh`)")
+
+    async def op_leaveGroup(self, p: dict) -> dict:
+        account = self._require_account()
+        rec = parse_conversation_key(p["conversation"])
+        if rec.kind != "group":
+            raise ValueError("not a group")
+        await self.supervisor.call("quitGroup", {"account": account, "groupId": rec.value}, timeout=60)
+        self.store.set_archived(rec.key, True)
+        with contextlib.suppress(RpcError, RpcClosed):
+            await self.refresh_directory()
+        return {"left": True}
+
+    async def op_createGroup(self, p: dict) -> dict:
+        account = self._require_account()
+        name = clean_name(p["name"], max_length=64)
+        if not name:
+            raise ValueError("a group needs a name")
+        members = []
+        for m in p["members"]:
+            rec = parse_conversation_key(m) if ":" in m else classify_recipient(m)
+            if rec.kind not in ("number", "uuid", "username"):
+                raise ValueError("group members must be contacts")
+            members.append(rec.value)
+        if not members:
+            raise ValueError("pick at least one member")
+        result = await self.supervisor.call("updateGroup", {"account": account, "name": name, "members": members}, timeout=120)
+        gid = result.get("groupId") if isinstance(result, dict) else None
+        with contextlib.suppress(RpcError, RpcClosed):
+            await self.refresh_directory()
+        if isinstance(gid, str):
+            rec = Recipient("group", gid)
+            self.store.upsert_conversation(rec, name=name)
+            await self._broadcast("directory", {"contacts": 0, "groups": 1})
+            return {"key": rec.key, "name": name}
+        return {"key": "", "name": name}
+
+    async def op_renameGroup(self, p: dict) -> dict:
+        account = self._require_account()
+        rec = parse_conversation_key(p["conversation"])
+        if rec.kind != "group":
+            raise ValueError("not a group")
+        name = clean_name(p["name"], max_length=64)
+        if not name:
+            raise ValueError("a group needs a name")
+        await self.supervisor.call("updateGroup", {"account": account, "groupId": rec.value, "name": name}, timeout=60)
+        self.store.upsert_conversation(rec, name=name)
+        with contextlib.suppress(RpcError, RpcClosed):
+            await self.refresh_directory()
+        return {"name": name}
 
     async def op_reloadConfig(self, p: dict) -> dict:
         """Re-read config.toml and apply everything that does not need a

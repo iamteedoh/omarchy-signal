@@ -51,6 +51,17 @@ OPS: dict[str, dict[str, tuple[type | tuple[type, ...], bool]]] = {
     "clearHistory": {},
     "demo": {"text": (str, False)},
     "reloadConfig": {},
+    "delete": {"conversation": (str, True), "ts": (int, True)},
+    "edit": {"conversation": (str, True), "ts": (int, True), "text": (str, True)},
+    "setExpiration": {"conversation": (str, True), "seconds": (int, True)},
+    "block": {"conversation": (str, True), "blocked": (bool, True)},
+    "messageRequest": {"conversation": (str, True), "accept": (bool, True)},
+    "identities": {"conversation": (str, True)},
+    "trust": {"conversation": (str, True), "safetyNumber": (str, False)},
+    "groupInfo": {"conversation": (str, True)},
+    "leaveGroup": {"conversation": (str, True)},
+    "createGroup": {"name": (str, True), "members": (list, True)},
+    "renameGroup": {"conversation": (str, True), "name": (str, True)},
     "shutdown": {},
 }
 

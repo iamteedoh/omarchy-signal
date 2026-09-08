@@ -147,7 +147,7 @@ class BridgeIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     break
                 await asyncio.sleep(0.05)
             receipt = [s for s in h.sent() if s["method"] == "sendReceipt"][0]
-            self.assertEqual(receipt["params"]["recipient"], ["+15550002222"])
+            self.assertEqual(receipt["params"]["recipient"], "+15550002222")   # a string: this is what syncs the read to the phone
             self.assertEqual(receipt["params"]["targetTimestamp"], [1700000000001])
             self.assertEqual((await c.request("status"))["unread"], 0)
             await c.close()
@@ -321,6 +321,80 @@ class BridgeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             # History keeps the real name regardless of the popup setting.
             hist = await c.request("history", conversation="number:+15550002222")
             self.assertEqual(hist[-1]["senderName"], "Trinity")
+            await c.close()
+
+    async def test_message_actions_delete_edit(self):
+        async with BridgeHarness() as h:
+            events = []
+            c, _ = await self._client(h, on_event=lambda n, d: events.append((n, d)))
+            await c.request("subscribe")
+            res = await c.request("send", conversation="number:+15550002222", text="typo :smile:")
+            ts = res["ts"]
+            hist = await c.request("history", conversation="number:+15550002222")
+            self.assertEqual(hist[-1]["body"], "typo 😄")          # shortcode expanded by the bridge
+            await c.request("edit", conversation="number:+15550002222", ts=ts, text="fixed")
+            sent = [s for s in h.sent() if s["method"] == "send"][-1]
+            self.assertEqual((sent["params"]["editTimestamp"], sent["params"]["message"]), (ts, "fixed"))
+            hist = await c.request("history", conversation="number:+15550002222")
+            self.assertEqual((hist[-1]["body"], hist[-1]["edited"]), ("fixed", True))
+            await c.request("delete", conversation="number:+15550002222", ts=ts)
+            dl = [s for s in h.sent() if s["method"] == "remoteDelete"][-1]
+            self.assertEqual(dl["params"]["targetTimestamp"], ts)
+            hist = await c.request("history", conversation="number:+15550002222")
+            self.assertTrue(hist[-1]["deleted"])
+            # only our own messages
+            h.inject(incoming("theirs", 1700000000009))
+            for _ in range(50):
+                if any(n == "message" for n, _ in events):
+                    break
+                await asyncio.sleep(0.05)
+            with self.assertRaises(BridgeError):
+                await c.request("delete", conversation="number:+15550002222", ts=1700000000009)
+            with self.assertRaises(BridgeError):
+                await c.request("edit", conversation="number:+15550002222", ts=1700000000009, text="x")
+            await c.close()
+
+    async def test_conversation_actions(self):
+        async with BridgeHarness() as h:
+            c, _ = await self._client(h)
+            conv = "number:+15550002222"
+            self.assertEqual((await c.request("setExpiration", conversation=conv, seconds=3600))["expiration"], 3600)
+            uc = [s for s in h.sent() if s["method"] == "updateContact"][-1]
+            self.assertEqual((uc["params"]["recipient"], uc["params"]["expiration"]), ("+15550002222", 3600))
+            await c.request("setExpiration", conversation="group:" + GID, seconds=86400)
+            ug = [s for s in h.sent() if s["method"] == "updateGroup"][-1]
+            self.assertEqual((ug["params"]["groupId"], ug["params"]["expiration"]), (GID, 86400))
+            convs = await c.request("conversations", includeArchived=True)
+            self.assertEqual(next(x for x in convs if x["key"] == conv)["expiration"], 3600)
+            await c.request("block", conversation=conv, blocked=True)
+            self.assertEqual([s for s in h.sent() if s["method"] == "block"][-1]["params"]["recipient"], ["+15550002222"])
+            await c.request("block", conversation=conv, blocked=False)
+            self.assertTrue(any(s["method"] == "unblock" for s in h.sent()))
+            await c.request("messageRequest", conversation=conv, accept=True)
+            self.assertEqual([s for s in h.sent() if s["method"] == "sendMessageRequestResponse"][-1]["params"]["type"], "accept")
+            ids = await c.request("identities", conversation=conv)
+            self.assertEqual(ids[0]["trustLevel"], "TRUSTED_UNVERIFIED")
+            self.assertTrue(ids[0]["safetyNumber"].startswith("12345"))
+            await c.request("trust", conversation=conv, safetyNumber="12345 67890")
+            tr = [s for s in h.sent() if s["method"] == "trust"][-1]
+            self.assertEqual(tr["params"]["verifiedSafetyNumber"], "1234567890")
+            with self.assertRaises(BridgeError):
+                await c.request("trust", conversation=conv, safetyNumber="12 ab")
+            info = await c.request("groupInfo", conversation="group:" + GID)
+            self.assertEqual(info["name"], "Nebuchadnezzar crew")
+            self.assertIn("Trinity", [m["name"] for m in info["members"]])
+            made = await c.request("createGroup", name="Ops\x1b[0m", members=["number:+15550002222", "+15550003333"])
+            self.assertTrue(made["key"].startswith("group:"))
+            mk = [s for s in h.sent() if s["method"] == "updateGroup"][-1]
+            self.assertEqual((mk["params"]["name"], mk["params"]["members"]), ("Ops[0m", ["+15550002222", "+15550003333"]))
+            await c.request("renameGroup", conversation="group:" + GID, name="Crew 2")
+            await c.request("leaveGroup", conversation="group:" + GID)
+            self.assertEqual([s for s in h.sent() if s["method"] == "quitGroup"][-1]["params"]["groupId"], GID)
+            # note to self
+            await c.request("send", conversation="number:+15550001111", text="remember milk")
+            sent = [s for s in h.sent() if s["method"] == "send"][-1]
+            self.assertTrue(sent["params"].get("noteToSelf"))
+            self.assertNotIn("recipient", sent["params"])
             await c.close()
 
     async def test_second_instance_refuses(self):

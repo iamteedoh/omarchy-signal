@@ -24,8 +24,13 @@ count. It follows whichever Omarchy theme is active.
 ## What you get
 
 - **Terminal client** (`omarchy-signal tui`): conversations, contacts and
-  groups, history, quotes, reactions, attachments, typing indicators, read
-  receipts. Images render inline through the kitty graphics protocol in
+  groups, history, quotes, reactions on any message, edit and delete-for-
+  everyone, forward, message info, attachments with an action menu,
+  emoji shortcodes (`:smile:` with a picker), typing indicators, read receipts
+  that also clear the phone, disappearing-message timers, mute, archive,
+  block, message requests, safety numbers with verification, group creation,
+  renaming and leaving, Note to Self, `@mentions`, and a Signal-style
+  settings screen. Images render inline through the kitty graphics protocol in
   Ghostty, kitty, WezTerm and Konsole; URLs and attachments are clickable
   OSC 8 hyperlinks. Falls back to text on other terminals, so make one of
   those Omarchy's default (`omarchy default terminal ghostty`) or set
@@ -100,6 +105,9 @@ plugin directory for the CLI, service and keybinding.
 | `/` | search history |
 | `Ctrl-A` | attach a file (path prompt with Tab completion and a file list) |
 | `Ctrl-R` / `Ctrl-Q` | react to / quote the last message |
+| `Ctrl-G` | pick any message: react, quote, edit, delete for everyone, forward, copy, info |
+| `Ctrl-T` | conversation: disappearing messages, mute, archive, block, safety number, group members/rename/leave, new group |
+| `:smile:` | emoji shortcodes with a picker as you type |
 | `Ctrl-O`, or click an attachment | open it larger, save to `~/Downloads`, save as…, or copy its path |
 | `Ctrl-E` | mute conversation |
 | `?` | help · `Ctrl-C` quit |

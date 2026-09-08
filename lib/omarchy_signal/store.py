@@ -96,11 +96,14 @@ class Conversation:
     muted: bool = False
     archived: bool = False
     typing: bool = False
+    expiration: int = 0
+    blocked: bool = False
 
     def to_json(self) -> dict:
         return {"key": self.key, "kind": self.kind, "name": self.name, "lastTs": self.last_ts,
                 "preview": self.last_preview, "unread": self.unread, "muted": self.muted,
-                "archived": self.archived, "typing": self.typing}
+                "archived": self.archived, "typing": self.typing, "expiration": self.expiration,
+                "blocked": self.blocked}
 
 
 @dataclass
@@ -155,11 +158,35 @@ class Store:
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(_SCHEMA)
         self.db.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
+        self._migrate()
         if not is_memory:
             for suffix in ("-wal", "-shm"):
                 side = Path(str(self.path) + suffix)
                 if side.exists():
                     os.chmod(side, 0o600)
+
+    def _migrate(self) -> None:
+        cols = {r["name"] for r in self.db.execute("PRAGMA table_info(conversations)")}
+        if "expiration" not in cols:
+            self.db.execute("ALTER TABLE conversations ADD COLUMN expiration INTEGER NOT NULL DEFAULT 0")
+        if "blocked" not in cols:
+            self.db.execute("ALTER TABLE conversations ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0")
+
+    def set_expiration(self, key: str, seconds: int) -> None:
+        self.db.execute("UPDATE conversations SET expiration = ? WHERE key = ?", (max(0, seconds), key))
+
+    def set_blocked(self, key: str, blocked: bool) -> None:
+        self.db.execute("UPDATE conversations SET blocked = ? WHERE key = ?", (1 if blocked else 0, key))
+
+    def edit_message(self, conversation_key: str, ts: int, body: str) -> bool:
+        cur = self.db.execute("UPDATE messages SET body = ?, edited = 1 WHERE conversation = ? AND ts = ? AND outgoing = 1",
+                              (clean_text(body), conversation_key, ts))
+        return cur.rowcount > 0
+
+    def delete_own(self, conversation_key: str, ts: int) -> bool:
+        cur = self.db.execute("UPDATE messages SET deleted = 1, body = '', attachments = '[]' WHERE conversation = ? AND ts = ? AND outgoing = 1",
+                              (conversation_key, ts))
+        return cur.rowcount > 0
 
     def close(self) -> None:
         self.db.close()
@@ -213,10 +240,13 @@ class Store:
         name = row["name"]
         if not name:
             name = self.display_name(row["key"])
+        keys = row.keys()
         return Conversation(key=row["key"], kind=row["kind"], name=name, last_ts=row["last_ts"],
                             last_preview=row["last_preview"], unread=row["unread"],
                             muted=bool(row["muted"]), archived=bool(row["archived"]),
-                            typing=row["typing_until"] > _now_ms())
+                            typing=row["typing_until"] > _now_ms(),
+                            expiration=int(row["expiration"]) if "expiration" in keys else 0,
+                            blocked=bool(row["blocked"]) if "blocked" in keys else False)
 
     # -- messages ----------------------------------------------------------
 

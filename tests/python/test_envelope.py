@@ -97,6 +97,14 @@ class DataMessageTests(unittest.TestCase):
         self.assertEqual(evs[0].edit_target_ts, 1)
         self.assertEqual(evs[0].text, "fixed")
 
+    def test_mentions_render_as_names(self):
+        evs = parse_receive(env(dataMessage={"timestamp": 1, "message": "hey \ufffc and \ufffc!",
+                                             "groupInfo": {"groupId": GID, "groupName": "Crew", "type": "DELIVER"},
+                                             "mentions": [{"name": "Neo", "number": "+15550001111", "start": 4, "length": 1},
+                                                          {"name": "Trin\x1bity", "number": "+15550002222", "start": 10, "length": 1}]}))
+        self.assertEqual(evs[0].text, "hey @Neo and @Trin[31mity!".replace("[31m", "") if False else "hey @Neo and @Trinity!")
+        self.assertEqual(evs[0].mentions, ["number:+15550001111", "number:+15550002222"])
+
     def test_hostile_shapes_never_raise(self):
         for params in (None, [], "x", {"envelope": None}, {"envelope": []}, {"envelope": {}},
                        {"envelope": {"dataMessage": "str"}}, {"envelope": {"source": 5, "dataMessage": {"message": "x"}}},

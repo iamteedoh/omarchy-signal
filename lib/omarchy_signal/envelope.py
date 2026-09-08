@@ -287,11 +287,23 @@ def _data_message(data: dict, sender: Recipient, sender_name: str, fallback_ts: 
 
     mentions: list[str] = []
     if isinstance(data.get("mentions"), list):
+        placeholders = []
         for m in data["mentions"][:64]:
             if isinstance(m, dict):
                 who = _party(m.get("number"), m.get("uuid"))
                 if who:
                     mentions.append(who.key)
+                label = clean_name(m.get("name")) or (who.value if who else "")
+                placeholders.append((_int(m.get("start"), -1), label))
+        # Signal sends U+FFFC where a mention sits; show it as @name.
+        if "\ufffc" in text and placeholders:
+            placeholders.sort()
+            parts = text.split("\ufffc")
+            rebuilt = parts[0]
+            for i, part in enumerate(parts[1:]):
+                label = placeholders[i][1] if i < len(placeholders) else ""
+                rebuilt += ("@" + label if label else "@?") + part
+            text = rebuilt
 
     return Event(kind="message", conversation=conversation, timestamp=ts, sender=sender,
                  sender_name=sender_name, outgoing=outgoing, text=text, attachments=attachments,

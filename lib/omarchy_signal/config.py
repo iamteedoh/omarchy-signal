@@ -82,6 +82,7 @@ class Config:
     notification_preview: bool = True      # legacy alias: False == "name-only"
     notification_timeout_ms: int = 8000
     respect_dnd: bool = True               # no popups while Omarchy's Do Not Disturb is on
+    notification_sound: str = ""           # sound file played with a popup (empty = silent)
     typing_indicators: bool = True
     terminal_images: str = "auto"          # auto | on | off   (can the terminal draw images at all)
     inline_images: str = "always"          # always | click | never   (show received images in the thread)
@@ -170,8 +171,10 @@ SETTINGS: list[dict] = [
      "min": 1000, "max": 120000, "step": 1000, "help": "How long a popup stays on screen"},
     {"section": "Notifications", "key": "respect_dnd", "label": "Honor Do Not Disturb", "type": "bool",
      "help": "No popups while Omarchy's Do Not Disturb is on (unread counts still update)"},
+    {"section": "Notifications", "key": "notification_sound", "label": "Notification sound", "type": "path",
+     "help": "A .wav/.ogg/.oga file played with each popup (pw-play); empty for silence"},
     {"section": "Privacy", "key": "send_read_receipts", "label": "Read receipts", "type": "bool",
-     "help": "Tell senders when you have read their messages"},
+     "help": "Tell senders you read their messages; the same receipt clears the notification on your phone"},
     {"section": "Privacy", "key": "typing_indicators", "label": "Typing indicators", "type": "bool",
      "help": "Send and show typing indicators"},
     {"section": "Privacy", "key": "trust_new_identities", "label": "New safety numbers", "type": "choice",

@@ -116,6 +116,15 @@ class App:
         self._pending_seq = 0
         self.emoji_suggestions: list[tuple[str, str]] = []
         self.emoji_index = 0
+        self.pick_items: list[dict] = []          # message picker
+        self.pick_index = 0
+        self.pick_action = ""                     # pending action awaiting a target/prompt
+        self.pick_target: dict | None = None
+        self.menu_items: list[tuple[str, str]] = []   # conversation menu (key, label)
+        self.menu_index = 0
+        self.group_members: set[str] = set()      # new-group member selection
+        self.info_lines: list[str] = []           # generic info overlay content
+        self.forward_payload: dict | None = None
         self._last_failed: dict | None = None
         self.settings_index = 0
         self.settings_pending: set[str] = set()   # changed keys that need a bridge restart
@@ -331,6 +340,17 @@ class App:
                     m["deleted"] = True
                     m["body"] = ""
                     m["attachments"] = []
+        elif name == "edited":
+            for m in self.messages.get(data.get("conversation", ""), []):
+                if m.get("ts") == data.get("ts"):
+                    m["body"] = clean_text(data.get("text", ""))
+                    m["edited"] = True
+        elif name == "conversation":
+            for c in self.conversations:
+                if c["key"] == data.get("conversation"):
+                    for k in ("expiration", "blocked", "muted", "archived"):
+                        if k in data:
+                            c[k] = data[k]
         elif name == "unread":
             key = data.get("conversation")
             if key:
@@ -460,11 +480,15 @@ class App:
         self.overlay_index = 0
         self.overlay_message = message
         self.focus = "overlay"
-        if name == "contacts":
+        if name in ("contacts", "forward"):
             self.overlay_items = [{"key": c["key"], "name": c["displayName"], "sub": c.get("number") or c.get("username") or "", "kind": "contact"}
                                   for c in self.contacts]
             self.overlay_items += [{"key": g["key"], "name": g["name"], "sub": f"{len(g.get('members', []))} members", "kind": "group"}
                                    for g in self.groups]
+            self.overlay_items.sort(key=lambda x: x["name"].lower())
+        elif name == "members":
+            self.overlay_items = [{"key": c["key"], "name": c["displayName"], "sub": c.get("number") or c.get("username") or "", "kind": "contact"}
+                                  for c in self.contacts]
             self.overlay_items.sort(key=lambda x: x["name"].lower())
         elif name == "link":
             asyncio.ensure_future(self._start_link())
@@ -473,6 +497,298 @@ class App:
             self._path_candidates()
         self._filter_overlay()
         self.dirty = True
+
+    # ------------------------------------------------------------------ message picker (Ctrl-G)
+
+    def open_message_picker(self) -> None:
+        msgs = [m for m in self.messages.get(self.active_key, []) if not m.get("_pending")]
+        if not msgs:
+            self.show_toast("no messages here yet")
+            return
+        self.pick_items = msgs[-30:]
+        self.pick_index = len(self.pick_items) - 1
+        self.pick_action = ""
+        self.open_overlay("pick")
+
+    def _pick_current(self) -> dict | None:
+        if not self.pick_items:
+            return None
+        return self.pick_items[max(0, min(len(self.pick_items) - 1, self.pick_index))]
+
+    async def _pick_key(self, key: Key) -> None:
+        m = self._pick_current()
+        n = len(self.pick_items)
+        if key.name == "down" or (key.name == "char" and key.char == "j"):
+            self.pick_index = min(n - 1, self.pick_index + 1)
+        elif key.name == "up" or (key.name == "char" and key.char == "k"):
+            self.pick_index = max(0, self.pick_index - 1)
+        elif key.name == "pagedown":
+            self.pick_index = min(n - 1, self.pick_index + 8)
+        elif key.name == "pageup":
+            self.pick_index = max(0, self.pick_index - 8)
+        elif m is None:
+            return
+        elif key.name == "char" and key.char == "r":
+            self.pick_target = m
+            self.pick_action = "react"
+            self.overlay = "prompt"
+            self.overlay_query = ""
+            self.overlay_message = "emoji to react with (type :code: or paste one)"
+        elif key.name == "char" and key.char == "q":
+            self.composer.quote = m
+            self.close_overlay()
+            self.show_toast("quoting; Enter sends your reply")
+        elif key.name == "char" and key.char == "e":
+            if not m.get("outgoing"):
+                self.show_toast("you can only edit your own messages")
+                return
+            self.pick_target = m
+            self.pick_action = "edit"
+            self.overlay = "prompt"
+            self.overlay_query = m.get("body", "")
+            self.overlay_message = "edit the message; Enter sends the new text"
+        elif key.name == "char" and key.char == "d":
+            if not m.get("outgoing"):
+                self.show_toast("you can only delete your own messages")
+                return
+            self.pick_target = m
+            self.pick_action = "delete"
+            self.overlay = "prompt"
+            self.overlay_query = ""
+            self.overlay_message = "delete for everyone? type yes"
+        elif key.name == "char" and key.char == "f":
+            self.forward_payload = m
+            self.open_overlay("forward")
+        elif key.name == "char" and key.char == "c":
+            self._copy_to_clipboard(m.get("body", ""))
+            self.close_overlay()
+        elif key.name == "char" and key.char == "o":
+            atts = [a for a in m.get("attachments", []) if a.get("path")]
+            if atts:
+                self.open_attachment_menu(atts, 0)
+            else:
+                for _, _, url in links.find_urls(m.get("body", "")):
+                    self._open_href(url)
+                    break
+                else:
+                    self.show_toast("nothing to open in that message")
+        elif key.name == "char" and key.char == "i":
+            self.info_lines = self._message_info(m)
+            self.pick_action = "info"
+            self.overlay = "info"
+
+    def _message_info(self, m: dict) -> list[str]:
+        when = datetime.fromtimestamp(m.get("ts", 0) / 1000).strftime("%Y-%m-%d %H:%M:%S") if m.get("ts") else "?"
+        lines = [f"From      {'You' if m.get('outgoing') else clean_name(m.get('senderName') or m.get('sender', '?'))}",
+                 f"Sent      {when}",
+                 f"Status    {m.get('status') or ('received' if not m.get('outgoing') else 'sent')}"]
+        if m.get("edited"):
+            lines.append("Edited    yes")
+        if m.get("expiresIn"):
+            lines.append(f"Expires   after {self._fmt_duration(int(m['expiresIn']))}")
+        if m.get("reactions"):
+            lines.append("Reactions " + "  ".join(f"{clean_name(e, max_length=8)} {self._who(k)}" for k, e in m["reactions"].items()))
+        for a in m.get("attachments", []):
+            lines.append(f"File      {self._attachment_filename(a)} · {a.get('contentType', '')} · {self._fmt_size(int(a.get('size', 0) or 0))}")
+        return lines
+
+    def _who(self, key: str) -> str:
+        for c in self.contacts:
+            if c["key"] == key:
+                return c["displayName"]
+        return "you" if key.startswith("number:") and self.status.get("account") and key.endswith(self.status["account"]) else key.split(":", 1)[-1]
+
+    async def _prompt_submit(self) -> None:
+        action, target = self.pick_action, self.pick_target
+        q = self.overlay_query.strip()
+        if not self.client:
+            self.close_overlay()
+            return
+        try:
+            if action == "react" and target:
+                glyph = emoji.replace_shortcodes(q) if q else ""
+                glyph = clean_name(glyph, max_length=8)
+                if not glyph:
+                    self.close_overlay()
+                    return
+                await self.client.request("react", conversation=self.active_key, ts=target["ts"],
+                                          author=target["sender"] if not target.get("outgoing") else f"number:{self.status.get('account', '')}",
+                                          emoji=glyph)
+            elif action == "edit" and target:
+                if q and q != target.get("body", ""):
+                    await self.client.request("edit", conversation=self.active_key, ts=target["ts"], text=q)
+            elif action == "delete" and target:
+                if q.lower() == "yes":
+                    await self.client.request("delete", conversation=self.active_key, ts=target["ts"])
+            elif action == "expiration":
+                pass
+            elif action == "rename":
+                if q:
+                    await self.client.request("renameGroup", conversation=self.active_key, name=q)
+                    self._ensure_conversation(self.active_key, q, "group")
+                    for c in self.conversations:
+                        if c["key"] == self.active_key:
+                            c["name"] = q
+            elif action == "newgroup":
+                if q:
+                    self.pick_action = "newgroup-members"
+                    self.overlay_message = q          # group name travels here
+                    self.group_members = set()
+                    self.open_overlay("members")
+                    return
+            elif action == "verify":
+                await self.client.request("trust", conversation=self.active_key, safetyNumber=q)
+                self.show_toast("safety number verified")
+        except BridgeError as exc:
+            self.show_toast(f"{exc}", 6)
+        self.close_overlay()
+
+    # ------------------------------------------------------------------ conversation menu (Ctrl-T)
+
+    EXPIRATIONS = [(0, "off"), (30, "30 seconds"), (300, "5 minutes"), (3600, "1 hour"), (8 * 3600, "8 hours"),
+                   (86400, "1 day"), (7 * 86400, "1 week"), (28 * 86400, "4 weeks")]
+
+    def open_conversation_menu(self) -> None:
+        conv = self.active()
+        items: list[tuple[str, str]] = []
+        if conv:
+            is_group = conv.get("kind") == "group"
+            exp = next((label for secs, label in self.EXPIRATIONS if secs == int(conv.get("expiration", 0) or 0)), f"{conv.get('expiration')}s")
+            items.append(("expiration", f"Disappearing messages: {exp}"))
+            items.append(("mute", "Unmute" if conv.get("muted") else "Mute notifications"))
+            items.append(("archive", "Unarchive" if conv.get("archived") else "Archive conversation"))
+            if is_group:
+                items.append(("members", "Group members"))
+                items.append(("rename", "Rename group"))
+                items.append(("leave", "Leave group"))
+            else:
+                items.append(("safety", "View safety number"))
+                items.append(("request", "Accept message request"))
+            items.append(("block", "Unblock" if conv.get("blocked") else "Block"))
+        items.append(("newgroup", "New group…"))
+        items.append(("archived", "Show archived conversations"))
+        self.menu_items = items
+        self.menu_index = 0
+        self.open_overlay("convmenu")
+
+    async def _menu_key(self, key: Key) -> None:
+        n = len(self.menu_items)
+        if key.name == "down" or (key.name == "char" and key.char == "j"):
+            self.menu_index = (self.menu_index + 1) % n
+        elif key.name == "up" or (key.name == "char" and key.char == "k"):
+            self.menu_index = (self.menu_index - 1) % n
+        elif key.name == "enter" or (key.name == "char" and key.char in (" ", "l")) or key.name == "right":
+            await self._menu_activate(self.menu_items[self.menu_index][0], 1)
+        elif key.name == "left" or (key.name == "char" and key.char == "h"):
+            await self._menu_activate(self.menu_items[self.menu_index][0], -1)
+
+    async def _menu_activate(self, action: str, delta: int) -> None:
+        conv = self.active()
+        if not self.client:
+            return
+        try:
+            if action == "expiration" and conv:
+                current = int(conv.get("expiration", 0) or 0)
+                secs = [x for x, _ in self.EXPIRATIONS]
+                idx = secs.index(current) if current in secs else 0
+                new = secs[(idx + delta) % len(secs)]
+                await self.client.request("setExpiration", conversation=conv["key"], seconds=new)
+                conv["expiration"] = new
+                self.open_conversation_menu()
+                self.menu_index = 0
+            elif action == "mute" and conv:
+                await self._toggle_mute()
+                self.open_conversation_menu()
+                self.menu_index = 1
+            elif action == "archive" and conv:
+                new = not conv.get("archived")
+                await self.client.request("archive", conversation=conv["key"], archived=new)
+                conv["archived"] = new
+                self.show_toast("archived" if new else "unarchived")
+                self.close_overlay()
+            elif action == "block" and conv:
+                new = not conv.get("blocked")
+                await self.client.request("block", conversation=conv["key"], blocked=new)
+                conv["blocked"] = new
+                self.show_toast("blocked" if new else "unblocked")
+                self.close_overlay()
+            elif action == "request" and conv:
+                await self.client.request("messageRequest", conversation=conv["key"], accept=True)
+                self.show_toast("message request accepted")
+                self.close_overlay()
+            elif action == "safety" and conv:
+                ids = await self.client.request("identities", conversation=conv["key"])
+                if not ids:
+                    self.info_lines = ["No safety number yet: exchange a message first."]
+                else:
+                    cur = ids[0]
+                    groups = cur["safetyNumber"].split()
+                    rows = [" ".join(groups[i:i + 4]) for i in range(0, len(groups), 4)] or [cur["safetyNumber"]]
+                    self.info_lines = [f"Safety number with {conv.get('name', '')}", ""] + rows + ["",
+                                       f"Trust: {cur['trustLevel'].replace('_', ' ').lower()}",
+                                       "Compare with your contact's screen. If the numbers match, press v to mark it verified.",
+                                       "A changed number means a new phone or a new install; verify again before trusting."]
+                self.pick_action = "safety"
+                self.overlay = "info"
+            elif action == "members" and conv:
+                info = await self.client.request("groupInfo", conversation=conv["key"])
+                self.info_lines = [f"{info['name']} · {len(info['members'])} members", ""] + [f"  {m['name']}" for m in info["members"]]
+                self.pick_action = "members-info"
+                self.overlay = "info"
+            elif action == "rename" and conv:
+                self.pick_action = "rename"
+                self.overlay = "prompt"
+                self.overlay_query = conv.get("name", "")
+                self.overlay_message = "new group name"
+            elif action == "leave" and conv:
+                await self.client.request("leaveGroup", conversation=conv["key"])
+                self.show_toast("left the group")
+                self.conversations = [c for c in self.conversations if c["key"] != conv["key"]]
+                self.active_key = ""
+                self._select_index(0)
+                self.close_overlay()
+            elif action == "newgroup":
+                self.pick_action = "newgroup"
+                self.overlay = "prompt"
+                self.overlay_query = ""
+                self.overlay_message = "group name"
+            elif action == "archived":
+                self.conversations = await self.client.request("conversations", includeArchived=True)
+                self.show_toast("showing archived conversations too")
+                self.close_overlay()
+        except BridgeError as exc:
+            self.show_toast(f"{exc}", 6)
+            self.close_overlay()
+
+    async def _members_key(self, key: Key) -> None:
+        if key.name == "down" or (key.ctrl and key.char == "n"):
+            self.overlay_index = min(max(0, len(self.overlay_results) - 1), self.overlay_index + 1)
+        elif key.name == "up" or (key.ctrl and key.char == "p"):
+            self.overlay_index = max(0, self.overlay_index - 1)
+        elif key.name == "tab" or (key.name == "char" and key.char == " " and not self.overlay_query):
+            if self.overlay_results:
+                k = self.overlay_results[self.overlay_index]["key"]
+                self.group_members ^= {k}
+        elif key.name == "enter":
+            if not self.group_members or not self.client:
+                self.show_toast("Tab or Space marks members; Enter creates the group")
+                return
+            name = self.overlay_message
+            try:
+                made = await self.client.request("createGroup", name=name, members=sorted(self.group_members))
+                self.close_overlay()
+                if made.get("key"):
+                    self._ensure_conversation(made["key"], made["name"], "group")
+                    self._select_key(made["key"])
+                self.show_toast(f"group {name} created")
+            except BridgeError as exc:
+                self.show_toast(f"{exc}", 6)
+        elif key.name == "backspace":
+            self.overlay_query = self.overlay_query[:-1]
+            self._filter_overlay()
+        elif key.name == "char" and not key.ctrl:
+            self.overlay_query += key.char
+            self._filter_overlay()
 
     # ------------------------------------------------------------------ settings
 
@@ -584,7 +900,7 @@ class App:
 
     def _filter_overlay(self) -> None:
         q = self.overlay_query.lower().strip()
-        if self.overlay == "contacts":
+        if self.overlay in ("contacts", "forward", "members"):
             items = self.overlay_items
             if q:
                 items = [i for i in items if q in i["name"].lower() or q in i["sub"].lower()]
@@ -677,6 +993,12 @@ class App:
             return
         if key.ctrl and key.char == "u" and not self.composer.text:
             self.open_overlay("contacts")
+            return
+        if key.ctrl and key.char == "g":
+            self.open_message_picker()
+            return
+        if key.ctrl and key.char == "t":
+            self.open_conversation_menu()
             return
         if key.ctrl and key.char == "a":
             self.open_overlay("attach")
@@ -858,6 +1180,53 @@ class App:
             return
         if name == "settings":
             await self._settings_key(key)
+            return
+        if name == "pick":
+            await self._pick_key(key)
+            return
+        if name == "convmenu":
+            await self._menu_key(key)
+            return
+        if name == "info":
+            if key.name in ("enter", "char"):
+                if key.name == "char" and key.char == "v" and self.pick_action == "safety" and self.client:
+                    await self.client.request("trust", conversation=self.active_key)
+                    self.show_toast("marked verified")
+                self.close_overlay()
+            return
+        if name == "prompt":
+            if key.name == "enter":
+                await self._prompt_submit()
+            elif key.name == "backspace":
+                self.overlay_query = self.overlay_query[:-1]
+            elif key.name == "char" and not key.ctrl:
+                self.overlay_query += key.char
+            return
+        if name == "members":
+            await self._members_key(key)
+            return
+        if name == "forward":
+            # contacts-style list; Enter forwards to the highlighted conversation
+            if key.name == "down" or (key.ctrl and key.char == "n"):
+                self.overlay_index = min(len(self.overlay_results) - 1, self.overlay_index + 1)
+            elif key.name == "up" or (key.ctrl and key.char == "p"):
+                self.overlay_index = max(0, self.overlay_index - 1)
+            elif key.name == "enter" and self.overlay_results and self.forward_payload and self.client:
+                item = self.overlay_results[self.overlay_index]
+                payload = self.forward_payload
+                self.close_overlay()
+                try:
+                    await self.client.request("send", conversation=item["key"], text=payload.get("body", ""),
+                                              attachments=[a["path"] for a in payload.get("attachments", []) if a.get("path")])
+                    self.show_toast(f"forwarded to {item['name']}")
+                except BridgeError as exc:
+                    self.show_toast(f"forward failed: {exc}", 6)
+            elif key.name == "backspace":
+                self.overlay_query = self.overlay_query[:-1]
+                self._filter_overlay()
+            elif key.name == "char" and not key.ctrl:
+                self.overlay_query += key.char
+                self._filter_overlay()
             return
         if name == "setting-text":
             if key.name == "enter":
@@ -1309,7 +1678,7 @@ class App:
         composing; hidden when nothing is being typed."""
         assert self.term
         t = self.term
-        if self.overlay in ("contacts", "search", "attach", "saveas", "react", "setting-text"):
+        if self.overlay in ("contacts", "search", "attach", "saveas", "react", "setting-text", "prompt", "members", "forward"):
             return "\x1b[5 q" + T.SHOW_CURSOR
         if self.focus != "composer" or self.overlay:
             return T.HIDE_CURSOR
@@ -1637,6 +2006,10 @@ class App:
         sub = clean_name(conv["key"]).split(":", 1)[-1] if conv.get("kind") != "group" else "group"
         if conv.get("muted"):
             sub += " · muted"
+        if conv.get("expiration"):
+            sub += " · ⏱ " + self._fmt_duration(int(conv["expiration"]))
+        if conv.get("blocked"):
+            sub += " · blocked"
         out.append(T.move(top, left) + T.fg(self._hue(conv["key"])) + T.BOLD + truncate(title, width // 2) + T.RESET
                    + T.fg(th.dim) + "  " + truncate(sub, width // 2 - 4) + T.RESET)
         out.append(T.move(top + 1, left) + T.fg(th.border) + "╌" * (width - 1) + T.RESET)
@@ -1771,8 +2144,8 @@ class App:
         if self.toast:
             text = " " + truncate(self.toast, usable - 2) + " "
             return T.move(t.rows, 1) + T.bg(th.accent) + T.fg(th.background) + T.BOLD + pad(text, usable) + T.RESET
-        hints = [("Tab", "list"), ("Ctrl-U", "contacts"), ("/", "search"), ("Ctrl-A", "attach"), ("Ctrl-R", "react"),
-                 ("Ctrl-Q", "quote"), ("Ctrl-O", "open"), ("Ctrl-S", "settings"), ("?", "help"), ("Ctrl-C", "quit")]
+        hints = [("Tab", "list"), ("Ctrl-U", "contacts"), ("/", "search"), ("Ctrl-A", "attach"), ("Ctrl-G", "message"),
+                 ("Ctrl-T", "chat"), ("Ctrl-O", "open"), ("Ctrl-S", "settings"), ("?", "help"), ("Ctrl-C", "quit")]
         parts: list[str] = []
         width = 1
         for k, v in hints:
@@ -1794,6 +2167,9 @@ class App:
                        "saveas": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
                        "react": 6, "attachment": min(t.rows - 6, 9 + min(10, len(self.att_items))),
                        "settings": min(t.rows - 4, len(SETTINGS) + len({x["section"] for x in SETTINGS}) * 2 + 5),
+                       "pick": min(t.rows - 4, 6 + min(14, len(self.pick_items))), "convmenu": len(self.menu_items) + 5,
+                       "info": min(t.rows - 4, len(self.info_lines) + 5), "prompt": 6,
+                       "members": min(t.rows - 6, 20), "forward": min(t.rows - 6, 20),
                        "setting-text": min(t.rows - 6, 5 + min(10, len(self.overlay_results)))}.get(name, 8)
         h = min(t.rows - 4, rows_needed)
         top = max(2, (t.rows - h) // 2)
@@ -1809,13 +2185,67 @@ class App:
             out.append(T.move(top + i, left + w - 1) + bg + T.fg(th.accent) + "│" + T.RESET)
         titles = {"contacts": "NEW CONVERSATION", "search": "SEARCH HISTORY", "help": "KEYS", "link": "LINK THIS DEVICE",
                   "quit": "DISCONNECT?", "attach": "ATTACH FILE", "saveas": "SAVE AS", "react": "REACT",
-                  "attachment": "ATTACHMENT", "settings": "SETTINGS", "setting-text": "EDIT SETTING"}
+                  "attachment": "ATTACHMENT", "settings": "SETTINGS", "setting-text": "EDIT SETTING",
+                  "pick": "MESSAGE ACTIONS", "convmenu": "CONVERSATION", "info": "INFO", "prompt": "INPUT",
+                  "members": "NEW GROUP · MEMBERS", "forward": "FORWARD TO"}
         title = f" {titles.get(name, name.upper())} "
         out.append(T.move(top, left + 3) + bg + T.fg(th.bright_foreground) + T.BOLD + title + T.RESET)
         body_left = left + 2
         body_w = w - 4
         if name == "settings":
             out.extend(self._draw_settings(top, left, w, h))
+        elif name == "pick":
+            visible = h - 5
+            first = max(0, min(self.pick_index - visible + 1, len(self.pick_items) - visible))
+            y = top + 1
+            for i, m in enumerate(self.pick_items[first:first + visible], start=first):
+                selected = i == self.pick_index
+                style = T.bg(th.selection) + T.fg(th.bright_foreground) if selected else bg + T.fg(th.foreground)
+                who = "You" if m.get("outgoing") else clean_name(m.get("senderName") or "?")
+                body = clean_text(m.get("body", ""), single_line=True) or ("[" + ", ".join(self._attachment_filename(a) for a in m.get("attachments", [])) + "]" if m.get("attachments") else "")
+                if m.get("deleted"):
+                    body = "(deleted)"
+                text = ("▶ " if selected else "  ") + f"{who}: {body}"
+                out.append(T.move(y, body_left) + style + pad(truncate(text, body_w - 8), body_w - 6)
+                           + T.fg(th.dim if not selected else th.bright_foreground) + pad(self._fmt_time(m.get("ts", 0), short=True), 6, align="right") + T.RESET)
+                y += 1
+            hints = "r react · q quote · e edit · d delete · f forward · c copy · o open · i info · Esc"
+            out.append(T.move(top + h - 2, body_left) + bg + T.fg(th.dim) + truncate(hints, body_w) + T.RESET)
+        elif name == "convmenu":
+            for i, (_, label) in enumerate(self.menu_items):
+                selected = i == self.menu_index
+                style = T.bg(th.selection) + T.fg(th.bright_foreground) if selected else bg + T.fg(th.foreground)
+                out.append(T.move(top + 1 + i, body_left) + style + ("▶ " if selected else "  ") + pad(truncate(label, body_w - 2), body_w - 2) + T.RESET)
+            out.append(T.move(top + h - 2, body_left) + bg + T.fg(th.dim) + truncate("Enter/→ choose or next value · ← previous · Esc", body_w) + T.RESET)
+        elif name == "info":
+            for i, line in enumerate(self.info_lines[:h - 3]):
+                out.append(T.move(top + 1 + i, body_left) + bg + T.fg(th.foreground if i else th.bright_foreground) + truncate(clean_text(line, single_line=True), body_w) + T.RESET)
+            foot = "v verify · Esc" if self.pick_action == "safety" else "any key closes"
+            out.append(T.move(top + h - 2, body_left) + bg + T.fg(th.dim) + foot + T.RESET)
+        elif name == "prompt":
+            prompt = "▸ "
+            out.append(T.move(top + 1, body_left) + bg + T.fg(th.dim) + truncate(clean_text(self.overlay_message, single_line=True), body_w) + T.RESET)
+            out.append(T.move(top + 2, body_left) + bg + T.fg(th.accent) + prompt + T.fg(th.bright_foreground)
+                       + truncate(clean_text(self.overlay_query, single_line=True), body_w - 2) + T.RESET)
+            out.append(T.move(top + h - 2, body_left) + bg + T.fg(th.dim) + "Enter confirms · Esc cancels" + T.RESET)
+            out.append(T.move(top + 2, body_left + len(prompt) + str_width(self.overlay_query)))
+        elif name in ("members", "forward"):
+            prompt = "filter ▸ "
+            head = (f"Group: {self.overlay_message}   {len(self.group_members)} selected" if name == "members" else "Send this message to…")
+            out.append(T.move(top + 1, body_left) + bg + T.fg(th.dim) + truncate(head, body_w) + T.RESET)
+            out.append(T.move(top + 2, body_left) + bg + T.fg(th.accent) + prompt + T.fg(th.bright_foreground)
+                       + truncate(self.overlay_query, body_w - len(prompt)) + T.RESET)
+            first = max(0, self.overlay_index - (h - 6))
+            for i, item in enumerate(self.overlay_results[first:first + h - 5]):
+                y = top + 3 + i
+                selected = (first + i) == self.overlay_index
+                style = T.bg(th.selection) + T.fg(th.bright_foreground) if selected else bg + T.fg(th.foreground)
+                mark = ("◉ " if item["key"] in self.group_members else "○ ") if name == "members" else "  "
+                out.append(T.move(y, body_left) + style + ("▶ " if selected else "  ") + mark + pad(truncate(item["name"], body_w - 30), body_w - 28)
+                           + T.fg(th.dim) + pad(truncate(item["sub"], 22), 22, align="right") + T.RESET)
+            foot = "Tab/Space select · Enter create · Esc" if name == "members" else "Enter forward · Esc"
+            out.append(T.move(top + h - 2, body_left) + bg + T.fg(th.dim) + foot + T.RESET)
+            out.append(T.move(top + 2, body_left + len(prompt) + str_width(self.overlay_query)))
         elif name == "setting-text":
             spec = next((x for x in SETTINGS if x["key"] == self.settings_edit_key), {"label": self.settings_edit_key, "help": ""})
             prompt = spec["label"] + " ▸ "
@@ -1882,6 +2312,8 @@ class App:
                     ("PgUp/PgDn, wheel", "scroll history (loads older messages)"), ("Ctrl-U", "contacts & groups"),
                     ("/", "search history"), ("Ctrl-A", "attach a file"), ("Ctrl-R", "react to last message"),
                     ("Ctrl-Q", "quote last message"), ("Ctrl-O / click", "open, save or copy an attachment (or open a link)"),
+                    ("Ctrl-G", "message actions: react, quote, edit, delete, forward, copy, info"),
+                    ("Ctrl-T", "conversation: disappearing messages, mute, archive, block, safety number, groups"),
                     ("Ctrl-E / m", "mute conversation"), ("Ctrl-S / F2", "settings"), ("Ctrl-L", "redraw"), ("Ctrl-X", "clear composer"),
                     ("Ctrl-Z", "put a failed message back in the composer"), (":smile:", "emoji shortcodes; a picker opens as you type"),
                     ("Ctrl-C", "quit")]

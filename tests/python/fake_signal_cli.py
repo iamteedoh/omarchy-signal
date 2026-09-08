@@ -65,9 +65,27 @@ def handle(req):
     if method == "listAccounts":
         accounts = [] if os.environ.get("FAKE_SIGNAL_UNLINKED") else [{"number": ACCOUNT, "uuid": "11111111-2222-3333-4444-555555555555"}]
         return {"jsonrpc": "2.0", "result": accounts, "id": rid}
+    if method in ("remoteDelete", "updateContact", "updateGroup", "block", "unblock", "sendMessageRequestResponse", "trust", "quitGroup"):
+        if params.get("account") != ACCOUNT:
+            return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Method requires valid account parameter", "data": None}, "id": rid}
+        log_sent(method, params)
+        if method == "updateGroup" and "groupId" not in params:
+            return {"jsonrpc": "2.0", "result": {"groupId": "bmV3Z3JvdXBuZXdncm91cG5ld2dyb3VwbmV3Z3JvdXBuZXc="}, "id": rid}
+        return {"jsonrpc": "2.0", "result": {}, "id": rid}
+    if method == "listIdentities":
+        log_sent(method, params)
+        return {"jsonrpc": "2.0", "result": [
+            {"number": params.get("number"), "uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "fingerprint": "05 ab cd",
+             "safetyNumber": "12345 67890 12345 67890 12345 67890 12345 67890 12345 67890 12345 67890", "scannableSafetyNumber": "x",
+             "trustLevel": "TRUSTED_UNVERIFIED", "addedDate": 1700000000000},
+            {"number": params.get("number"), "fingerprint": "05 00 00", "safetyNumber": "00000 11111", "trustLevel": "UNTRUSTED", "addedDate": 1600000000000},
+        ], "id": rid}
     if method in ("send", "sendTyping", "sendReceipt", "sendReaction"):
         if params.get("account") != ACCOUNT:
             return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Method requires valid account parameter", "data": None}, "id": rid}
+        if method == "sendReceipt" and not isinstance(params.get("recipient"), str):
+            # signal-cli's SendReceiptCommand does ns.getString("recipient"): a list is an error.
+            return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Invalid recipient (expected a single string)", "data": None}, "id": rid}
         log_sent(method, params)
         if method == "send":
             if params.get("message") == "FAIL":
