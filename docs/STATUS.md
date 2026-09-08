@@ -33,6 +33,10 @@
 
 ## Known issues
 
+- The shell's hot-reload recreates bar widgets and panels only; `Service.qml`
+  (toasts, reply window, QR popup) is a `keepLoaded` service and only reloads
+  on `omarchy restart shell`. `install.sh` now restarts the shell.
+
 - **Omarchy shell crashes on plugin hot-reload (upstream).** Every write under
   `~/.config/omarchy/plugins/` reloads all user plugins; on this machine the
   cloned lock service (`tito.lock`) then hits Quickshell's fatal "Tried to show

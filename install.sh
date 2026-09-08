@@ -144,9 +144,17 @@ fi
 
 # --- shell ---------------------------------------------------------------------------
 if command -v omarchy-shell >/dev/null; then
-  omarchy-shell -q shell rescanPlugins >/dev/null 2>&1 || true
+  # The shell hot-reloads bar widgets and panels on file changes but keeps a
+  # running service (Service.qml) as it is, so a restart is the only way to
+  # pick up service changes. It comes back within a second or two.
   omarchy-plugin-enable "$PLUGIN_ID" --section right >/dev/null 2>&1 || omarchy-plugin-enable "$PLUGIN_ID" >/dev/null 2>&1 || true
-  say "Plugin enabled in the shell (bar widget in the right section)"
+  if command -v omarchy-restart-shell >/dev/null; then
+    omarchy-restart-shell >/dev/null 2>&1 || true
+    say "Plugin enabled; shell restarted so the notification service picks up the new code"
+  else
+    omarchy-shell -q shell rescanPlugins >/dev/null 2>&1 || true
+    say "Plugin enabled in the shell (run 'omarchy restart shell' to reload the notification service)"
+  fi
 fi
 
 cat <<DONE
