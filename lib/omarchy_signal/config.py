@@ -196,7 +196,7 @@ SETTINGS: list[dict] = [
     {"section": "Chats & media", "key": "message_layout", "label": "Message layout", "type": "choice",
      "choices": ["left", "bubbles"], "help": "left: everything left-aligned · bubbles: yours on the right"},
     {"section": "Appearance", "key": "scroll_speed", "label": "Chat window scroll speed", "type": "int",
-     "min": 1, "max": 10, "step": 1, "help": "Multiplier for trackpad and mouse-wheel scrolling in the popup and chat window"},
+     "min": 0, "max": 10, "step": 1, "help": "Multiplier for trackpad and mouse-wheel scrolling in the popup and chat window; 0 = Qt's default"},
     {"section": "Appearance", "key": "terminal", "label": "Terminal for the client", "type": "choice",
      "choices": ["auto", "ghostty", "kitty", "wezterm", "foot", "alacritty"], "help": "auto follows omarchy default terminal; images need ghostty, kitty or wezterm"},
     {"section": "Appearance", "key": "terminal_images", "label": "Terminal image support", "type": "choice",

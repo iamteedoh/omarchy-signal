@@ -29,9 +29,12 @@ Item {
   // Wayland touchpad is a few pixels per event; terminals and GTK apps scale
   // it. Take over wheel events and apply the multiplier ourselves.
   function scrollBy(flick, ev) {
+    if (view.scrollSpeed <= 0) { ev.accepted = false; return }   // 0 = leave scrolling to Qt
     var dy = 0
     if (ev.pixelDelta && ev.pixelDelta.y !== 0) dy = ev.pixelDelta.y * view.scrollSpeed
-    else dy = (ev.angleDelta.y / 120) * 60 * view.scrollSpeed
+    else if (ev.angleDelta && ev.angleDelta.y !== 0) dy = (ev.angleDelta.y / 120) * 60 * view.scrollSpeed
+    if (dy === 0) { ev.accepted = false; return }
+    if (flick.moving) flick.cancelFlick()
     var maxY = Math.max(0, flick.contentHeight - flick.height)
     flick.contentY = Math.max(0, Math.min(maxY, flick.contentY - dy))
     if (flick === list) view.stickToBottom = flick.contentY >= maxY - 2
@@ -331,16 +334,23 @@ Item {
       model: view.thread
       boundsBehavior: Flickable.StopAtBounds
       cacheBuffer: Style.space(3000)     // keep delegates alive well beyond the viewport
-      WheelHandler {
-        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-        onWheel: function(ev) { view.scrollBy(list, ev) }
-      }
       // Follow the conversation: stay pinned to the newest message while the
       // user has not scrolled up, including when images finish loading.
       onContentHeightChanged: if (view.stickToBottom) positionViewAtEnd()
       onCountChanged: if (view.stickToBottom) Qt.callLater(positionViewAtEnd)
       onMovementEnded: view.stickToBottom = atYEnd
       onFlickEnded: view.stickToBottom = atYEnd
+
+      // A transparent layer above the delegates owns wheel events, so the
+      // Flickable's own wheel animation never fights the position we set.
+      Item {
+        anchors.fill: parent
+        z: 10
+        WheelHandler {
+          acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+          onWheel: function(ev) { view.scrollBy(list, ev) }
+        }
+      }
       delegate: Item {
         id: row
         required property var modelData
@@ -543,7 +553,7 @@ Item {
           spacing: Style.space(2)
           model: view.thumbnails ? [] : view.pickerVisible
           boundsBehavior: Flickable.StopAtBounds
-          WheelHandler { acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad; onWheel: function(ev) { view.scrollBy(plainList, ev) } }
+          Item { anchors.fill: parent; z: 10; WheelHandler { acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad; onWheel: function(ev) { view.scrollBy(plainList, ev) } } }
           delegate: Rectangle {
             required property var modelData
             required property int index
@@ -601,7 +611,7 @@ Item {
           cellHeight: Style.space(132)
           model: view.thumbnails ? view.pickerVisible : []
           boundsBehavior: Flickable.StopAtBounds
-          WheelHandler { acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad; onWheel: function(ev) { view.scrollBy(grid, ev) } }
+          Item { anchors.fill: parent; z: 10; WheelHandler { acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad; onWheel: function(ev) { view.scrollBy(grid, ev) } } }
           delegate: Item {
             required property var modelData
             required property int index
