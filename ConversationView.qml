@@ -37,7 +37,6 @@ Item {
     if (flick.moving) flick.cancelFlick()
     var maxY = Math.max(0, flick.contentHeight - flick.height)
     flick.contentY = Math.max(0, Math.min(maxY, flick.contentY - dy))
-    if (flick === list) view.stickToBottom = flick.contentY >= maxY - 2
     ev.accepted = true
   }
   property bool stickToBottom: true      // follow new messages unless the user scrolled up
@@ -100,6 +99,14 @@ Item {
   }
 
   property real savedY: 0
+  property bool pinning: false
+
+  function pinToBottom() {
+    view.pinning = true
+    list.positionViewAtEnd()
+    view.pinning = false
+    view.stickToBottom = true
+  }
 
   function reload() {
     if (!view.conversationKey) return
@@ -224,7 +231,7 @@ Item {
           // A model swap resets the list to the top; put it back where it was,
           // or at the end when following the conversation.
           var y = view.savedY
-          Qt.callLater(function() { if (view.stickToBottom) list.positionViewAtEnd(); else list.contentY = Math.min(y, Math.max(0, list.contentHeight - list.height)) })
+          Qt.callLater(function() { if (view.stickToBottom) view.pinToBottom(); else list.contentY = Math.min(y, Math.max(0, list.contentHeight - list.height)) })
         }
       }
     }
@@ -334,12 +341,12 @@ Item {
       model: view.thread
       boundsBehavior: Flickable.StopAtBounds
       cacheBuffer: Style.space(3000)     // keep delegates alive well beyond the viewport
-      // Follow the conversation: stay pinned to the newest message while the
-      // user has not scrolled up, including when images finish loading.
-      onContentHeightChanged: if (view.stickToBottom) positionViewAtEnd()
-      onCountChanged: if (view.stickToBottom) Qt.callLater(positionViewAtEnd)
-      onMovementEnded: view.stickToBottom = atYEnd
-      onFlickEnded: view.stickToBottom = atYEnd
+      // Follow the conversation only while the user is at the bottom. The
+      // pin is derived from the actual scroll position on every change, so
+      // any way of scrolling up (wheel, trackpad, drag, scrollbar) releases
+      // it, and nothing re-pins except a new message arriving while pinned.
+      onContentYChanged: if (!view.pinning) view.stickToBottom = (contentY >= contentHeight - height - 4)
+      onCountChanged: if (view.stickToBottom) view.pinToBottom()
 
       // A transparent layer above the delegates owns wheel events, so the
       // Flickable's own wheel animation never fights the position we set.
@@ -347,7 +354,6 @@ Item {
         anchors.fill: parent
         z: 10
         WheelHandler {
-          acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
           onWheel: function(ev) { view.scrollBy(list, ev) }
         }
       }
@@ -553,7 +559,7 @@ Item {
           spacing: Style.space(2)
           model: view.thumbnails ? [] : view.pickerVisible
           boundsBehavior: Flickable.StopAtBounds
-          Item { anchors.fill: parent; z: 10; WheelHandler { acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad; onWheel: function(ev) { view.scrollBy(plainList, ev) } } }
+          Item { anchors.fill: parent; z: 10; WheelHandler { onWheel: function(ev) { view.scrollBy(plainList, ev) } } }
           delegate: Rectangle {
             required property var modelData
             required property int index
@@ -611,7 +617,7 @@ Item {
           cellHeight: Style.space(132)
           model: view.thumbnails ? view.pickerVisible : []
           boundsBehavior: Flickable.StopAtBounds
-          Item { anchors.fill: parent; z: 10; WheelHandler { acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad; onWheel: function(ev) { view.scrollBy(grid, ev) } } }
+          Item { anchors.fill: parent; z: 10; WheelHandler { onWheel: function(ev) { view.scrollBy(grid, ev) } } }
           delegate: Item {
             required property var modelData
             required property int index
