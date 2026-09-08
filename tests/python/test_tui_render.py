@@ -267,6 +267,48 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class SettingsOverlayTests(unittest.TestCase):
+    def test_settings_overlay_cycles_and_saves(self):
+        import tempfile
+        from pathlib import Path
+        from omarchy_signal.config import SETTINGS, Paths
+        with tempfile.TemporaryDirectory() as d:
+            app = make_app()
+            seed(app)
+            app.paths = Paths(config_dir=Path(d) / "cfg")
+            asyncio.run(app.handle_key(Key("char", char="s", ctrl=True)))
+            self.assertEqual(app.overlay, "settings")
+            app.draw()
+            out = app.term.text()
+            self.assertIn("SETTINGS", out)
+            self.assertIn("NOTIFICATIONS", out)
+            self.assertIn("Notification content", out)
+            idx = next(i for i, x in enumerate(SETTINGS) if x["key"] == "notification_content")
+            app.settings_index = idx
+            asyncio.run(app.handle_key(Key("enter")))
+            self.assertEqual(app.cfg.notification_content, "name-only")
+            asyncio.run(app.handle_key(Key("left")))
+            self.assertEqual(app.cfg.notification_content, "name-and-message")
+            self.assertTrue((Path(d) / "cfg" / "config.toml").is_file())
+            # a restart-only key marks itself pending
+            app.settings_index = next(i for i, x in enumerate(SETTINGS) if x["key"] == "download_attachments")
+            asyncio.run(app.handle_key(Key("enter")))
+            self.assertIn("download_attachments", app.settings_pending)
+            app.term.out.clear()
+            app.draw()
+            self.assertIn("⟳ restart", app.term.text())
+            # path setting opens the completion prompt
+            app.settings_index = next(i for i, x in enumerate(SETTINGS) if x["key"] == "save_dir")
+            asyncio.run(app.handle_key(Key("enter")))
+            self.assertEqual(app.overlay, "setting-text")
+            app.overlay_query = d
+            asyncio.run(app.handle_key(Key("enter")))
+            self.assertEqual(app.cfg.save_dir, d)
+            self.assertEqual(app.overlay, "settings")
+            asyncio.run(app.handle_key(Key("escape")))
+            self.assertEqual(app.overlay, "")
+
+
 class AttachmentFlowTests(unittest.TestCase):
     def setUp(self):
         import tempfile

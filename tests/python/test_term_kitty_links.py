@@ -192,3 +192,50 @@ class ThemeConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SettingsTests(unittest.TestCase):
+    def test_coerce_and_schema(self):
+        from omarchy_signal.config import RESTART_REQUIRED, SETTINGS, coerce_setting
+        self.assertTrue(coerce_setting("send_read_receipts", "yes"))
+        self.assertFalse(coerce_setting("send_read_receipts", "0"))
+        self.assertEqual(coerce_setting("notification_timeout_ms", "999999"), 120000)
+        self.assertEqual(coerce_setting("notification_content", "none"), "none")
+        for bad in (("notification_content", "loud"), ("image_max_rows", "x"), ("send_read_receipts", "maybe"), ("nope", "1"),
+                    ("save_dir", "a\nb")):
+            with self.subTest(bad=bad):
+                self.assertRaises(ValueError, coerce_setting, *bad)
+        self.assertIn("download_attachments", RESTART_REQUIRED)
+        self.assertNotIn("inline_images", RESTART_REQUIRED)
+        keys = [x["key"] for x in SETTINGS]
+        self.assertEqual(len(keys), len(set(keys)))
+        for key in keys:
+            self.assertTrue(hasattr(Config(), key), key)
+
+    def test_save_roundtrip_and_permissions(self):
+        import os, stat
+        from omarchy_signal.config import Paths, save_config
+        with tempfile.TemporaryDirectory() as d:
+            paths = Paths(config_dir=Path(d) / "cfg")
+            cfg = Config()
+            cfg.notification_content = "none"
+            cfg.save_dir = "~/Pictures/Signal \"quoted\""
+            cfg.history_retain_days = 30
+            cfg.send_read_receipts = False
+            path = save_config(cfg, paths)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            back = Config.load(paths)
+            self.assertEqual(back.notification_content, "none")
+            self.assertFalse(back.notification_preview)
+            self.assertEqual(back.save_dir, cfg.save_dir)
+            self.assertEqual(back.history_retain_days, 30)
+            self.assertFalse(back.send_read_receipts)
+            text = path.read_text()
+            self.assertIn("# ── Notifications ──", text)
+            self.assertIn("(restart)", text)
+
+    def test_legacy_preview_flag_maps_to_name_only(self):
+        cfg = Config.from_dict({"notification_preview": False})
+        self.assertEqual(cfg.notification_content, "name-only")
+        cfg = Config.from_dict({"notification_preview": False, "notification_content": "none"})
+        self.assertEqual(cfg.notification_content, "none")

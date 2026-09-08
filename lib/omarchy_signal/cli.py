@@ -349,6 +349,56 @@ def cmd_open(args) -> int:
     return 0
 
 
+def cmd_settings(args) -> int:
+    """List, read or change settings. Live keys reach the running bridge and
+    shell at once; the rest are flagged as needing a bridge restart."""
+    from .config import RESTART_REQUIRED, SETTINGS, coerce_setting, save_config, setting_spec
+    paths = _paths()
+    cfg = Config.load(paths)
+    if args.key is None:
+        section = None
+        for spec in SETTINGS:
+            if spec["section"] != section:
+                section = spec["section"]
+                print(f"\n{section}")
+            value = getattr(cfg, spec["key"])
+            flag = "  (restart)" if spec.get("restart") else ""
+            print(f"  {spec['key']:<24} {str(value).lower() if isinstance(value, bool) else value}{flag}")
+        print(f"\nchange one: omarchy-signal settings <key> <value>    file: {paths.config_file}")
+        return 0
+    spec = setting_spec(args.key)
+    if spec is None:
+        print(f"unknown setting: {args.key}", file=sys.stderr)
+        return 2
+    if args.value is None:
+        value = getattr(cfg, args.key)
+        print(str(value).lower() if isinstance(value, bool) else value)
+        return 0
+    try:
+        new = coerce_setting(args.key, args.value)
+    except ValueError as exc:
+        print(f"omarchy-signal: {exc}", file=sys.stderr)
+        return 2
+    setattr(cfg, args.key, new)
+    cfg = Config.from_dict({k: getattr(cfg, k) for k in cfg.__dataclass_fields__})   # re-run the clamps
+    save_config(cfg, paths)
+    print(f"{args.key} = {str(new).lower() if isinstance(new, bool) else new}")
+    if args.key in RESTART_REQUIRED:
+        print("takes effect after: systemctl --user restart omarchy-signal")
+        return 0
+
+    async def go(client, hello):
+        res = await client.request("reloadConfig")
+        if res.get("restartRequired"):
+            print("pending a bridge restart: " + ", ".join(res["restartRequired"]))
+        return 0
+    try:
+        return asyncio.run(_with_client(go))
+    except BridgeUnavailable:
+        print("(bridge not running; it will read the new value when it starts)")
+        return 0
+
+
 def cmd_bridge(args) -> int:
     from .bridge import main as bridge_main
     return bridge_main(["--stderr"] if args.stderr else [])
@@ -473,6 +523,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--qr-style", choices=["auto", "image", "shell", "half", "quad", "braille"],
                    help="auto: Omarchy shell popup, else an image in a graphics terminal, else half-block text")
     s.set_defaults(fn=cmd_link)
+
+    s = sub.add_parser("settings", help="list or change settings (notifications, privacy, media, appearance)")
+    s.add_argument("key", nargs="?")
+    s.add_argument("value", nargs="?")
+    s.set_defaults(fn=cmd_settings)
 
     s = sub.add_parser("demo", help="show a sample notification popup (nothing is sent)")
     s.add_argument("text", nargs="?")

@@ -50,6 +50,7 @@ OPS: dict[str, dict[str, tuple[type | tuple[type, ...], bool]]] = {
     "linkFinish": {},
     "clearHistory": {},
     "demo": {"text": (str, False)},
+    "reloadConfig": {},
     "shutdown": {},
 }
 

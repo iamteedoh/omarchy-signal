@@ -22,7 +22,7 @@ from pathlib import Path
 
 from . import __version__, kitty, links, pathcomplete, qr
 from .client import BridgeClient, BridgeError, BridgeUnavailable
-from .config import Config, Paths
+from .config import RESTART_REQUIRED, SETTINGS, Config, Paths, coerce_setting, save_config
 from .sanitize import InvalidAttachment, clean_name, clean_text, safe_attachment_path, safe_filename
 from .term import Key, KeyParser, Terminal, pad, str_width, truncate, wrap
 from .theme import Theme, mix
@@ -112,6 +112,9 @@ class App:
         self.overlay_message = ""
         self.att_items: list[dict] = []      # attachments shown in the "attachment" overlay
         self.att_index = 0
+        self.settings_index = 0
+        self.settings_pending: set[str] = set()   # changed keys that need a bridge restart
+        self.settings_edit_key = ""               # text/path setting being edited in a prompt
         self.revealed: set[str] = set()      # attachment paths shown inline on request
         self.hidden: set[str] = set()        # attachment paths hidden on request
         self.link_uri = ""
@@ -272,7 +275,8 @@ class App:
             data = {}
         if name == "message":
             key = data.get("conversation", "")
-            self._ensure_conversation(key, data.get("conversationName", ""), "group" if data.get("isGroup") else "")
+            masked = data.get("senderName") == "Signal" and data.get("conversationName") == "New message"
+            self._ensure_conversation(key, "" if masked else data.get("conversationName", ""), "group" if data.get("isGroup") else "")
             self._touch_conversation(key, data.get("ts", 0), data.get("preview", ""),
                                      unread_delta=0 if (data.get("outgoing") or key == self.active_key) else 1)
             if key in self.messages:
@@ -345,8 +349,11 @@ class App:
 
     @staticmethod
     def _event_to_message(data: dict) -> dict:
+        sender_name = data.get("senderName", "")
+        if sender_name == "Signal" and data.get("sender"):
+            sender_name = ""   # masked for the popup ("none" content); the thread shows the real name
         return {"conversation": data.get("conversation", ""), "ts": data.get("ts", 0), "sender": data.get("sender", ""),
-                "senderName": data.get("senderName", ""), "outgoing": bool(data.get("outgoing")),
+                "senderName": sender_name, "outgoing": bool(data.get("outgoing")),
                 "body": data.get("text", ""), "attachments": data.get("attachments", []), "status": "",
                 "reactions": {}, "quoteText": data.get("quoteText", ""), "quoteAuthor": "",
                 "expiresIn": data.get("expiresIn", 0)}
@@ -459,6 +466,84 @@ class App:
         self._filter_overlay()
         self.dirty = True
 
+    # ------------------------------------------------------------------ settings
+
+    def _editing_path(self) -> bool:
+        spec = next((x for x in SETTINGS if x["key"] == self.settings_edit_key), None)
+        return bool(spec and spec["type"] == "path")
+
+    def _settings_apply(self, key: str, raw) -> None:
+        try:
+            value = coerce_setting(key, raw)
+        except ValueError as exc:
+            self.overlay_message = str(exc)
+            return
+        setattr(self.cfg, key, value)
+        self.cfg = Config.from_dict({k: getattr(self.cfg, k) for k in self.cfg.__dataclass_fields__})
+        try:
+            save_config(self.cfg, self.paths)
+        except OSError as exc:
+            self.overlay_message = f"could not save: {exc.strerror}"
+            return
+        self.overlay_message = ""
+        if key in RESTART_REQUIRED:
+            self.settings_pending.add(key)
+        else:
+            self.settings_pending.discard(key)
+            if self.client:
+                asyncio.ensure_future(self._reload_bridge_config())
+        if key == "terminal_images":
+            self.graphics = self.cfg.terminal_images == "on" or (
+                self.cfg.terminal_images == "auto" and kitty.terminal_supports_graphics(probe=False))
+        self.dirty = True
+
+    async def _reload_bridge_config(self) -> None:
+        if not self.client:
+            return
+        with contextlib.suppress(BridgeError):
+            await self.client.request("reloadConfig")
+
+    def _settings_cycle(self, spec: dict, delta: int) -> None:
+        key = spec["key"]
+        current = getattr(self.cfg, key)
+        if spec["type"] == "bool":
+            self._settings_apply(key, not current)
+        elif spec["type"] == "choice":
+            choices = spec["choices"]
+            idx = choices.index(current) if current in choices else 0
+            self._settings_apply(key, choices[(idx + delta) % len(choices)])
+        elif spec["type"] == "int":
+            self._settings_apply(key, int(current) + delta * spec.get("step", 1))
+        else:
+            self.settings_edit_key = key
+            self.overlay_query = str(current)
+            self.overlay = "setting-text"
+            self.overlay_message = ""
+            self.overlay_results = []
+            self.overlay_index = 0
+            if spec["type"] == "path":
+                self._path_candidates()
+
+    async def _settings_key(self, key: Key) -> None:
+        n = len(SETTINGS)
+        spec = SETTINGS[self.settings_index]
+        if key.name == "down" or (key.name == "char" and key.char == "j"):
+            self.settings_index = (self.settings_index + 1) % n
+        elif key.name == "up" or (key.name == "char" and key.char == "k"):
+            self.settings_index = (self.settings_index - 1) % n
+        elif key.name in ("enter", "right") or (key.name == "char" and key.char in (" ", "l")):
+            self._settings_cycle(spec, 1)
+        elif key.name == "left" or (key.name == "char" and key.char == "h"):
+            self._settings_cycle(spec, -1)
+        elif key.name == "char" and key.char == "r" and self.settings_pending:
+            subprocess.Popen(["systemctl", "--user", "restart", "omarchy-signal"], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.settings_pending.clear()
+            self.show_toast("bridge restarting; reopen the client in a few seconds", 6)
+            self.running = False
+        elif key.name == "char" and key.char == "q":
+            self.close_overlay()
+
     def open_attachment_menu(self, atts: list[dict], index: int = 0) -> None:
         atts = [a for a in atts if a.get("path")]
         if not atts:
@@ -548,6 +633,9 @@ class App:
             return
         if key.name == "f1" or (key.name == "char" and key.char == "?" and not self.composer.text):
             self.open_overlay("help")
+            return
+        if key.name == "f2" or (key.ctrl and key.char == "s"):
+            self.open_overlay("settings")
             return
         if key.name == "tab":
             self.focus = "list" if self.focus == "composer" else "composer"
@@ -705,6 +793,30 @@ class App:
             elif key.name == "char" and not key.ctrl:
                 self.overlay_query += key.char
                 self._filter_overlay()
+            return
+        if name == "settings":
+            await self._settings_key(key)
+            return
+        if name == "setting-text":
+            if key.name == "enter":
+                self._settings_apply(self.settings_edit_key, self.overlay_query)
+                if not self.overlay_message:
+                    self.open_overlay("settings")
+            elif key.name == "tab" and self.overlay_results:
+                self.overlay_query = pathcomplete.accept(self.overlay_query, self.overlay_results[self.overlay_index])
+                self._path_candidates()
+            elif key.name == "backspace":
+                self.overlay_query = self.overlay_query[:-1]
+                if self._editing_path():
+                    self._path_candidates()
+            elif key.name == "down" and self.overlay_results:
+                self.overlay_index = min(len(self.overlay_results) - 1, self.overlay_index + 1)
+            elif key.name == "up":
+                self.overlay_index = max(0, self.overlay_index - 1)
+            elif key.name == "char" and not key.ctrl:
+                self.overlay_query += key.char
+                if self._editing_path():
+                    self._path_candidates()
             return
         if name == "attachment":
             n = len(self.att_items)
@@ -1065,7 +1177,7 @@ class App:
         composing; hidden when nothing is being typed."""
         assert self.term
         t = self.term
-        if self.overlay in ("contacts", "search", "attach", "saveas", "react"):
+        if self.overlay in ("contacts", "search", "attach", "saveas", "react", "setting-text"):
             return "\x1b[5 q" + T.SHOW_CURSOR
         if self.focus != "composer" or self.overlay:
             return T.HIDE_CURSOR
@@ -1483,7 +1595,7 @@ class App:
             text = " " + truncate(self.toast, t.cols - 2) + " "
             return T.move(t.rows, 1) + T.bg(th.accent) + T.fg(th.background) + T.BOLD + pad(text, t.cols) + T.RESET
         hints = [("Tab", "list"), ("Ctrl-U", "contacts"), ("/", "search"), ("Ctrl-A", "attach"), ("Ctrl-R", "react"),
-                 ("Ctrl-Q", "quote"), ("Ctrl-O", "open"), ("PgUp", "scroll"), ("?", "help"), ("Ctrl-C", "quit")]
+                 ("Ctrl-Q", "quote"), ("Ctrl-O", "open"), ("Ctrl-S", "settings"), ("?", "help"), ("Ctrl-C", "quit")]
         parts = []
         for k, v in hints:
             parts.append(T.fg(th.accent) + k + T.fg(th.dim) + " " + v)
@@ -1494,11 +1606,13 @@ class App:
         assert self.term
         t, th = self.term, self.theme
         name = self.overlay
-        w = min(t.cols - 6, 72)
+        w = min(t.cols - 6, 84 if self.overlay == "settings" else 72)
         rows_needed = {"contacts": min(t.rows - 6, 20), "search": min(t.rows - 6, 18), "help": 20, "link": min(t.rows - 4, 32),
                        "quit": 5, "attach": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
                        "saveas": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
-                       "react": 6, "attachment": min(t.rows - 6, 8 + min(6, len(self.att_items)))}.get(name, 8)
+                       "react": 6, "attachment": min(t.rows - 6, 8 + min(6, len(self.att_items))),
+                       "settings": min(t.rows - 4, len(SETTINGS) + len({x["section"] for x in SETTINGS}) * 2 + 5),
+                       "setting-text": min(t.rows - 6, 5 + min(10, len(self.overlay_results)))}.get(name, 8)
         h = min(t.rows - 4, rows_needed)
         top = max(2, (t.rows - h) // 2)
         left = max(2, (t.cols - w) // 2)
@@ -1513,12 +1627,28 @@ class App:
             out.append(T.move(top + i, left + w - 1) + bg + T.fg(th.accent) + "│" + T.RESET)
         titles = {"contacts": "NEW CONVERSATION", "search": "SEARCH HISTORY", "help": "KEYS", "link": "LINK THIS DEVICE",
                   "quit": "DISCONNECT?", "attach": "ATTACH FILE", "saveas": "SAVE AS", "react": "REACT",
-                  "attachment": "ATTACHMENT"}
+                  "attachment": "ATTACHMENT", "settings": "SETTINGS", "setting-text": "EDIT SETTING"}
         title = f" {titles.get(name, name.upper())} "
         out.append(T.move(top, left + 3) + bg + T.fg(th.bright_foreground) + T.BOLD + title + T.RESET)
         body_left = left + 2
         body_w = w - 4
-        if name in ("contacts", "search", "attach", "saveas", "react"):
+        if name == "settings":
+            out.extend(self._draw_settings(top, left, w, h))
+        elif name == "setting-text":
+            spec = next((x for x in SETTINGS if x["key"] == self.settings_edit_key), {"label": self.settings_edit_key, "help": ""})
+            prompt = spec["label"] + " ▸ "
+            out.append(T.move(top + 1, body_left) + bg + T.fg(th.accent) + prompt + T.fg(th.bright_foreground)
+                       + truncate(clean_text(self.overlay_query, single_line=True), body_w - len(prompt)) + T.RESET)
+            out.append(T.move(top + 2, body_left) + bg + T.fg(th.red if self.overlay_message else th.dim)
+                       + truncate(self.overlay_message or (spec.get("help", "") + "  · Enter saves · Esc cancels"), body_w) + T.RESET)
+            first = max(0, self.overlay_index - (h - 6))
+            for i, cand in enumerate(self.overlay_results[first:first + h - 5]):
+                y = top + 3 + i
+                selected = (first + i) == self.overlay_index
+                style = T.bg(th.selection) + T.fg(th.bright_foreground) if selected else bg + T.fg(th.accent if cand.is_dir else th.foreground)
+                out.append(T.move(y, body_left) + style + ("▶ " if selected else "  ") + cand.icon + " " + pad(truncate(cand.name, body_w - 6), body_w - 6) + T.RESET)
+            out.append(T.move(top + 1, body_left + len(prompt) + str_width(self.overlay_query)))
+        elif name in ("contacts", "search", "attach", "saveas", "react"):
             prompt = {"contacts": "name or number ▸ ", "search": "text ▸ ", "attach": "path ▸ ", "saveas": "save to ▸ ", "react": "emoji ▸ "}[name]
             out.append(T.move(top + 1, body_left) + bg + T.fg(th.accent) + prompt + T.fg(th.bright_foreground)
                        + truncate(clean_text(self.overlay_query, single_line=True), body_w - len(prompt)) + T.RESET)
@@ -1570,7 +1700,7 @@ class App:
                     ("PgUp/PgDn, wheel", "scroll history (loads older messages)"), ("Ctrl-U", "contacts & groups"),
                     ("/", "search history"), ("Ctrl-A", "attach a file"), ("Ctrl-R", "react to last message"),
                     ("Ctrl-Q", "quote last message"), ("Ctrl-O / click", "open, save or copy an attachment (or open a link)"),
-                    ("Ctrl-E / m", "mute conversation"), ("Ctrl-L", "redraw"), ("Ctrl-X", "clear composer"),
+                    ("Ctrl-E / m", "mute conversation"), ("Ctrl-S / F2", "settings"), ("Ctrl-L", "redraw"), ("Ctrl-X", "clear composer"),
                     ("Ctrl-C", "quit")]
             for i, (k, v) in enumerate(keys[:h - 3]):
                 out.append(T.move(top + 1 + i, body_left) + bg + T.fg(th.accent) + pad(k, 22) + T.fg(th.foreground) + truncate(v, body_w - 22) + T.RESET)
@@ -1604,6 +1734,49 @@ class App:
         elif name == "link":
             out.extend(self._draw_link(top, left, w, h))
         return "".join(out)
+
+    def _draw_settings(self, top: int, left: int, w: int, h: int) -> list[str]:
+        th = self.theme
+        bg = T.bg(th.panel)
+        body_left = left + 2
+        body_w = w - 4
+        out: list[str] = []
+        rows: list[tuple[str, dict | None]] = []
+        section = None
+        for spec in SETTINGS:
+            if spec["section"] != section:
+                section = spec["section"]
+                rows.append((section, None))
+            rows.append(("", spec))
+        # keep the selected row visible
+        sel_row = next(i for i, (_, sp) in enumerate(rows) if sp is not None and SETTINGS.index(sp) == self.settings_index)
+        avail = h - 4
+        first = max(0, min(sel_row - avail // 2, len(rows) - avail))
+        y = top + 1
+        for label, spec in rows[first:first + avail]:
+            if spec is None:
+                out.append(T.move(y, body_left) + bg + T.fg(th.accent) + T.BOLD + label.upper() + T.RESET)
+            else:
+                selected = SETTINGS.index(spec) == self.settings_index
+                value = getattr(self.cfg, spec["key"])
+                if spec["type"] == "bool":
+                    shown = "● on " if value else "○ off"
+                else:
+                    shown = str(value)
+                if spec["key"] in self.settings_pending:
+                    shown += "  ⟳ restart"
+                style = T.bg(th.selection) + T.fg(th.bright_foreground) if selected else bg + T.fg(th.foreground)
+                out.append(T.move(y, body_left) + style + ("▶ " if selected else "  ") + pad(truncate(spec["label"], 30), 30)
+                           + T.fg(th.bright_foreground if selected else th.cyan) + pad(truncate(shown, body_w - 34), body_w - 34) + T.RESET)
+            y += 1
+        spec = SETTINGS[self.settings_index]
+        help_text = self.overlay_message or spec.get("help", "")
+        out.append(T.move(top + h - 3, body_left) + bg + T.fg(th.red if self.overlay_message else th.dim) + truncate(help_text, body_w) + T.RESET)
+        footer = "↑↓ choose · Enter/→ next value · ← previous · Esc close"
+        if self.settings_pending:
+            footer += " · r restart bridge now"
+        out.append(T.move(top + h - 2, body_left) + bg + T.fg(th.dim) + truncate(footer, body_w) + T.RESET)
+        return out
 
     def _draw_link(self, top: int, left: int, w: int, h: int) -> list[str]:
         assert self.term

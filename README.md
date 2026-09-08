@@ -106,11 +106,27 @@ plugin directory for the CLI, service and keybinding.
 
 Clicking a link or attachment name also opens it in terminals with mouse support.
 
-## Configuration
+## Settings
 
-`~/.config/omarchy-signal/config.toml` — see [`docs/config.example.toml`](docs/config.example.toml)
-for every option (read receipts, history retention, notification style and
-preview, inline images, device name).
+Press `Ctrl-S` (or `F2`) in the client for a settings screen grouped like
+Signal's own: **Notifications** (popup / system / off, and notification
+content: name and message, name only, or nothing), **Privacy** (read
+receipts, typing indicators, safety-number policy), **Chats & media** (show
+images always / on click / never, auto-download, save folder, layout),
+**Appearance** (terminal, image height, QR style) and **Data** (history,
+retention). Changes apply immediately to the client, the bridge and the shell
+popups; the few that need a bridge restart say so and `r` restarts it.
+
+The same settings from the command line:
+
+```bash
+omarchy-signal settings                              # list
+omarchy-signal settings notification_content none    # like Signal's "No name or content"
+omarchy-signal settings inline_images click
+```
+
+They live in `~/.config/omarchy-signal/config.toml`
+([`docs/config.example.toml`](docs/config.example.toml) documents every key).
 
 ## Security
 

@@ -78,7 +78,8 @@ class Config:
     history_enabled: bool = True
     history_retain_days: int = 0           # 0 = keep forever
     notifications: str = "popup"           # popup | system | off
-    notification_preview: bool = True      # show message text in popup (False = "New message")
+    notification_content: str = "name-and-message"   # name-and-message | name-only | none  (like Signal's "Notification content")
+    notification_preview: bool = True      # legacy alias: False == "name-only"
     notification_timeout_ms: int = 8000
     typing_indicators: bool = True
     terminal_images: str = "auto"          # auto | on | off   (can the terminal draw images at all)
@@ -130,6 +131,11 @@ class Config:
                     setattr(cfg, name, str(value))
         if cfg.notifications not in ("popup", "system", "off"):
             cfg.notifications = "popup"
+        if cfg.notification_content not in ("name-and-message", "name-only", "none"):
+            cfg.notification_content = "name-and-message"
+        if "notification_content" not in flat and not cfg.notification_preview:
+            cfg.notification_content = "name-only"
+        cfg.notification_preview = cfg.notification_content == "name-and-message"
         if cfg.terminal_images not in ("auto", "on", "off"):
             cfg.terminal_images = "auto"
         if cfg.inline_images not in ("always", "click", "never"):
@@ -147,3 +153,132 @@ class Config:
         cfg.notification_timeout_ms = max(1000, min(120000, cfg.notification_timeout_ms))
         cfg.history_retain_days = max(0, cfg.history_retain_days)
         return cfg
+
+
+# --------------------------------------------------------------------------
+# Settings schema: what the settings screen and `omarchy-signal settings`
+# expose, grouped the way Signal's own client groups them.
+# --------------------------------------------------------------------------
+
+SETTINGS: list[dict] = [
+    {"section": "Notifications", "key": "notifications", "label": "Notifications", "type": "choice",
+     "choices": ["popup", "system", "off"], "help": "popup: click-to-reply toast · system: plain Omarchy notification · off"},
+    {"section": "Notifications", "key": "notification_content", "label": "Notification content", "type": "choice",
+     "choices": ["name-and-message", "name-only", "none"], "help": "What a popup reveals: sender and text, sender only, or neither"},
+    {"section": "Notifications", "key": "notification_timeout_ms", "label": "Popup stays for (ms)", "type": "int",
+     "min": 1000, "max": 120000, "step": 1000, "help": "How long a popup stays on screen"},
+    {"section": "Privacy", "key": "send_read_receipts", "label": "Read receipts", "type": "bool",
+     "help": "Tell senders when you have read their messages"},
+    {"section": "Privacy", "key": "typing_indicators", "label": "Typing indicators", "type": "bool",
+     "help": "Send and show typing indicators"},
+    {"section": "Privacy", "key": "trust_new_identities", "label": "New safety numbers", "type": "choice",
+     "choices": ["on-first-use", "always", "never"], "restart": True,
+     "help": "on-first-use matches Signal's clients; never refuses changed safety numbers"},
+    {"section": "Chats & media", "key": "inline_images", "label": "Show images in chat", "type": "choice",
+     "choices": ["always", "click", "never"], "help": "always: as they arrive · click: only after you click · never"},
+    {"section": "Chats & media", "key": "download_attachments", "label": "Auto-download attachments", "type": "bool",
+     "restart": True, "help": "Fetch attachments as messages arrive"},
+    {"section": "Chats & media", "key": "save_dir", "label": "Save attachments to", "type": "path",
+     "help": "Folder used by the attachment menu's save action"},
+    {"section": "Chats & media", "key": "message_layout", "label": "Message layout", "type": "choice",
+     "choices": ["left", "bubbles"], "help": "left: everything left-aligned · bubbles: yours on the right"},
+    {"section": "Appearance", "key": "terminal", "label": "Terminal for the client", "type": "choice",
+     "choices": ["auto", "ghostty", "kitty", "wezterm", "foot", "alacritty"], "help": "auto follows omarchy default terminal; images need ghostty, kitty or wezterm"},
+    {"section": "Appearance", "key": "terminal_images", "label": "Terminal image support", "type": "choice",
+     "choices": ["auto", "on", "off"], "help": "auto probes the terminal"},
+    {"section": "Appearance", "key": "image_max_rows", "label": "Inline image height (rows)", "type": "int",
+     "min": 2, "max": 60, "step": 1},
+    {"section": "Appearance", "key": "qr_style", "label": "Linking QR code", "type": "choice",
+     "choices": ["auto", "shell", "image", "half", "quad", "braille"], "help": "auto: shell popup, else image, else text"},
+    {"section": "Data", "key": "history_enabled", "label": "Keep message history", "type": "bool", "restart": True,
+     "help": "Store messages on disk (owner-only SQLite); off = nothing survives a restart"},
+    {"section": "Data", "key": "history_retain_days", "label": "Delete history after (days)", "type": "int",
+     "min": 0, "max": 3650, "step": 7, "help": "0 keeps everything"},
+    {"section": "Data", "key": "device_name", "label": "Device name", "type": "text", "restart": True,
+     "help": "Shown in Signal's Linked devices"},
+]
+
+RESTART_REQUIRED = {s["key"] for s in SETTINGS if s.get("restart")} | {"account", "signal_cli", "log_level"}
+LIVE_KEYS = {s["key"] for s in SETTINGS if not s.get("restart")}
+
+
+def setting_spec(key: str) -> dict | None:
+    for spec in SETTINGS:
+        if spec["key"] == key:
+            return spec
+    return None
+
+
+def coerce_setting(key: str, raw) -> object:
+    """Validate a value for ``key`` against the schema; raises ValueError."""
+    spec = setting_spec(key)
+    if spec is None:
+        raise ValueError(f"unknown setting: {key}")
+    kind = spec["type"]
+    if kind == "bool":
+        if isinstance(raw, bool):
+            return raw
+        text = str(raw).strip().lower()
+        if text in ("1", "true", "yes", "on"):
+            return True
+        if text in ("0", "false", "no", "off"):
+            return False
+        raise ValueError(f"{key} must be true or false")
+    if kind == "int":
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"{key} must be a number") from None
+        return max(spec["min"], min(spec["max"], value))
+    if kind == "choice":
+        text = str(raw).strip()
+        if text not in spec["choices"]:
+            raise ValueError(f"{key} must be one of: {', '.join(spec['choices'])}")
+        return text
+    text = str(raw).strip()
+    if "\n" in text or "\x00" in text or len(text) > 500:
+        raise ValueError(f"{key} is not a valid value")
+    return text
+
+
+def _toml_value(value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    text = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
+def save_config(cfg: Config, paths: Paths | None = None) -> Path:
+    """Write ``config.toml`` from ``cfg``: every key, one comment each, 0600.
+
+    The file is regenerated rather than patched, so it is always complete and
+    valid; hand edits to values survive because they were loaded into ``cfg``
+    first, hand-written comments do not."""
+    import os
+    paths = paths or Paths()
+    lines = ["# omarchy-signal configuration — edited by `omarchy-signal settings` and the client's settings screen.",
+             "# Live keys apply immediately; keys marked (restart) need: systemctl --user restart omarchy-signal", ""]
+    lines += ["account = " + _toml_value(cfg.account) + "   # E.164 of the account to use; empty = first linked (restart)",
+              "signal_cli = " + _toml_value(cfg.signal_cli) + "   # (restart)",
+              "log_level = " + _toml_value(cfg.log_level) + "   # debug | info | warning | error (restart)", ""]
+    section = None
+    for spec in SETTINGS:
+        if spec["section"] != section:
+            section = spec["section"]
+            lines.append(f"# ── {section} ──")
+        note = spec.get("help", "")
+        if spec.get("restart"):
+            note = (note + " " if note else "") + "(restart)"
+        lines.append(f"{spec['key']} = {_toml_value(getattr(cfg, spec['key']))}" + (f"   # {note}" if note else ""))
+    lines.append("")
+    paths.config_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(paths.config_dir, 0o700)
+    tmp = paths.config_file.with_suffix(".toml.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+    os.replace(tmp, paths.config_file)
+    os.chmod(paths.config_file, 0o600)
+    return paths.config_file

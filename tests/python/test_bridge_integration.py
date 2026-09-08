@@ -281,6 +281,48 @@ class BridgeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await c.request("conversations"), [])
             await c.close()
 
+    async def test_notification_content_levels_and_reload(self):
+        from omarchy_signal.config import save_config
+        async with BridgeHarness() as h:
+            events = []
+            c, _ = await self._client(h, on_event=lambda n, d: events.append((n, d)))
+            await c.request("subscribe")
+
+            async def next_message(ts):
+                h.inject(incoming("secret text", ts))
+                for _ in range(100):
+                    msgs = [d for n, d in events if n == "message" and d.get("ts") == ts]
+                    if msgs:
+                        return msgs[0]
+                    await asyncio.sleep(0.05)
+                self.fail("no message event")
+
+            m = await next_message(1700000000001)
+            self.assertEqual((m["senderName"], m["preview"]), ("Trinity", "secret text"))
+            # Change the setting on disk (a separate Config, as the CLI would) and
+            # ask the bridge to reload: no restart.
+            disk = Config.from_dict({k: getattr(h.cfg, k) for k in h.cfg.__dataclass_fields__})
+            disk.notification_content = "name-only"
+            save_config(disk, h.paths)
+            res = await c.request("reloadConfig")
+            self.assertIn("notification_content", res["applied"])
+            m = await next_message(1700000000002)
+            self.assertEqual((m["senderName"], m["preview"]), ("Trinity", "New message"))
+            disk.notification_content = "none"
+            disk.download_attachments = False      # restart-only key
+            save_config(disk, h.paths)
+            res = await c.request("reloadConfig")
+            self.assertIn("download_attachments", res["restartRequired"])
+            m = await next_message(1700000000003)
+            self.assertEqual((m["senderName"], m["conversationName"], m["preview"]), ("Signal", "New message", "New message"))
+            self.assertEqual(m["sender"], "number:+15550002222")   # the key still routes a reply
+            status = await c.request("status")
+            self.assertEqual(status["notificationContent"], "none")
+            # History keeps the real name regardless of the popup setting.
+            hist = await c.request("history", conversation="number:+15550002222")
+            self.assertEqual(hist[-1]["senderName"], "Trinity")
+            await c.close()
+
     async def test_second_instance_refuses(self):
         async with BridgeHarness() as h:
             other = Bridge(h.cfg, h.paths)

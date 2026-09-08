@@ -282,6 +282,7 @@ class Bridge:
             "accountCount": len(self.accounts), "unread": self.store.total_unread(),
             "historyEnabled": self.cfg.history_enabled, "notifications": self.cfg.notifications,
             "notificationPreview": self.cfg.notification_preview,
+            "notificationContent": self.cfg.notification_content,
             "notificationTimeoutMs": self.cfg.notification_timeout_ms,
             "linking": self._link_task is not None and not self._link_task.done(),
             "error": self.supervisor.last_error, "uptime": int(time.time() - self.started_at),
@@ -343,15 +344,19 @@ class Bridge:
     def _message_payload(self, ev: Event, *, muted: bool) -> dict:
         conv_name = self.store.display_name(ev.conversation.key) if not ev.group_name else ev.group_name
         sender_name = ev.sender_name or (self.store.display_name(ev.sender.key) if ev.sender else "")
-        preview = ev.text if self.cfg.notification_preview else "New message"
-        if not ev.text and ev.attachments:
+        content = self.cfg.notification_content
+        preview = ev.text if content == "name-and-message" else "New message"
+        if not ev.text and ev.attachments and content == "name-and-message":
             kind = ev.attachments[0].content_type.split("/")[0]
             preview = {"image": "📷 Photo", "video": "🎞 Video", "audio": "🎤 Voice message"}.get(kind, "📎 Attachment")
-            if not self.cfg.notification_preview:
-                preview = "New message"
+        # Like Signal's "No name or content": the popup says only that
+        # something arrived. Clients that show the thread still get real names
+        # through history; only the notification fields are masked.
+        popup_sender = sender_name if content != "none" else "Signal"
+        popup_conv = conv_name if content != "none" else "New message"
         return {
-            "conversation": ev.conversation.key, "conversationName": conv_name, "isGroup": ev.conversation.kind == "group",
-            "sender": ev.sender.key if ev.sender else "", "senderName": sender_name, "ts": ev.timestamp,
+            "conversation": ev.conversation.key, "conversationName": popup_conv, "isGroup": ev.conversation.kind == "group" and content != "none",
+            "sender": ev.sender.key if ev.sender else "", "senderName": popup_sender, "ts": ev.timestamp,
             "text": ev.text, "preview": clean_text(preview, max_length=300, single_line=True),
             "attachments": [a.to_json() for a in ev.attachments], "outgoing": ev.outgoing,
             "muted": muted, "quoteText": ev.quote_text, "expiresIn": ev.expires_in,
@@ -768,6 +773,25 @@ class Bridge:
         }
         await self._broadcast("message", payload)
         return {"sent": True}
+
+    async def op_reloadConfig(self, p: dict) -> dict:
+        """Re-read config.toml and apply everything that does not need a
+        restart. Returns the keys that do."""
+        fresh = Config.load(self.paths)
+        from .config import LIVE_KEYS, RESTART_REQUIRED
+        changed = []
+        pending = []
+        for key in fresh.__dataclass_fields__:
+            old, new = getattr(self.cfg, key), getattr(fresh, key)
+            if old == new:
+                continue
+            if key in LIVE_KEYS or key == "notification_preview":
+                setattr(self.cfg, key, new)
+                changed.append(key)
+            elif key in RESTART_REQUIRED:
+                pending.append(key)
+        await self._broadcast("status", self.status())
+        return {"applied": changed, "restartRequired": pending}
 
     async def op_clearHistory(self, p: dict) -> dict:
         self.store.clear_history()
