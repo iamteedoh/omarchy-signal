@@ -34,9 +34,12 @@ Item {
   property real velocity: 0          // px per second, positive = scrolling down
   property real lastWheelAt: 0
 
+  // A ListView's content can start above y=0 (originY moves as rows get
+  // measured), so the real bounds are relative to originY.
   function clampY(flick, y) {
-    var maxY = Math.max(0, flick.contentHeight - flick.height)
-    return Math.max(0, Math.min(maxY, y))
+    var minY = flick.originY !== undefined ? flick.originY : 0
+    var maxY = Math.max(minY, minY + flick.contentHeight - flick.height)
+    return Math.max(minY, Math.min(maxY, y))
   }
 
   function scrollBy(flick, ev) {
@@ -72,16 +75,18 @@ Item {
     onTriggered: if (Math.abs(view.velocity) > 60) inertia.start(); else view.velocity = 0
   }
 
-  Timer {
+  // The glide runs on the display's frame clock, so it advances exactly once
+  // per rendered frame whatever the refresh rate (no timer/vsync beating).
+  FrameAnimation {
     id: inertia
-    interval: 16
-    repeat: true
+    running: false
     onTriggered: {
       var flick = view.kineticTarget
       if (!flick) { stop(); return }
+      var dt = Math.min(0.05, Math.max(0.001, frameTime))
       var before = flick.contentY
-      flick.contentY = view.clampY(flick, before + view.velocity * (interval / 1000))
-      view.velocity *= 0.93                         // friction per frame
+      flick.contentY = view.clampY(flick, before + view.velocity * dt)
+      view.velocity *= Math.pow(0.012, dt)          // friction: ~1.2% of the speed left after a second
       if (Math.abs(view.velocity) < 25 || flick.contentY === before) { view.velocity = 0; stop() }
     }
   }
@@ -391,7 +396,7 @@ Item {
       // pin is derived from the actual scroll position on every change, so
       // any way of scrolling up (wheel, trackpad, drag, scrollbar) releases
       // it, and nothing re-pins except a new message arriving while pinned.
-      onContentYChanged: if (!view.pinning) view.stickToBottom = (contentY >= contentHeight - height - 4)
+      onContentYChanged: if (!view.pinning) view.stickToBottom = (contentY >= originY + contentHeight - height - 4)
       onCountChanged: if (view.stickToBottom) view.pinToBottom()
 
       // A transparent layer above the delegates owns wheel events, so the
