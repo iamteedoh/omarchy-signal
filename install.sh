@@ -68,7 +68,7 @@ if (( LINK_MODE )); then
 else
   mkdir -p "$PLUGIN_DIR"
   # Only what the shell and the CLI need; no tests, no .git.
-  cp -a "$HERE/manifest.json" "$HERE/Model.js" "$HERE/Service.qml" "$HERE/BarWidget.qml" "$HERE/bin" "$HERE/lib" "$HERE/README.md" "$HERE/LICENSE" "$PLUGIN_DIR/"
+  cp -a "$HERE"/manifest.json "$HERE"/*.qml "$HERE"/*.js "$HERE/bin" "$HERE/lib" "$HERE/README.md" "$HERE/LICENSE" "$PLUGIN_DIR/"
   find "$PLUGIN_DIR" -name __pycache__ -type d -prune -exec rm -rf {} +
   say "Installed plugin to $PLUGIN_DIR"
 fi

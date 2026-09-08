@@ -19,6 +19,11 @@ echo "manifest"
 check python3 -c "import json,sys; m=json.load(open('$ROOT/manifest.json')); assert m['schemaVersion']==1 and not m['id'].startswith('omarchy.'); [open('$ROOT/'+v).close() for v in m['entryPoints'].values()]"
 if command -v omarchy-plugin-validate >/dev/null; then check omarchy-plugin-validate "$ROOT"; fi
 
+echo "installer copies every QML/JS file"
+for f in "$ROOT"/*.qml "$ROOT"/*.js; do
+  if grep -q '"$HERE"/\*.qml' "$ROOT/install.sh" && grep -q '"$HERE"/\*.js' "$ROOT/install.sh"; then echo "  ok   $(basename "$f")"; else echo "  FAIL install.sh does not copy $(basename "$f")"; fail=1; fi
+done
+
 echo "no symlinks inside the plugin"
 if [[ -z $(find "$ROOT" -name .git -prune -o -type l -print) ]]; then echo "  ok   none"; else echo "  FAIL symlinks present"; fail=1; fi
 
