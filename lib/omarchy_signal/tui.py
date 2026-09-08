@@ -843,9 +843,13 @@ class App:
         assert self.term
         return max(1, self.term.rows - 3 - self._composer_rows() - 2)
 
+    def _composer_width(self) -> int:
+        assert self.term
+        return max(10, self.term.cols - LIST_WIDTH - 6)
+
     def _composer_rows(self) -> int:
         assert self.term
-        width = max(10, self.term.cols - LIST_WIDTH - 5)
+        width = self._composer_width()
         lines = wrap(self.composer.text or " ", width)
         extra = (1 if self.composer.quote else 0) + (1 if self.composer.attachments else 0)
         return min(6, max(1, len(lines))) + extra
@@ -891,19 +895,30 @@ class App:
         t.flush()
 
     def _cursor(self) -> str:
+        """Position (and shape) the hardware cursor. A blinking bar while
+        composing; hidden when nothing is being typed."""
         assert self.term
         t = self.term
         if self.overlay in ("contacts", "search", "attach", "react"):
-            return T.SHOW_CURSOR
+            return "\x1b[5 q" + T.SHOW_CURSOR
         if self.focus != "composer" or self.overlay:
             return T.HIDE_CURSOR
-        width = max(10, t.cols - LIST_WIDTH - 5)
-        before = self.composer.text[:self.composer.cursor]
-        lines = wrap(before + "​", width) if before else [""]
-        row = t.rows - 1 - self._composer_rows() + len(lines) - 1 + 1
-        last = lines[-1].replace("​", "")
-        col = LIST_WIDTH + 4 + str_width(last)
-        return T.move(row, col) + T.SHOW_CURSOR
+        width = self._composer_width()
+        crows = self._composer_rows()
+        top = t.rows - 1 - crows
+        extra = (1 if self.composer.quote else 0) + (1 if self.composer.attachments else 0)
+        text_rows = crows - extra
+        text = self.composer.text
+        all_lines = wrap(text, width) if text else [""]
+        before = text[:self.composer.cursor]
+        # A zero-width marker keeps a trailing space from being trimmed by wrap().
+        before_lines = wrap(before + "\u200b", width) if before else [""]
+        line_idx = len(before_lines) - 1
+        col_w = str_width(before_lines[-1].replace("\u200b", ""))
+        first_visible = max(0, len(all_lines) - text_rows)
+        row = top + extra + max(0, line_idx - first_visible)
+        col = LIST_WIDTH + 4 + col_w
+        return T.move(row, col) + "\x1b[5 q" + T.SHOW_CURSOR
 
     def _hue(self, key: str):
         th = self.theme
@@ -1253,7 +1268,7 @@ class App:
             y += 1
         focused = self.focus == "composer" and not self.overlay
         prompt_color = th.accent if focused else th.muted
-        lines = wrap(self.composer.text, width - 4) if self.composer.text else [""]
+        lines = wrap(self.composer.text, self._composer_width()) if self.composer.text else [""]
         text_rows = crows - (1 if self.composer.quote else 0) - (1 if self.composer.attachments else 0)
         visible = lines[-text_rows:] if len(lines) > text_rows else lines
         for i in range(text_rows):

@@ -54,7 +54,7 @@ class FakeTerminal:
 
 
 # Allowed escape sequences in our output.
-ALLOWED = re.compile(r"\x1b\[[0-9;?<>]*[A-Za-z]|\x1b\]8;[^;\x1b]*;[^\x1b]*\x1b\\|\x1b_G[^\x1b]*\x1b\\|\x1b\]0;[^\x07]*\x07")
+ALLOWED = re.compile(r"\x1b\[[0-9;?<>]* ?[A-Za-z]|\x1b\]8;[^;\x1b]*;[^\x1b]*\x1b\\|\x1b_G[^\x1b]*\x1b\\|\x1b\]0;[^\x07]*\x07")
 
 HOSTILE = "hi \x1b]52;c;cHduZWQ=\x07 \x1b[2J \x1b_Ga=T;AAAA\x1b\\ a‮b \x9b1m end"
 
@@ -186,6 +186,30 @@ class RenderTests(unittest.TestCase):
         asyncio.run(go())
         app.draw()
         self.assert_clean(app.term.text())
+
+    def test_cursor_sits_on_the_typed_line(self):
+        app = make_app(cols=120, rows=40)
+        seed(app)
+        app.composer.text = "Hello! Let me know"
+        app.composer.cursor = len(app.composer.text)
+        app.draw()
+        out = app.term.text()
+        # One composer row: it is drawn at rows-2 (footer is the last row); the
+        # cursor must be on that same row, right after the text, blinking.
+        self.assertTrue(out.endswith("\x1b[38;19H\x1b[5 q\x1b[?25h\x1b[?2026l".replace("38;19", f"38;{tui.LIST_WIDTH + 4 + len(app.composer.text)}")), out[-60:])
+        # A trailing space keeps the cursor after the space.
+        app.composer.text = "Hello "
+        app.composer.cursor = 6
+        app.draw()
+        self.assertIn(f"\x1b[38;{tui.LIST_WIDTH + 4 + 6}H\x1b[5 q", app.term.text())
+        # Wrapped onto a second line: cursor on the second composer row.
+        app.composer.text = "x" * 100 + " tail"
+        app.composer.cursor = len(app.composer.text)
+        app.draw()
+        rows_used = app._composer_rows()
+        self.assertEqual(rows_used, 2)
+        # 84 x's fill the first line; the second holds the remaining 16 plus " tail" (21 columns).
+        self.assertIn(f"\x1b[38;{tui.LIST_WIDTH + 4 + 21}H\x1b[5 q", app.term.text())
 
     def test_mouse_selects_conversation(self):
         app = make_app()

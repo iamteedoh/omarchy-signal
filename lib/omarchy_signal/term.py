@@ -284,7 +284,7 @@ class Terminal:
         return self
 
     def __exit__(self, *exc):
-        self.write(CSI + "<u" + CSI + "?2004l" + CSI + "?1006l" + CSI + "?1000l" + CSI + "?25h" + CSI + "?1049l")
+        self.write(CSI + "<u" + CSI + "?2004l" + CSI + "?1006l" + CSI + "?1000l" + CSI + "0 q" + CSI + "?25h" + CSI + "?1049l")
         self.flush()
         if self._saved is not None:
             termios.tcsetattr(self.fd_in, termios.TCSAFLUSH, self._saved)
