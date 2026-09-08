@@ -553,7 +553,12 @@ class Bridge:
         return [m.to_json() for m in self.store.search(p["query"], limit=p.get("limit", 50))]
 
     async def op_contacts(self, p: dict) -> list[dict]:
-        return self.store.contacts()
+        contacts = self.store.contacts()
+        if self.account:
+            # Signal lists your own account as "Note to Self".
+            contacts.insert(0, {"key": f"number:{self.account}", "number": self.account, "uuid": "", "name": "Note to Self",
+                                "profileName": "", "username": "", "color": "", "displayName": "Note to Self"})
+        return contacts
 
     async def op_groups(self, p: dict) -> list[dict]:
         return self.store.groups()
@@ -574,11 +579,15 @@ class Bridge:
             pass
         try:
             rec = classify_recipient(query)
-            return {"key": rec.key, "name": self.store.display_name(rec.key), "kind": rec.kind}
+            name = "Note to Self" if (rec.kind == "number" and rec.value == self.account) else self.store.display_name(rec.key)
+            return {"key": rec.key, "name": name, "kind": rec.kind}
         except InvalidRecipient:
             pass
         q = query.lower()
         matches = []
+        if self.account and (q in ("me", "self", "myself", "note to self", "notes") or "note to self".startswith(q)
+                             or q == self.account.lower()):
+            return {"key": f"number:{self.account}", "name": "Note to Self", "kind": "number"}
         for c in self.store.contacts():
             hay = " ".join(str(c.get(k, "")) for k in ("name", "profileName", "username", "number")).lower()
             if q in hay:

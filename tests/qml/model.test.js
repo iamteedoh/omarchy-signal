@@ -87,3 +87,32 @@ test("parseDnd reads Omarchy's state file", () => {
   assert.equal(M.parseDnd("garbage"), false)
   assert.equal(M.parseDnd('{"dnd":"true"}'), false)
 })
+
+test("sendArgvFull carries attachments and quotes safely", () => {
+  const a = M.sendArgvFull("number:+1", "hi", ["/home/u/a.png", "relative.png", 5], { ts: 12, author: "number:+2", text: "q\nx" })
+  assert.deepEqual(a, ["omarchy-signal", "send", "--json", "--message=hi", "-a", "/home/u/a.png",
+    "--quote-ts", "12", "--quote-author", "number:+2", "--quote-text", "q x", "--", "number:+1"])
+  assert.equal(M.sendArgvFull("number:+1", "  ", []), null)
+  assert.deepEqual(M.sendArgvFull("number:+1", "", ["/x/y.jpg"]).slice(3, 6), ["--message=", "-a", "/x/y.jpg"])
+  assert.equal(M.sendArgvFull("bad", "hi", []), null)
+  assert.deepEqual(M.sendArgvFull("number:+1", "hi", [], { ts: 0, author: "number:+2" }).length, 6)
+})
+
+test("reactArgv", () => {
+  assert.deepEqual(M.reactArgv("number:+1", 5, "number:+2", "🔥"), ["omarchy-signal", "react", "--", "number:+1", "5", "number:+2", "🔥"])
+  assert.deepEqual(M.reactArgv("number:+1", 5, "number:+2", "🔥", true)[2], "--remove")
+  assert.equal(M.reactArgv("number:+1", 0, "number:+2", "🔥"), null)
+  assert.equal(M.reactArgv("number:+1", 5, "x", "🔥"), null)
+  assert.equal(M.reactArgv("number:+1", 5, "number:+2", "\x1b"), null)
+})
+
+test("threadRows normalises history rows", () => {
+  const rows = M.threadRows([
+    { ts: 1, senderName: "Trin\x1bity", sender: "number:+2", body: "hi", attachments: [{ filename: "a.png", contentType: "image/png", path: "/p/a.png" }], reactions: { "number:+1": "👍" } },
+    { ts: 2, outgoing: true, body: "x", deleted: true, status: "read", edited: true, quoteText: "hi" },
+    "junk"
+  ].filter(x => typeof x === "object"), 10)
+  assert.equal(rows[0].who, "Trinity"); assert.equal(rows[0].image, "/p/a.png"); assert.equal(rows[0].reactions, "👍")
+  assert.equal(rows[1].body, "(message deleted)"); assert.equal(rows[1].who, "You"); assert.equal(rows[1].edited, true)
+  assert.deepEqual(M.threadRows(null), [])
+})

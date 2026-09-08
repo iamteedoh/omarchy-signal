@@ -47,7 +47,7 @@ def _safe_print(text: str) -> None:
 
 def cmd_tui(args) -> int:
     from .tui import run_tui
-    return run_tui(Config.load(_paths()), _paths(), initial=args.conversation or "")
+    return run_tui(Config.load(_paths()), _paths(), initial=args.conversation or "", new=bool(args.new))
 
 
 def cmd_send(args) -> int:
@@ -63,14 +63,71 @@ def cmd_send(args) -> int:
         if "key" not in res:
             names = ", ".join(c["name"] for c in res.get("candidates", []))
             raise BridgeError(f"ambiguous recipient; candidates: {names}", "invalid")
-        result = await client.request("send", conversation=res["key"], text=text or "",
-                                      attachments=[str(Path(a).expanduser()) for a in (args.attachment or [])])
+        params = dict(conversation=res["key"], text=text or "",
+                      attachments=[str(Path(a).expanduser()) for a in (args.attachment or [])])
+        if args.quote_ts:
+            params.update(quoteTs=args.quote_ts, quoteAuthor=args.quote_author or "", quoteText=args.quote_text or "")
+        result = await client.request("send", **params)
         if args.json:
             _print_json({"conversation": res["key"], **result})
         else:
             print(f"sent to {clean_text(res['name'], single_line=True)} (ts {result['ts']}, {result['status']})")
         return 0 if result.get("status") == "sent" else 1
     return _run(go)
+
+
+def cmd_react(args) -> int:
+    async def go(client, hello):
+        res = await client.request("resolve", query=args.conversation)
+        if "key" not in res:
+            raise BridgeError("ambiguous conversation", "invalid")
+        await client.request("react", conversation=res["key"], ts=args.ts, author=args.author, emoji=args.emoji,
+                             remove=bool(args.remove))
+        if args.json:
+            _print_json({"ok": True})
+        return 0
+    return _run(go)
+
+
+def cmd_pick_file(args) -> int:
+    """Print one file chosen with Omarchy's file menu (used by the shell windows)."""
+    dirs = [d for d in (args.dirs or []) if os.path.isdir(d)] or [os.path.expanduser("~")]
+    exe = shutil.which("omarchy-menu-file")
+    if not exe:
+        print("omarchy-menu-file not found", file=sys.stderr)
+        return 1
+    formats = "png jpg jpeg gif webp heic pdf txt md mp4 mov mp3 m4a ogg opus zip"
+    res = subprocess.run([exe, "Attach", ":".join(dirs), formats], capture_output=True, text=True, timeout=300, check=False)
+    path = res.stdout.strip().splitlines()[-1] if res.stdout.strip() else ""
+    if not path:
+        return 1
+    print(path)
+    return 0
+
+
+def cmd_window(args) -> int:
+    """Open a conversation in its own window (Quickshell), detached from the client."""
+    key = ""
+    if args.conversation:
+        async def go(client, hello):
+            res = await client.request("resolve", query=args.conversation)
+            if "key" not in res:
+                raise BridgeError("ambiguous conversation", "invalid")
+            return res["key"]
+        try:
+            key = asyncio.run(_with_client(go))
+        except BridgeError as exc:
+            print(f"omarchy-signal: {exc}", file=sys.stderr)
+            return 1
+    exe = shutil.which("omarchy-shell")
+    if not exe:
+        print("omarchy-shell not found", file=sys.stderr)
+        return 1
+    res = subprocess.run([exe, "iamteedoh.signal", "window", key], capture_output=True, text=True, timeout=5, check=False)
+    if res.returncode != 0 or "ok" not in res.stdout:
+        print("the shell did not open a window (is the Signal plugin enabled?)", file=sys.stderr)
+        return 1
+    return 0
 
 
 def cmd_conversations(args) -> int:
@@ -336,7 +393,7 @@ def cmd_open(args) -> int:
     import shlex
     cfg = Config.load(_paths())
     me = os.path.realpath(sys.argv[0]) if sys.argv and sys.argv[0] else "omarchy-signal"
-    tui = [me, "tui"] + ([args.conversation] if args.conversation else [])
+    tui = [me, "tui"] + (["--new"] if args.new else []) + ([args.conversation] if args.conversation else [])
     if cfg.terminal != "auto" and shutil.which(cfg.terminal):
         launch = TERMINAL_ARGV[cfg.terminal] + tui
         if shutil.which("uwsm-app"):
@@ -476,18 +533,40 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("tui", help="open the terminal client")
     s.add_argument("conversation", nargs="?", help="contact name, number, group or conversation key to open")
+    s.add_argument("--new", action="store_true", help="start with the contact picker open")
     s.set_defaults(fn=cmd_tui)
 
     s = sub.add_parser("open", help="open or focus the client in a terminal window")
     s.add_argument("conversation", nargs="?")
+    s.add_argument("--new", action="store_true", help="start with the contact picker open (new conversation)")
     s.set_defaults(fn=cmd_open)
 
     s = sub.add_parser("send", help="send a message from the command line")
     s.add_argument("recipient", help="contact name, +number, username.NN or group:ID")
     s.add_argument("-m", "--message", help="message text (default: stdin)")
     s.add_argument("-a", "--attachment", action="append", help="file to attach (repeatable)")
+    s.add_argument("--quote-ts", type=int, help="reply to the message with this timestamp")
+    s.add_argument("--quote-author", help="conversation key of that message's author (number:+1…)")
+    s.add_argument("--quote-text", help="its text, shown in the quote")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_send)
+
+    s = sub.add_parser("react", help="react to a message")
+    s.add_argument("conversation")
+    s.add_argument("ts", type=int, help="message timestamp")
+    s.add_argument("author", help="author key (number:+1…)")
+    s.add_argument("emoji")
+    s.add_argument("--remove", action="store_true")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_react)
+
+    s = sub.add_parser("pick-file", help=argparse.SUPPRESS)
+    s.add_argument("dirs", nargs="*")
+    s.set_defaults(fn=cmd_pick_file)
+
+    s = sub.add_parser("window", help="open a conversation in its own window, detached from the client")
+    s.add_argument("conversation", nargs="?")
+    s.set_defaults(fn=cmd_window)
 
     s = sub.add_parser("conversations", help="list conversations", aliases=["ls"])
     s.add_argument("--all", action="store_true", help="include archived")

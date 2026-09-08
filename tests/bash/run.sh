@@ -31,10 +31,10 @@ check grep -q "ExecStart=%h/.local/bin/omarchy-signal bridge" "$ROOT/systemd/oma
 check grep -q "NoNewPrivileges=yes" "$ROOT/systemd/omarchy-signal.service"
 
 echo "no shell-string execution in QML"
-if grep -n "execDetached\|bash -c\|sh -c" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/Model.js"; then echo "  FAIL shell strings found"; fail=1; else echo "  ok   argv only"; fi
+if grep -n "execDetached\|bash -c\|sh -c" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" "$ROOT/Model.js"; then echo "  FAIL shell strings found"; fail=1; else echo "  ok   argv only"; fi
 echo "every Text is PlainText"
-n_text=$(grep -c "^\s*Text {" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" | awk -F: '{s+=$2} END {print s}')
-n_plain=$(grep -c "textFormat: Text.PlainText" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" | awk -F: '{s+=$2} END {print s}')
+n_text=$(grep -c "^\s*Text {" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" | awk -F: '{s+=$2} END {print s}')
+n_plain=$(grep -c "textFormat: Text.PlainText" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" | awk -F: '{s+=$2} END {print s}')
 if [[ $n_text -eq $n_plain ]]; then echo "  ok   $n_text/$n_plain"; else echo "  FAIL $n_text Text blocks, $n_plain PlainText"; fail=1; fi
 
 exit $fail

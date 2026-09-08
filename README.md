@@ -36,17 +36,25 @@ count. It follows whichever Omarchy theme is active.
   those Omarchy's default (`omarchy default terminal ghostty`) or set
   `terminal = "ghostty"` in the config; `omarchy-signal doctor` checks this.
 - **Popup notifications** (Quickshell): an incoming message slides in at the
-  top right. Click it and a reply window opens front and centre with the
-  recent thread and a text field. Middle-click opens the conversation in the
-  terminal; right-click dismisses.
+  top right. Click it and a conversation window opens front and centre: the
+  thread with images, reply-to-message (click a bubble, or middle-click it),
+  reactions, attachments via Omarchy's file menu, emoji shortcodes.
+  "Detach" turns it into a real window (`omarchy-signal window <chat>` does
+  too) that Hyprland floats, tiles or parks in the scratchpad
+  (`SUPER+ALT+S` / `SUPER+S`) like any app, so a chat can stay open without
+  the whole client. Middle-click on the toast opens the terminal; right-click
+  dismisses.
 - **Bar widget**: Signal glyph with a pulsing unread dot and count. Click for a
   keyboard-driven list of conversations and contacts (type to filter, Enter
   opens it in the terminal).
 - **Command line**: `omarchy-signal send "Trinity" -m "on my way"`,
   `omarchy-signal send +15550002222 -a photo.jpg`, `conversations`, `contacts`,
   `history`, `status`, `doctor`.
-- **Keybinding**: `SUPER+SHIFT+G` (Omarchy's Signal key) opens the client, and
-  there is a "Signal (terminal)" row in the Omarchy menu.
+- **Keybindings**: `SUPER+SHIFT+G` (Omarchy's Signal key) opens the client,
+  `SUPER+CTRL+G` opens the contact picker for a new conversation from
+  anywhere, and there is a "Signal (terminal)" row in the Omarchy menu.
+  Inside the client, `Ctrl-U` starts a new conversation; "Note to Self" is
+  the first entry.
 - **Theme**: colours come from `~/.local/state/omarchy/current/theme/colors.toml`
   in the terminal and from the shell's `Color`/`Style` singletons in Quickshell,
   so `omarchy theme set …` restyles everything live.

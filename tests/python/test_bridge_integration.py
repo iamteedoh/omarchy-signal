@@ -103,7 +103,7 @@ class BridgeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             contacts = await c.request("contacts")
             names = sorted(x["displayName"] for x in contacts)
             # Blocked contact hidden, garbage number dropped, profile name sanitised.
-            self.assertEqual(names, ["Morpheus", "Trinity"])
+            self.assertEqual(names, ["Morpheus", "Note to Self", "Trinity"])
             trinity = [x for x in contacts if x["displayName"] == "Trinity"][0]
             self.assertEqual(trinity["profileName"], "Trin [31mEvil")
             groups = await c.request("groups")
@@ -227,6 +227,9 @@ class BridgeIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_resolve(self):
         async with BridgeHarness() as h:
             c, _ = await self._client(h)
+            self.assertEqual((await c.request("resolve", query="me"))["name"], "Note to Self")
+            self.assertEqual((await c.request("resolve", query="+15550001111"))["key"], "number:+15550001111")
+            self.assertEqual((await c.request("contacts"))[0]["displayName"], "Note to Self")
             self.assertEqual((await c.request("resolve", query="trin"))["key"], "number:+15550002222")
             self.assertEqual((await c.request("resolve", query="+15550007777"))["key"], "number:+15550007777")
             self.assertEqual((await c.request("resolve", query="crew"))["kind"], "group")

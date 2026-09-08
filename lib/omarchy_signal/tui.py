@@ -90,10 +90,11 @@ class Composer:
 
 
 class App:
-    def __init__(self, cfg: Config, paths: Paths, *, initial: str = ""):
+    def __init__(self, cfg: Config, paths: Paths, *, initial: str = "", new: bool = False):
         self.cfg = cfg
         self.paths = paths
         self.initial = initial
+        self.start_new = new
         self.theme = Theme.load(paths.omarchy_theme_dir)
         self.term: Terminal | None = None
         self.client: BridgeClient | None = None
@@ -226,6 +227,8 @@ class App:
             self._select_index(0)
         if not self.status.get("linked"):
             self.open_overlay("link")
+        elif self.start_new:
+            self.open_overlay("contacts")
 
     async def _main_loop(self) -> None:
         assert self.term
@@ -2469,12 +2472,12 @@ class App:
         return out
 
 
-def run_tui(cfg: Config, paths: Paths, initial: str = "") -> int:
+def run_tui(cfg: Config, paths: Paths, initial: str = "", new: bool = False) -> int:
     import sys
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         print("omarchy-signal tui needs a terminal", file=sys.stderr)
         return 2
-    app = App(cfg, paths, initial=initial)
+    app = App(cfg, paths, initial=initial, new=new)
     try:
         return asyncio.run(app.run())
     except KeyboardInterrupt:

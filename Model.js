@@ -127,6 +127,60 @@ function sendArgv(conversationKey, text) {
   return ["omarchy-signal", "send", "--json", "--message=" + body, "--", conversationKey]
 }
 
+// argv for a reply with an optional quote and attachments.
+function sendArgvFull(conversationKey, text, attachments, quote) {
+  if (!isConversationKey(conversationKey)) return null
+  var body = cleanText(text, 60000)
+  var files = Array.isArray(attachments) ? attachments.filter(function(a) { return typeof a === "string" && a.charAt(0) === "/" }) : []
+  if (!body.trim() && files.length === 0) return null
+  var argv = ["omarchy-signal", "send", "--json", "--message=" + body]
+  for (var i = 0; i < files.length; i++) argv.push("-a", files[i])
+  if (quote && typeof quote.ts === "number" && quote.ts > 0 && isConversationKey(quote.author))
+    argv.push("--quote-ts", String(quote.ts), "--quote-author", quote.author, "--quote-text", singleLine(quote.text || "", 200))
+  argv.push("--", conversationKey)
+  return argv
+}
+
+function reactArgv(conversationKey, ts, author, emojiText, remove) {
+  if (!isConversationKey(conversationKey) || !isConversationKey(author)) return null
+  if (typeof ts !== "number" || ts <= 0) return null
+  var e = singleLine(emojiText, 16)
+  if (!e) return null
+  var argv = ["omarchy-signal", "react", "--", conversationKey, String(ts), author, e]
+  if (remove) argv.splice(2, 0, "--remove")
+  return argv
+}
+
+// Rows for the message list of a conversation window, oldest first.
+function threadRows(rows, limit) {
+  var list = Array.isArray(rows) ? rows.slice(-(limit || 60)) : []
+  return list.map(function(m) {
+    var body = cleanText(m.body || "", 4000)
+    var atts = Array.isArray(m.attachments) ? m.attachments : []
+    if (m.deleted) body = "(message deleted)"
+    var image = ""
+    for (var i = 0; i < atts.length; i++) {
+      if (atts[i] && typeof atts[i].path === "string" && /^image\//.test(atts[i].contentType || "")) { image = atts[i].path; break }
+    }
+    var files = atts.map(function(a) { return singleLine(a.filename || "attachment", 80) })
+    var reactions = []
+    if (m.reactions && typeof m.reactions === "object") for (var k in m.reactions) reactions.push(singleLine(m.reactions[k], 8))
+    return {
+      ts: typeof m.ts === "number" ? m.ts : 0,
+      who: m.outgoing ? "You" : singleLine(m.senderName || "?", 80),
+      sender: typeof m.sender === "string" ? m.sender : "",
+      outgoing: m.outgoing === true,
+      body: body,
+      files: files,
+      image: image,
+      status: singleLine(m.status || "", 20),
+      edited: m.edited === true,
+      quote: singleLine(m.quoteText || "", 200),
+      reactions: reactions.join(" ")
+    }
+  })
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     cleanText: cleanText,
@@ -140,6 +194,9 @@ if (typeof module !== "undefined") {
     isConversationKey: isConversationKey,
     parseDnd: parseDnd,
     tuiArgv: tuiArgv,
-    sendArgv: sendArgv
+    sendArgv: sendArgv,
+    sendArgvFull: sendArgvFull,
+    reactArgv: reactArgv,
+    threadRows: threadRows
   }
 }
