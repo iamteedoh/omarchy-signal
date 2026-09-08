@@ -92,8 +92,14 @@ fi
 install -m 644 "$HERE/systemd/omarchy-signal.service" "$UNIT_DIR/omarchy-signal.service"
 systemctl --user daemon-reload
 if command -v signal-cli >/dev/null; then
-  systemctl --user enable --now omarchy-signal.service
-  say "Bridge service enabled and started"
+  if systemctl --user is-active --quiet omarchy-signal.service; then
+    # A running bridge keeps executing the code it started with; hand it the new one.
+    systemctl --user restart omarchy-signal.service
+    say "Bridge service restarted with the new code"
+  else
+    systemctl --user enable --now omarchy-signal.service
+    say "Bridge service enabled and started"
+  fi
 else
   systemctl --user enable omarchy-signal.service
   warn "Bridge service enabled but not started (install signal-cli first, then: systemctl --user start omarchy-signal)"

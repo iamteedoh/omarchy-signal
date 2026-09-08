@@ -506,8 +506,16 @@ class App:
     async def _reload_bridge_config(self) -> None:
         if not self.client:
             return
-        with contextlib.suppress(BridgeError):
-            await self.client.request("reloadConfig")
+        try:
+            res = await self.client.request("reloadConfig")
+        except BridgeError as exc:
+            if exc.code == "bad_request":
+                self.show_toast("the running bridge predates this setting: systemctl --user restart omarchy-signal", 8)
+            else:
+                self.show_toast(f"bridge did not reload settings: {exc}", 6)
+            return
+        if res.get("restartRequired"):
+            self.settings_pending.update(res["restartRequired"])
 
     def _settings_cycle(self, spec: dict, delta: int) -> None:
         key = spec["key"]
