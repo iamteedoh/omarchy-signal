@@ -559,6 +559,27 @@ class AttachmentFlowTests(unittest.TestCase):
         app.draw()
         self.assertNotIn("\x1b_Ga=p", app.term.text())
 
+    def test_attach_prompt_previews_highlighted_image(self):
+        app = self.app
+        app.graphics = True
+        asyncio.run(app.handle_key(Key("char", char="a", ctrl=True)))
+        app.overlay_query = str(self.root / "Pictures") + "/"
+        app._path_candidates()
+        self.assertEqual(app.overlay_results[0].name, "cat.png")
+        app.term.out.clear()
+        app.draw()
+        out = app.term.text()
+        self.assertIn("\x1b_Ga=t,", out)               # thumbnail uploaded…
+        self.assertIn("\x1b_Ga=p,", out)               # …and placed beside the list
+        self.assertIsNotNone(app.preview)
+        app.overlay_query = str(self.root) + "/"
+        app._path_candidates()                          # folder highlighted: no preview
+        app.term.out.clear()
+        app.draw()
+        self.assertIsNone(app.preview)
+        self.assertIn("\x1b_Ga=d,d=i,", app.term.text())
+        asyncio.run(app.handle_key(Key("escape")))
+
     def test_attachment_menu_open_save_saveas(self):
         app = self.app
         key = app.active_key

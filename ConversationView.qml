@@ -103,11 +103,53 @@ Item {
     composer.forceActiveFocus()
   }
 
+  // ---- attachment picker (thumbnails)
+  property bool pickerOpen: false
+  property string pickerDir: ""
+  property string pickerParent: ""
+  property var pickerRows: []
+  property string pickerFilter: ""
+  readonly property string home: Quickshell.env("HOME") || ""
+  readonly property var quickDirs: ["Pictures", "Screenshots", "Downloads", "Documents", "Desktop"]
+
   function pickAttachment() {
-    var home = Quickshell.env("HOME") || ""
-    var dirs = [home + "/Pictures", home + "/Downloads", home + "/Documents", home + "/Desktop", home + "/Screenshots"]
-    pickProc.command = [view.cliPath, "pick-file", "--"].concat(dirs)
-    pickProc.running = true
+    view.pickerOpen = true
+    view.pickerFilter = ""
+    view.listDir(view.pickerDir || (view.home + "/Pictures"))
+  }
+
+  function listDir(dir) {
+    lsProc.running = false
+    lsProc.command = [view.cliPath, "ls-files", "--", dir]
+    lsProc.running = true
+  }
+
+  function chooseRow(row) {
+    if (row.isDir) { view.listDir(row.path); return }
+    if (view.attachments.indexOf(row.path) < 0 && view.attachments.length < 8) view.attachments = view.attachments.concat([row.path])
+    view.pickerOpen = false
+    composer.forceActiveFocus()
+  }
+
+  readonly property var pickerVisible: {
+    var q = Model.singleLine(view.pickerFilter, 80).toLowerCase()
+    var rows = Array.isArray(view.pickerRows) ? view.pickerRows : []
+    return q ? rows.filter(function(r) { return r.name.toLowerCase().indexOf(q) >= 0 }) : rows
+  }
+
+  Process {
+    id: lsProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var obj = null
+        try { obj = JSON.parse(text) } catch (e) { obj = null }
+        if (!obj || !Array.isArray(obj.rows)) { view.pickerRows = []; return }
+        view.pickerDir = String(obj.dir || "")
+        view.pickerParent = String(obj.parent || "")
+        view.pickerRows = obj.rows.filter(function(r) { return r && typeof r.path === "string" && r.path.charAt(0) === "/" })
+      }
+    }
   }
 
   Process {
@@ -123,17 +165,6 @@ Item {
   }
   Process { id: markReadProc }
   Process { id: actionProc; onExited: function(code) { if (code !== 0) view.error = "action failed"; view.reload() } }
-  Process {
-    id: pickProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var p = String(text || "").trim()
-        if (p && p.charAt(0) === "/" && view.attachments.indexOf(p) < 0 && view.attachments.length < 8)
-          view.attachments = view.attachments.concat([p])
-      }
-    }
-  }
   Process {
     id: sendProc
     stderr: StdioCollector { id: sendErr; waitForEnd: true }
@@ -312,6 +343,112 @@ Item {
             delegate: Button { required property string modelData; text: modelData; onClicked: view.react(row.modelData, modelData) }
           }
           Button { text: "Copy"; onClicked: Util.execArgv(["wl-copy", "--", row.modelData.body]) }
+        }
+      }
+    }
+
+    // Thumbnail picker, drawn over the thread while open.
+    Rectangle {
+      id: picker
+      visible: view.pickerOpen
+      Layout.fillWidth: true
+      Layout.preferredHeight: visible ? Math.min(Style.space(420), Math.max(Style.space(220), grid.contentHeight + pickerHead.implicitHeight + Style.space(40))) : 0
+      color: Util.alpha(Color.popups.background, 1.0)
+      border.color: Util.alpha(Color.accent, 0.5)
+      border.width: 1
+      radius: Style.cornerRadius
+
+      ColumnLayout {
+        anchors.fill: parent
+        anchors.margins: Style.space(10)
+        spacing: Style.space(8)
+
+        RowLayout {
+          id: pickerHead
+          Layout.fillWidth: true
+          spacing: Style.space(6)
+          Button { text: "↑"; onClicked: if (view.pickerParent) view.listDir(view.pickerParent) }
+          Repeater {
+            model: view.quickDirs
+            delegate: Button {
+              required property string modelData
+              text: modelData
+              onClicked: view.listDir(view.home + "/" + modelData)
+            }
+          }
+          TextField {
+            id: pickerFilterField
+            Layout.fillWidth: true
+            placeholderText: "filter " + view.pickerDir.replace(view.home, "~")
+            onTextChanged: view.pickerFilter = text
+            Keys.onEscapePressed: function(e) { view.pickerOpen = false; composer.forceActiveFocus(); e.accepted = true }
+            Keys.onReturnPressed: if (view.pickerVisible.length) view.chooseRow(view.pickerVisible[0])
+          }
+          Button { text: "✕"; onClicked: { view.pickerOpen = false; composer.forceActiveFocus() } }
+        }
+
+        GridView {
+          id: grid
+          Layout.fillWidth: true
+          Layout.fillHeight: true
+          clip: true
+          cellWidth: Style.space(132)
+          cellHeight: Style.space(132)
+          model: view.pickerVisible
+          boundsBehavior: Flickable.StopAtBounds
+          delegate: Item {
+            required property var modelData
+            width: grid.cellWidth
+            height: grid.cellHeight
+            Rectangle {
+              id: tile
+              anchors.fill: parent
+              anchors.margins: Style.space(4)
+              radius: Style.cornerRadius / 2
+              color: tileHover.containsMouse ? Util.alpha(Color.accent, 0.18) : Util.alpha(Color.popups.text, 0.05)
+              border.color: tileHover.containsMouse ? Color.accent : Util.alpha(Color.popups.border, 0.4)
+              border.width: 1
+              ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: Style.space(6)
+                spacing: Style.space(4)
+                Item {
+                  Layout.fillWidth: true
+                  Layout.fillHeight: true
+                  Image {
+                    anchors.fill: parent
+                    visible: modelData.kind === "image"
+                    source: modelData.kind === "image" ? "file://" + modelData.path : ""
+                    asynchronous: true
+                    cache: true
+                    fillMode: Image.PreserveAspectCrop
+                    sourceSize.width: 160
+                    sourceSize.height: 160
+                  }
+                  Text {
+                    anchors.centerIn: parent
+                    visible: modelData.kind !== "image"
+                    text: modelData.isDir ? "" : (modelData.kind === "video" ? "󰕧" : modelData.kind === "audio" ? "󰎈" : modelData.kind === "doc" ? "󰈙" : "󰈔")
+                    textFormat: Text.PlainText
+                    color: modelData.isDir ? Color.accent : Util.alpha(Color.popups.text, 0.8)
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.displayLarge
+                  }
+                }
+                Text {
+                  Layout.fillWidth: true
+                  text: modelData.name + (modelData.isDir ? "/" : "")
+                  textFormat: Text.PlainText
+                  elide: Text.ElideMiddle
+                  horizontalAlignment: Text.AlignHCenter
+                  color: Color.popups.text
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                }
+              }
+              MouseArea { id: tileHover; anchors.fill: parent; hoverEnabled: true; onClicked: view.chooseRow(modelData) }
+            }
+          }
         }
       }
     }

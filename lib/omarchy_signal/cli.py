@@ -90,6 +90,29 @@ def cmd_react(args) -> int:
     return _run(go)
 
 
+def cmd_ls_files(args) -> int:
+    """JSON listing of one directory for the window's attachment picker:
+    folders first, then files newest first; hidden entries skipped."""
+    import json as _json
+    from .pathcomplete import Candidate, complete
+    directory = os.path.expanduser(args.dir or "~")
+    if not os.path.isdir(directory):
+        print("[]")
+        return 1
+    _, cands = complete(directory.rstrip("/") + "/", limit=2000)
+    rows = []
+    for c in cands:
+        try:
+            st = os.stat(c.path)
+        except OSError:
+            continue
+        rows.append({"name": c.name.rstrip("/"), "path": c.path, "isDir": c.is_dir, "kind": c.kind,
+                     "size": 0 if c.is_dir else st.st_size, "mtime": int(st.st_mtime)})
+    rows.sort(key=lambda r: (0 if r["isDir"] else 1, r["name"].lower() if r["isDir"] else -r["mtime"]))
+    _print_json({"dir": directory, "parent": os.path.dirname(directory.rstrip("/")) or "/", "rows": rows[:500]})
+    return 0
+
+
 def cmd_pick_file(args) -> int:
     """Print one file chosen with Omarchy's file menu (used by the shell windows)."""
     dirs = [d for d in (args.dirs or []) if os.path.isdir(d)] or [os.path.expanduser("~")]
@@ -610,6 +633,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--width", type=int, default=720)
     s.add_argument("--height", type=int, default=640)
     s.set_defaults(fn=cmd_float_window)
+
+    s = sub.add_parser("ls-files", help=argparse.SUPPRESS)
+    s.add_argument("dir", nargs="?")
+    s.set_defaults(fn=cmd_ls_files)
 
     s = sub.add_parser("pick-file", help=argparse.SUPPRESS)
     s.add_argument("dirs", nargs="*")

@@ -144,6 +144,7 @@ class App:
         self.typing: dict[str, tuple[str, float]] = {}
         self.images: dict[str, ImageSlot] = {}
         self.placed: dict[int, tuple[int, int, int, int]] = {}   # image id -> (row, col, cols, rows) currently on screen
+        self.preview: tuple[int, int, int, int, int] | None = None   # (image_id, row, col, cols, rows) for the attach prompt
         self.reset_images = False
         self.graphics = False
         self.dirty = True
@@ -1685,6 +1686,7 @@ class App:
             for slot in self.images.values():
                 slot.transmitted = False
             self.reset_images = False
+        self.preview = self._attach_preview() if self.graphics and self.overlay in ("attach", "saveas") else None
         out.append(self._draw_header())
         out.append(self._draw_list())
         out.append(self._draw_messages())
@@ -2071,6 +2073,9 @@ class App:
         wanted: dict[int, tuple[int, int, int, int]] = {}
         for y, col, (image_id, cols, irows) in placements:
             wanted[image_id] = (y, col, cols, irows)
+        if self.preview:
+            pid, prow, pcol, pcols, prows = self.preview
+            wanted[pid] = (prow, pcol, pcols, prows)
         if self.graphics:
             # Images that scrolled away or were hidden: drop their placement.
             # Some terminals also free the data then, so mark them for a fresh
@@ -2186,11 +2191,12 @@ class App:
         line = (T.fg(th.dim) + "  ").join(parts)
         return T.move(t.rows, 1) + T.bg(th.panel) + " " * usable + T.move(t.rows, 2) + T.bg(th.panel) + line + T.RESET
 
-    def _draw_overlay(self) -> str:
+    def _overlay_box(self) -> tuple[int, int, int, int]:
+        """(top, left, w, h) of the overlay card, shared with the image preview."""
         assert self.term
-        t, th = self.term, self.theme
+        t = self.term
         name = self.overlay
-        w = min(t.cols - 6, 84 if self.overlay == "settings" else 72)
+        w = min(t.cols - 6, 84 if name == "settings" else 72)
         rows_needed = {"contacts": min(t.rows - 6, 20), "search": min(t.rows - 6, 18), "help": 20, "link": min(t.rows - 4, 32),
                        "quit": 5, "attach": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
                        "saveas": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
@@ -2200,9 +2206,46 @@ class App:
                        "info": min(t.rows - 4, len(self.info_lines) + 5), "prompt": 6,
                        "members": min(t.rows - 6, 20), "forward": min(t.rows - 6, 20),
                        "setting-text": min(t.rows - 6, 5 + min(10, len(self.overlay_results)))}.get(name, 8)
+        if name in ("attach", "saveas") and self.graphics:
+            rows_needed = max(rows_needed, 13)   # room for a thumbnail beside the list
         h = min(t.rows - 4, rows_needed)
         top = max(2, (t.rows - h) // 2)
         left = max(2, (t.cols - w) // 2)
+        return top, left, w, h
+
+    def _attach_preview(self) -> tuple[int, int, int, int, int] | None:
+        """Thumbnail box for the highlighted image candidate in the attach prompt."""
+        if not self.overlay_results or not self.term:
+            return None
+        cand = self.overlay_results[min(self.overlay_index, len(self.overlay_results) - 1)]
+        if getattr(cand, "kind", "") != "image":
+            return None
+        info = kitty.probe_dimensions(Path(cand.path))
+        if not info or not info.width:
+            return None
+        top, left, w, h = self._overlay_box()
+        box_cols, box_rows = 24, max(4, h - 5)
+        cols, rows = kitty.fit_cells(info.width, info.height, max_cols=box_cols, max_rows=box_rows,
+                                     cell_w=self.term.cell_w, cell_h=self.term.cell_h)
+        image_id = kitty.image_id_for(cand.path)
+        if cand.path not in self.images:
+            self.images[cand.path] = ImageSlot(cand.path, image_id, cols, rows)
+        return image_id, top + 3, left + w - box_cols - 2, cols, rows
+
+    def _draw_overlay(self) -> str:
+        assert self.term
+        t, th = self.term, self.theme
+        name = self.overlay
+        top, left, w, h = self._overlay_box()
+        _unused = {"contacts": min(t.rows - 6, 20), "search": min(t.rows - 6, 18), "help": 20, "link": min(t.rows - 4, 32),
+                       "quit": 5, "attach": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
+                       "saveas": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
+                       "react": 6, "attachment": min(t.rows - 6, 9 + min(10, len(self.att_items))),
+                       "settings": min(t.rows - 4, len(SETTINGS) + len({x["section"] for x in SETTINGS}) * 2 + 5),
+                       "pick": min(t.rows - 4, 6 + min(14, len(self.pick_items))), "convmenu": len(self.menu_items) + 5,
+                       "info": min(t.rows - 4, len(self.info_lines) + 5), "prompt": 6,
+                       "members": min(t.rows - 6, 20), "forward": min(t.rows - 6, 20),
+                       "setting-text": min(t.rows - 6, 5 + min(10, len(self.overlay_results)))}
         out = []
         bg = T.bg(th.panel)
         for i in range(h):
@@ -2310,6 +2353,8 @@ class App:
                 style = T.bg(th.selection) + T.fg(th.bright_foreground) if selected else bg + T.fg(th.foreground)
                 if name in ("attach", "saveas"):
                     cand = item
+                    if self.preview:
+                        body_w = w - 4 - 26   # leave the right side for the thumbnail
                     color = th.accent if cand.is_dir else (th.cyan if cand.kind == "image" else th.foreground)
                     right = ""
                     if not cand.is_dir:

@@ -60,5 +60,26 @@ class PathCompleteTests(unittest.TestCase):
         self.assertEqual(pc.split_query("~/"), (Path.home(), ""))
 
 
+class LsFilesTests(unittest.TestCase):
+    def test_json_listing(self):
+        import json, subprocess, sys
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "b.txt").write_bytes(b"x")
+            (root / "a.png").write_bytes(b"\x89PNG")
+            (root / ".hidden").write_bytes(b"x")
+            (root / "Sub").mkdir()
+            out = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[2] / "bin" / "omarchy-signal"), "ls-files", "--", d],
+                                 capture_output=True, text=True, check=True).stdout
+            data = json.loads(out)
+            self.assertEqual(data["dir"], d)
+            names = [r["name"] for r in data["rows"]]
+            self.assertEqual(names[0], "Sub")
+            self.assertNotIn(".hidden", names)
+            self.assertEqual({r["name"]: r["kind"] for r in data["rows"]}["a.png"], "image")
+            self.assertTrue(all(r["path"].startswith("/") for r in data["rows"]))
+
+
 if __name__ == "__main__":
     unittest.main()
