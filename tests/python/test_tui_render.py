@@ -298,7 +298,6 @@ class EmojiPickerTests(unittest.TestCase):
             self.assertTrue(app.emoji_suggestions)
             await app.handle_key(Key("enter"))
             self.assertEqual(app.composer.text, "hi 😄 👍 👍")
-            await app.handle_key(Key("escape"))
             # unknown code stays literal and shows no picker after a space
             for ch in " :zzzzq: x":
                 await app.handle_key(Key("char", char=ch))
