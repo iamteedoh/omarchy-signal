@@ -211,6 +211,20 @@ class RenderTests(unittest.TestCase):
         # 84 x's fill the first line; the second holds the remaining 16 plus " tail" (21 columns).
         self.assertIn(f"\x1b[38;{tui.LIST_WIDTH + 4 + 21}H\x1b[5 q", app.term.text())
 
+    def test_outgoing_bubble_wraps_as_one_block(self):
+        app = make_app(cols=120, rows=40)
+        seed(app)
+        key = app.active_key
+        app.messages[key] = [{"conversation": key, "ts": 1700000050000, "sender": "number:+15550001111", "senderName": "You",
+                              "outgoing": True, "body": "Oh, and I'm just testing signal from the command line. If you do get this, send me a picture. Any picture is fine. I want to see if it shows up",
+                              "attachments": [], "status": "read", "reactions": {}}]
+        app.draw()
+        out = app.term.text()
+        cols = [int(m.group(1)) for m in re.finditer(r"\x1b\[\d+;(\d+)H\x1b\[38;2;\d+;\d+;\d+m▏", out)]
+        self.assertGreaterEqual(len(cols), 2, "expected a wrapped bubble")
+        self.assertEqual(len(set(cols)), 1, f"bubble lines start at different columns: {cols}")
+        self.assertGreater(cols[0], tui.LIST_WIDTH + 10)   # still on the right-hand side
+
     def test_mouse_selects_conversation(self):
         app = make_app()
         seed(app)

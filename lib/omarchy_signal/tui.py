@@ -1105,6 +1105,15 @@ class App:
             out.append(Line(T.fg(th.yellow) + "  " + text + T.RESET, str_width(text) + 2, right=outgoing))
         if m.get("expiresIn"):
             out.append(Line(T.fg(th.dim) + f"  ⏱ {self._fmt_duration(m['expiresIn'])}" + T.RESET, 12, right=outgoing))
+        if outgoing and len(out) > 1:
+            # Right-aligned bubbles move as one block: every line below the
+            # header is padded to the widest line, so the border bar forms a
+            # straight edge and wrapped text stays left-aligned inside it.
+            block_w = max(line.width for line in out[1:])
+            for line in out[1:]:
+                if line.width < block_w:
+                    line.text += " " * (block_w - line.width)
+                    line.width = block_w
         return out
 
     @staticmethod
