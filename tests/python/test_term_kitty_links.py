@@ -130,6 +130,7 @@ class KittyTests(unittest.TestCase):
         self.assertIn("m=0", seq.split("\x1b_G")[-1])
         self.assertEqual(kitty.encode_place(7, cols=3, rows=2), "\x1b_Ga=p,i=7,p=1,c=3,r=2,C=1,q=2\x1b\\")
         self.assertRaises(ValueError, kitty.encode_transmit, b"", 0, cols=1, rows=1)
+        self.assertEqual(kitty.encode_delete(7), "\x1b_Ga=d,d=i,i=7,q=2\x1b\\")
 
     def test_fit_cells(self):
         self.assertEqual(kitty.fit_cells(1000, 500, max_cols=40, max_rows=10, cell_w=10, cell_h=20), (40, 10))

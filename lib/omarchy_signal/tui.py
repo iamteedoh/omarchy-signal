@@ -128,6 +128,8 @@ class App:
         self.toast_until = 0.0
         self.typing: dict[str, tuple[str, float]] = {}
         self.images: dict[str, ImageSlot] = {}
+        self.placed: dict[int, tuple[int, int, int, int]] = {}   # image id -> (row, col, cols, rows) currently on screen
+        self.reset_images = False
         self.graphics = False
         self.dirty = True
         self.running = True
@@ -243,7 +245,9 @@ class App:
     def _resized(self) -> None:
         if self.term:
             self.term.measure()
-        self.images.clear() if not self.graphics else None
+        # Cell geometry changed: recompute every image box and re-place.
+        self.images.clear()
+        self.reset_images = True
         self.dirty = True
 
     def _on_input(self) -> None:
@@ -624,8 +628,7 @@ class App:
             return
         if key.ctrl and key.char == "l":
             self.images.clear()
-            if self.graphics and self.term:
-                self.term.write(kitty.encode_delete_all())
+            self.reset_images = True
             self.dirty = True
             return
         if self.overlay:
@@ -1171,8 +1174,10 @@ class App:
             t.flush()
             return
         out = ["\x1b[?2026h", T.bg(th.background), T.CLEAR]
-        if self.graphics:
-            out.append(kitty.encode_delete_placements())
+        if self.graphics and self.reset_images:
+            out.append(kitty.encode_delete_all())
+            self.placed.clear()
+            self.reset_images = False
         out.append(self._draw_header())
         out.append(self._draw_list())
         out.append(self._draw_messages())
@@ -1375,19 +1380,19 @@ class App:
                   + ("  " + T.fg(tick_color) + tick + T.RESET if tick else ""))
         header_w = str_width(who) + 3 + str_width(self._fmt_time(m.get("ts", 0))) + (10 if m.get("edited") else 0) + (2 + str_width(tick) if tick else 0)
         out.append(Line(header, header_w, right=align_right))
-        border = T.fg(mix(hue, th.background, 0.55))
+        indent = "  "
         if m.get("deleted"):
-            out.append(Line(border + "▏" + T.RESET + " " + T.fg(th.dim) + T.ITALIC + "message deleted" + T.RESET, 17, right=align_right))
+            out.append(Line(indent + T.fg(th.dim) + T.ITALIC + "message deleted" + T.RESET, 17, right=align_right))
             return out
         if m.get("quoteText"):
             q = truncate(clean_text(m["quoteText"], single_line=True), bubble_w - 4)
-            out.append(Line(border + "┃ " + T.fg(th.dim) + T.ITALIC + q + T.RESET, str_width(q) + 2, right=align_right))
+            out.append(Line(indent + T.fg(th.dim) + T.ITALIC + "↩ " + q + T.RESET, str_width(q) + 4, right=align_right))
         body = clean_text(m.get("body", ""))
         if body:
             for raw in wrap(body, bubble_w - 2):
-                out.append(Line(border + "▏" + T.RESET + " " + self._linkify(raw) + T.RESET, str_width(raw) + 2, right=align_right))
+                out.append(Line(indent + self._linkify(raw) + T.RESET, str_width(raw) + 2, right=align_right))
         for a in m.get("attachments", [])[:8]:
-            out.extend(self._render_attachment(a, bubble_w, right=align_right, border=border))
+            out.extend(self._render_attachment(a, bubble_w, right=align_right, indent=indent))
         reactions = m.get("reactions") or {}
         if reactions:
             counts: dict[str, int] = {}
@@ -1451,7 +1456,7 @@ class App:
             self.hidden.discard(path)
         self.dirty = True
 
-    def _render_attachment(self, a: dict, bubble_w: int, *, right: bool, border: str) -> list[Line]:
+    def _render_attachment(self, a: dict, bubble_w: int, *, right: bool, indent: str = "  ") -> list[Line]:
         th = self.theme
         ctype = str(a.get("contentType", ""))
         name = clean_name(a.get("filename", "")) or "attachment"
@@ -1467,15 +1472,15 @@ class App:
             slot = self._image_slot(path, bubble_w)
             if slot and not slot.failed:
                 for r in range(slot.rows):
-                    out.append(Line(border + "▏" + T.RESET + " " * (slot.cols + 1), slot.cols + 2, right=right,
+                    out.append(Line(indent + " " * slot.cols, slot.cols + 2, right=right,
                                     image=(slot.image_id, slot.cols, slot.rows) if r == 0 else None))
         text = f"{icon} {truncate(label, bubble_w - 6)}"
         href = links.file_href(path) if path else None
         shown = T.fg(th.cyan) + T.UNDERLINE + links.osc8(href, text) + T.RESET if href else T.fg(th.dim) + text + T.RESET
-        out.append(Line(border + "▏" + T.RESET + " " + shown, str_width(text) + 2, right=right))
+        out.append(Line(indent + shown, str_width(text) + 2, right=right))
         if a.get("caption"):
             for raw in wrap(clean_text(a["caption"]), bubble_w - 2):
-                out.append(Line(border + "▏" + T.RESET + " " + T.fg(th.foreground) + raw + T.RESET, str_width(raw) + 2, right=right))
+                out.append(Line(indent + T.fg(th.foreground) + raw + T.RESET, str_width(raw) + 2, right=right))
         return out
 
     @staticmethod
@@ -1547,18 +1552,35 @@ class App:
             y += 1
         if self.scroll:
             out.append(T.move(top + 2, left + width - 8) + T.fg(th.accent) + f"↑ {self.scroll}" + T.RESET)
+        wanted: dict[int, tuple[int, int, int, int]] = {}
         for y, col, (image_id, cols, irows) in placements:
-            slot = next((s for s in self.images.values() if s.image_id == image_id), None)
-            if slot is None or slot.failed:
-                continue
-            if not slot.transmitted:
-                png = kitty.to_png(Path(slot.path))
-                if png is None:
-                    slot.failed = True
+            wanted[image_id] = (y, col, cols, irows)
+        if self.graphics:
+            # Images that scrolled away or were hidden: drop their placement.
+            # Some terminals also free the data then, so mark them for a fresh
+            # upload the next time they are shown.
+            for image_id in list(self.placed):
+                if image_id not in wanted:
+                    out.append(kitty.encode_delete(image_id))
+                    del self.placed[image_id]
+                    for slot in self.images.values():
+                        if slot.image_id == image_id:
+                            slot.transmitted = False
+            for image_id, (y, col, cols, irows) in wanted.items():
+                slot = next((sl for sl in self.images.values() if sl.image_id == image_id), None)
+                if slot is None or slot.failed:
                     continue
-                out.append(kitty.encode_transmit_only(png, image_id))
-                slot.transmitted = True
-            out.append(T.move(y, col) + kitty.encode_place(image_id, cols=cols, rows=irows))
+                if not slot.transmitted:
+                    png = kitty.to_png(Path(slot.path))
+                    if png is None:
+                        slot.failed = True
+                        continue
+                    out.append(kitty.encode_transmit_only(png, image_id))
+                    slot.transmitted = True
+                if self.placed.get(image_id) != (y, col, cols, irows):
+                    # Same placement id: the terminal moves the picture instead of stacking a copy.
+                    out.append(T.move(y, col) + kitty.encode_place(image_id, cols=cols, rows=irows))
+                    self.placed[image_id] = (y, col, cols, irows)
         return "".join(out)
 
     def _record_links(self, row: int, col: int, text: str) -> None:
@@ -1610,16 +1632,25 @@ class App:
     def _draw_footer(self) -> str:
         assert self.term
         t, th = self.term, self.theme
+        # Writing into the very last cell of the last row makes terminals
+        # scroll the whole screen up a line, which shifts everything above
+        # and leaves the cursor a row below the text. Stay one cell short.
+        usable = t.cols - 1
         if self.toast:
-            text = " " + truncate(self.toast, t.cols - 2) + " "
-            return T.move(t.rows, 1) + T.bg(th.accent) + T.fg(th.background) + T.BOLD + pad(text, t.cols) + T.RESET
+            text = " " + truncate(self.toast, usable - 2) + " "
+            return T.move(t.rows, 1) + T.bg(th.accent) + T.fg(th.background) + T.BOLD + pad(text, usable) + T.RESET
         hints = [("Tab", "list"), ("Ctrl-U", "contacts"), ("/", "search"), ("Ctrl-A", "attach"), ("Ctrl-R", "react"),
                  ("Ctrl-Q", "quote"), ("Ctrl-O", "open"), ("Ctrl-S", "settings"), ("?", "help"), ("Ctrl-C", "quit")]
-        parts = []
+        parts: list[str] = []
+        width = 1
         for k, v in hints:
+            piece_w = len(k) + 1 + len(v) + (2 if parts else 0)
+            if width + piece_w > usable:
+                break
             parts.append(T.fg(th.accent) + k + T.fg(th.dim) + " " + v)
+            width += piece_w
         line = (T.fg(th.dim) + "  ").join(parts)
-        return T.move(t.rows, 1) + T.bg(th.panel) + " " * t.cols + T.move(t.rows, 2) + T.bg(th.panel) + line + T.RESET
+        return T.move(t.rows, 1) + T.bg(th.panel) + " " * usable + T.move(t.rows, 2) + T.bg(th.panel) + line + T.RESET
 
     def _draw_overlay(self) -> str:
         assert self.term

@@ -221,7 +221,8 @@ class RenderTests(unittest.TestCase):
                               "attachments": [], "status": "read", "reactions": {}}]
         app.draw()
         out = app.term.text()
-        cols = [int(m.group(1)) for m in re.finditer(r"\x1b\[\d+;(\d+)H\x1b\[38;2;\d+;\d+;\d+m▏", out)]
+        body_line = re.compile(r"\x1b\[\d+;(\d+)H  \x1b\[38;2;\d+;\d+;\d+m[A-Za-z]")
+        cols = [int(m.group(1)) for m in body_line.finditer(out)]
         self.assertGreaterEqual(len(cols), 2, "expected a wrapped bubble")
         self.assertEqual(len(set(cols)), 1, f"bubble lines start at different columns: {cols}")
         self.assertGreater(cols[0], tui.LIST_WIDTH + 10)   # still on the right-hand side
@@ -229,8 +230,10 @@ class RenderTests(unittest.TestCase):
         app.cfg.message_layout = "left"
         app.term.out.clear()
         app.draw()
-        cols = [int(m.group(1)) for m in re.finditer(r"\x1b\[\d+;(\d+)H\x1b\[38;2;\d+;\d+;\d+m▏", app.term.text())]
+        cols = [int(m.group(1)) for m in body_line.finditer(app.term.text())]
+        self.assertGreaterEqual(len(cols), 2)
         self.assertEqual(set(cols), {tui.LIST_WIDTH + 3})
+        self.assertNotIn("▏", app.term.text())
 
     def test_mouse_selects_conversation(self):
         app = make_app()
@@ -265,6 +268,72 @@ class RenderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FooterAndImageLifecycleTests(unittest.TestCase):
+    def test_footer_never_touches_the_last_cell(self):
+        strip = lambda t: re.sub(r"\x1b\[[0-9;?]* ?[A-Za-z]|\x1b\][^\x07\x1b]*(\x07|\x1b\\\\)", "", t)
+        for cols in (70, 84, 100, 160):
+            for toast in (False, True):
+                app = make_app(cols=cols, rows=30)
+                seed(app)
+                if toast:
+                    app.show_toast("x" * 500)
+                app.draw()
+                out = app.term.text()
+                # Every write that starts on the last row must end before the last column.
+                for m in re.finditer(r"\x1b\[30;(\d+)H", out):
+                    col = int(m.group(1))
+                    rest = out[m.end():]
+                    nxt = re.search(r"\x1b\[\d+;\d+H|\x1b\[\?2026l", rest)
+                    segment = rest[:nxt.start()] if nxt else rest
+                    self.assertLessEqual(col - 1 + len(strip(segment)), cols - 1, (cols, toast, col))
+
+    def test_image_placement_persists_across_frames(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory(dir=Path.home()) as d:
+            img = Path(d) / "a.png"
+            img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + (64).to_bytes(4, "big") + (48).to_bytes(4, "big") + b"\x08\x06\x00\x00\x00" + b"0" * 50)
+            app = make_app(cols=120, rows=40)
+            seed(app)
+            app.graphics = True
+            key = app.active_key
+            att = {"id": "a1", "contentType": "image/png", "filename": "a.png", "size": 91, "path": str(img)}
+            app.messages[key] = [{"conversation": key, "ts": 1700000000000, "sender": "number:+15550002222", "senderName": "Trinity",
+                                  "outgoing": False, "body": "", "attachments": [att], "status": "", "reactions": {}}]
+            app.draw()
+            first = app.term.text()
+            self.assertEqual(first.count("\x1b_Ga=t,"), 1)
+            self.assertEqual(first.count("\x1b_Ga=p,"), 1)
+            self.assertNotIn("a=d,d=a", first)            # no blanket delete
+            app.term.out.clear()
+            app.draw()                                     # unchanged frame: nothing re-sent, nothing deleted
+            second = app.term.text()
+            self.assertNotIn("\x1b_Ga=t,", second)
+            self.assertNotIn("\x1b_Ga=p,", second)
+            self.assertNotIn("a=d", second)
+            # hide it: its placement is deleted, and showing again re-uploads
+            app.toggle_inline(str(img))
+            app.term.out.clear()
+            app.draw()
+            third = app.term.text()
+            self.assertIn("\x1b_Ga=d,d=i,", third)
+            self.assertNotIn("\x1b_Ga=p,", third)
+            app.toggle_inline(str(img))
+            app.term.out.clear()
+            app.draw()
+            fourth = app.term.text()
+            self.assertIn("\x1b_Ga=t,", fourth)
+            self.assertIn("\x1b_Ga=p,", fourth)
+            # never mode: no rows reserved, no placement at all
+            app.cfg.inline_images = "never"
+            app.revealed.clear(); app.hidden.clear()
+            app.term.out.clear()
+            app.draw()
+            fifth = app.term.text()
+            self.assertNotIn("\x1b_Ga=p,", fifth)
+            self.assertIn("\x1b_Ga=d,d=i,", fifth)
 
 
 class SettingsOverlayTests(unittest.TestCase):

@@ -223,7 +223,8 @@ def encode_delete_placements() -> str:
 
 
 def encode_delete(image_id: int) -> str:
-    return f"\x1b_Ga=d,d=I,i={image_id},q=2\x1b\\"
+    """Remove the placements of one image (its data may stay cached)."""
+    return f"\x1b_Ga=d,d=i,i={image_id},q=2\x1b\\"
 
 
 def encode_delete_all() -> str:
