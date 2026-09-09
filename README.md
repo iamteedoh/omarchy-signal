@@ -24,13 +24,12 @@ Omarchy theme.
 
 ## Tour
 
-![Twenty seconds of the terminal client: a message arrives with a popup, a reply with an emoji shortcode, an attachment with a thumbnail](docs/media/demo.webp)
+![The full demo: a message arrives with a popup, a reply with an emoji shortcode, an attachment with a thumbnail, settings, the contact picker, the chat window and the reply dialog](docs/media/demo.webp)
 
-The full 76-second walkthrough with sound off is
-[`docs/media/demo.mp4`](docs/media/demo.mp4) (terminal client, popups, attach
-picker, settings, contact picker, chat window, reply dialog). It was recorded
-against the fake `signal-cli` in `scripts/demo-env.sh`, so every contact and
-message in it is fictional.
+The same 76-second walkthrough as a video file:
+[`docs/media/demo.mp4`](docs/media/demo.mp4). It was recorded against the
+fake `signal-cli` in `scripts/demo-env.sh`, so every contact and message in
+it is fictional.
 
 | | |
 |---|---|
@@ -119,9 +118,32 @@ keybindings and the menu row, enables the bar widget, installs a post-update
 check, and restarts the shell so the notification service picks up new code.
 `./uninstall.sh` reverses all of it (`--purge` also deletes history), and
 `omarchy plugin remove iamteedoh.signal` drops the plugin folder.
-`omarchy plugin add https://github.com/iamteedoh/omarchy-signal` works too;
-then run `install.sh` from the plugin directory for the CLI, service and
-keybindings.
+
+### From the plugin marketplace
+
+The standard Omarchy way works as well:
+
+```bash
+omarchy plugin add https://github.com/iamteedoh/omarchy-signal --enable
+```
+
+That clones the plugin into `~/.config/omarchy/plugins/iamteedoh.signal` and
+turns on the bar widget and the notification service. Because this plugin
+also needs a command line tool and a background service, a **"Signal: finish
+setup"** popup appears at that point; click it (or run
+`~/.config/omarchy/plugins/iamteedoh.signal/install.sh` yourself) and the
+installer completes the rest in a terminal, asking before it installs any
+package. Then `omarchy-signal link`.
+
+### Updating
+
+```bash
+omarchy plugin update iamteedoh.signal      # pulls the new code
+~/.config/omarchy/plugins/iamteedoh.signal/install.sh   # restarts the bridge and shell with it
+omarchy-signal doctor
+```
+
+(For a `git clone` install, `git pull` in the checkout and `./install.sh`.)
 
 ### Dependencies and permissions
 
