@@ -83,6 +83,19 @@ The PR title becomes the squash commit subject and drives release-please:
 `fix:` creates a patch release, `feat:` creates a minor release, and a `!` or
 `BREAKING CHANGE:` footer creates a breaking release.
 
+## Releases
+
+release-please watches `main`. After a `feat:` or `fix:` lands it opens (or
+updates) a PR titled `chore(main): release X.Y.Z` that bumps `version` in
+`manifest.json`, updates `CHANGELOG.md` and `.release-please-manifest.json`.
+Merging that PR creates the `vX.Y.Z` tag and the GitHub Release.
+
+GitHub does not run workflows on pull requests opened by the Actions token,
+so a fresh release PR shows no checks and the protected branch refuses it.
+Close and reopen it (`gh pr close N && gh pr reopen N`); CI then runs and the
+PR becomes mergeable. Nothing is built or uploaded: users install from the
+repository with `omarchy plugin add`, which clones the current `main`.
+
 ## License
 
 By contributing, you agree that your contributions are licensed under the
