@@ -299,9 +299,14 @@ make security      # the adversarial subset: terminal injection, path traversal,
 
 ## Status
 
-Works against a real account (linking, sending, receiving, attachments,
-receipts, reactions). Not listed on plugins.omarchy.org yet. See
-[`docs/STATUS.md`](docs/STATUS.md) for known issues.
+Released: the current version is on the
+[Releases](https://github.com/iamteedoh/omarchy-signal/releases) page and in
+`manifest.json`. It runs daily against a real account (linking, sending,
+receiving, attachments, receipts, reactions, the popups and the chat
+window). Install from this repository with `omarchy plugin add` or
+`git clone` as described above; a listing on plugins.omarchy.org is
+planned. Known issues live in [`docs/STATUS.md`](docs/STATUS.md); bugs and
+ideas go in the [issues](https://github.com/iamteedoh/omarchy-signal/issues).
 
 ## Contributing
 
