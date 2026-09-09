@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """A stand-in for ``signal-cli jsonRpc`` used by the integration tests.
 
 It speaks the same line-JSON-RPC dialect, answers the handful of methods the

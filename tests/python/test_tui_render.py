@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Headless rendering tests for the terminal client.
 
 A fake Terminal captures the byte stream; we assert the screen is drawn

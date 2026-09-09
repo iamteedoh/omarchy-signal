@@ -1,4 +1,4 @@
-# Status — 2026-09-08
+# Status (2026-09-08)
 
 ## Verified on this machine (real account)
 

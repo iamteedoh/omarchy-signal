@@ -1,0 +1,11 @@
+---
+## Author: Tito Valentin
+## Name of Program: omarchy-signal yamllint Configuration
+## Date Created: 2026-09-08
+## Description: Repo yamllint rules: default profile, long lines allowed.
+extends: default
+
+rules:
+  line-length: disable
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no']

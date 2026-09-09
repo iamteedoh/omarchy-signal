@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """QR code rendering for device linking.
 
 Two paths: a small image over the kitty graphics protocol when the terminal

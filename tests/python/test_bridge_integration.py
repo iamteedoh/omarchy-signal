@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """End-to-end: real Bridge + real Store + real socket server, fake signal-cli."""
 
 import asyncio

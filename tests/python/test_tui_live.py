@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The terminal client driven end to end against the real bridge (fake signal-cli)."""
 
 import asyncio

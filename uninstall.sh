@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Remove omarchy-signal. Keeps signal-cli's account data and your message
 # history unless --purge is given.
 set -euo pipefail

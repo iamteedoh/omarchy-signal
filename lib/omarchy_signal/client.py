@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Asyncio client for the bridge socket, used by the CLI, the TUI and the
 ``events`` stream the Quickshell plugin consumes."""
 

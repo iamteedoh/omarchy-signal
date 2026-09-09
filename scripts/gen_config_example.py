@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Regenerate docs/config.example.toml from the settings schema, so the
 example can never drift from the keys the code understands."""
 import os

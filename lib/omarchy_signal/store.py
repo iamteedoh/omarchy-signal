@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Local message history and contact cache (SQLite, owner-only permissions).
 
 Signal has no server-side history and ``signal-cli`` keeps none, so the bridge

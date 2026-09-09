@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Start a self-contained DEMO of omarchy-signal: a bridge backed by the test
 # suite's fake signal-cli, with fictional contacts and a seeded conversation,
 # in private XDG directories. Nothing here touches the real account, history

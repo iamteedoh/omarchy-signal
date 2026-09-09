@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Filesystem completion for the attach prompt.
 
 Given whatever the user has typed so far, return the directory being browsed

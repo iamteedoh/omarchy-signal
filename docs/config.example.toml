@@ -1,4 +1,4 @@
-# omarchy-signal configuration — edited by `omarchy-signal settings` and the client's settings screen.
+# omarchy-signal configuration, edited by `omarchy-signal settings` and the client's settings screen.
 # Live keys apply immediately; keys marked (restart) need: systemctl --user restart omarchy-signal
 
 account = ""   # E.164 of the account to use; empty = first linked (restart)

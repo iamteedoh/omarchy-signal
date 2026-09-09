@@ -1,4 +1,33 @@
-# Security
+# Security Policy
+
+## Reporting a vulnerability
+
+**Do not report security vulnerabilities through public GitHub issues.**
+
+Use GitHub's private vulnerability reporting instead:
+
+1. Open the repository's **Security** tab.
+2. Select **Report a vulnerability**.
+3. Provide the details requested below.
+
+If private reporting is unavailable, contact the maintainer through the
+[iamteedoh GitHub profile](https://github.com/iamteedoh).
+
+### What to include
+
+- A description of the issue and its potential impact
+- Reproduction steps or a minimal proof of concept (a crafted message,
+  contact name, attachment or socket request is ideal)
+- The affected release, commit, Omarchy version and terminal
+- A suggested remediation, if known
+
+Never include live tokens, your `signal-cli` data directory, message
+history, phone numbers or unredacted logs in a report.
+
+### Supported versions
+
+Security fixes land on `main` and ship in the next tagged release. Test
+against the latest release or `main` before reporting an issue.
 
 ## What this project is, cryptographically
 

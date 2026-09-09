@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """``omarchy-signal`` command line entry point."""
 
 from __future__ import annotations
@@ -283,7 +284,7 @@ def cmd_status(args) -> int:
             return 0
         print(f"bridge      : running (v{status['version']}, up {status['uptime']}s)")
         print(f"signal-cli  : {'connected' if status['connected'] else 'not running'}")
-        print(f"account     : {'linked' if status['linked'] else 'NOT LINKED — run `omarchy-signal link`'}")
+        print(f"account     : {'linked' if status['linked'] else 'NOT LINKED, run `omarchy-signal link`'}")
         print(f"unread      : {status['unread']}")
         print(f"history     : {'on' if status['historyEnabled'] else 'off'}")
         print(f"notifications: {status['notifications']}")

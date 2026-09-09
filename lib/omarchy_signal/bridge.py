@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The bridge daemon: supervises ``signal-cli``, records history, serves clients.
 
 Run with ``omarchy-signal bridge`` (normally from the ``omarchy-signal``

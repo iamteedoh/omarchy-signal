@@ -4,9 +4,12 @@
   "name": "Signal",
   "version": "0.1.0",
   "author": "iamteedoh",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "description": "Signal messenger: terminal client, popup notifications you can answer in place, and a bar widget with unread count",
-  "kinds": ["bar-widget", "service"],
+  "kinds": [
+    "bar-widget",
+    "service"
+  ],
   "keepLoaded": true,
   "entryPoints": {
     "barWidget": "BarWidget.qml",
@@ -22,7 +25,11 @@
       "hideWhenZero": false
     },
     "schema": [
-      { "key": "hideWhenZero", "type": "boolean", "label": "Hide the icon when there is nothing unread" }
+      {
+        "key": "hideWhenZero",
+        "type": "boolean",
+        "label": "Hide the icon when there is nothing unread"
+      }
     ]
   }
 }

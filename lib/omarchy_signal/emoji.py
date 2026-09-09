@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Emoji shortcodes (``:smile:`` → 😄), GitHub/Slack style.
 
 A curated table rather than the full Unicode list: the names people actually

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """JSON-RPC 2.0 over a line-oriented byte stream (signal-cli ``jsonRpc`` mode).
 
 The client is transport agnostic: it is fed an ``asyncio.StreamReader`` and a

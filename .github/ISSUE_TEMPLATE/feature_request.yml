@@ -1,0 +1,32 @@
+---
+name: Feature request
+description: Suggest an omarchy-signal improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What is hard or missing today, in the terminal client, the popups, the chat window or the command line?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the desired behavior and the affected component. If Signal Desktop does it, say how.
+    validations:
+      required: true
+
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety considerations
+      description: Note anything that handles remote-controlled data (message text, names, attachments), needs new permissions, or changes what is stored on disk.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe other approaches or workarounds you considered.

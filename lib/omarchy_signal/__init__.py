@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """omarchy-signal: a Signal messenger client for the Omarchy desktop.
 
 The package is split into three layers that never share process state:

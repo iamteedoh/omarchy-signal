@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Clickable links (OSC 8) and URL detection for terminal output.
 
 Only ``http``, ``https`` and ``mailto`` URLs found in message text become

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Wire format between the bridge and its local clients (TUI, CLI, Quickshell).
 
 Newline-delimited JSON over a Unix socket. Requests carry an ``id`` and an

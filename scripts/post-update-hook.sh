@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Omarchy post-update hook: after `omarchy update`, make sure the Signal plugin
 # still loads and its service is still enabled; tell the user if not.
 # Installed to ~/.config/omarchy/hooks/post-update.d/ by install.sh.
@@ -34,7 +35,7 @@ if ((${#problems[@]})); then
   msg=$(IFS='; '; echo "${problems[*]}")
   echo "omarchy-signal: $msg" >&2
   command -v omarchy-notification-send >/dev/null && omarchy-notification-send --app-name Signal -g "󰭹" -u critical \
-    "Signal plugin needs attention after the update" "$msg — run: omarchy-signal doctor"
+    "Signal plugin needs attention after the update" "$msg. Run: omarchy-signal doctor"
   exit 1
 fi
 echo "omarchy-signal: plugin and service OK after update"

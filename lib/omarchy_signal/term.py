@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Minimal terminal driver: raw mode, alternate screen, key decoding, cell
 widths. Stdlib only; no curses, so the output stream stays under our control
 (which matters for the graphics protocol and for guaranteeing that nothing

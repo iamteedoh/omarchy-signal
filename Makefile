@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 .PHONY: test security qml python bash validate install dev
 
 PY := python3

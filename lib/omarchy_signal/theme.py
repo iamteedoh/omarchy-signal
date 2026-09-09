@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Omarchy theme integration for the terminal client.
 
 Omarchy writes the active theme to ``~/.local/state/omarchy/current/theme/``.

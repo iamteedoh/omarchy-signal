@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Pure helpers shared by Service.qml and BarWidget.qml. No Qt imports and no
 // .pragma library (node would choke on it), so the
 // same file runs under node for the unit tests (see tests/qml).

@@ -1,0 +1,73 @@
+---
+name: Bug report
+description: Report a reproducible omarchy-signal problem
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Do not paste phone numbers, message
+        contents, your signal-cli data directory, tokens, or other private
+        details from your machine.
+
+  - type: input
+    id: version
+    attributes:
+      label: omarchy-signal version
+      description: Provide a release tag or commit SHA (`omarchy-signal status` prints the bridge version).
+      placeholder: v0.1.0 or 0123456
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Terminal client (omarchy-signal tui)
+        - Popup notifications / reply dialog (Service.qml)
+        - Chat window (ConversationView.qml)
+        - Bar widget / conversation list (BarWidget.qml)
+        - Bridge service (systemd unit, signal-cli supervision)
+        - Command line (send, react, history, link, doctor)
+        - Installer / uninstaller / post-update hook
+        - Settings or configuration
+        - CI or release automation
+        - Documentation
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Omarchy version, terminal (Ghostty / kitty / WezTerm / other), signal-cli version. Redact private details.
+      placeholder: Omarchy 4.0.2, Ghostty 1.2, signal-cli 0.14.6
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the observed and expected behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run ...
+        2. Observe ...
+        3. Expected ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant redacted output
+      description: "`omarchy-signal doctor` and `journalctl --user -u omarchy-signal -n 50` are the most useful. Remove names, numbers and message text before pasting."
+      render: shell

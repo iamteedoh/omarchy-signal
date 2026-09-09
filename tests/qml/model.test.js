@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Run with: node --test tests/qml
 const test = require("node:test")
 const assert = require("node:assert/strict")

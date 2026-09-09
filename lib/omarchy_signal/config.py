@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Paths and user configuration.
 
 Configuration is a small TOML file at ``$XDG_CONFIG_HOME/omarchy-signal/config.toml``.
@@ -280,7 +281,7 @@ def save_config(cfg: Config, paths: Paths | None = None) -> Path:
     first, hand-written comments do not."""
     import os
     paths = paths or Paths()
-    lines = ["# omarchy-signal configuration — edited by `omarchy-signal settings` and the client's settings screen.",
+    lines = ["# omarchy-signal configuration, edited by `omarchy-signal settings` and the client's settings screen.",
              "# Live keys apply immediately; keys marked (restart) need: systemctl --user restart omarchy-signal", ""]
     lines += ["account = " + _toml_value(cfg.account) + "   # E.164 of the account to use; empty = first linked (restart)",
               "signal_cli = " + _toml_value(cfg.signal_cli) + "   # (restart)",

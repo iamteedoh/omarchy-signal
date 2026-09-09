@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Kitty graphics protocol: show images inline in terminals that support it
 (kitty, Ghostty, WezTerm, Konsole, ...).
 

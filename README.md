@@ -101,9 +101,25 @@ omarchy-signal tui
 installs and (re)starts the `omarchy-signal` user service, adds the
 keybindings and the menu row, enables the bar widget, installs a post-update
 check, and restarts the shell so the notification service picks up new code.
-`./uninstall.sh` reverses all of it (`--purge` also deletes history). Once the
-repo is public, `omarchy plugin add <git-url>` works too; then run
-`install.sh` from the plugin directory for the CLI, service and keybindings.
+`./uninstall.sh` reverses all of it (`--purge` also deletes history), and
+`omarchy plugin remove iamteedoh.signal` drops the plugin folder.
+`omarchy plugin add https://github.com/iamteedoh/omarchy-signal` works too;
+then run `install.sh` from the plugin directory for the CLI, service and
+keybindings.
+
+### Dependencies and permissions
+
+External programs: `signal-cli` (AUR `signal-cli-native-bin`; holds the
+account keys and does every cryptographic operation), `qrencode` (linking
+QR), ImageMagick (image conversion), and optionally `wl-copy`, `pw-play` and
+`xdg-open`. The installer asks before installing any of them; package
+installation is the only step that touches the system outside your home
+directory, and it goes through `omarchy-pkg-add` (or `pacman` with `sudo`
+when that helper is missing). Everything else, including the user-level
+systemd service, lives under `$HOME`, `$XDG_RUNTIME_DIR` and
+`~/.config/omarchy`. The plugin never overwrites your `shell.json`,
+bindings or menu files; it appends clearly marked blocks that
+`uninstall.sh` removes again.
 
 ## Keyboard shortcuts
 
@@ -224,8 +240,9 @@ resets `shell.json` (dropping the bar widget); re-run `./install.sh` after it.
 
 ## Security
 
-See [SECURITY.md](SECURITY.md) for the threat model, what is and is not
-protected, and how to report a problem. Short version: end-to-end encryption
+To report a vulnerability privately, follow [SECURITY.md](SECURITY.md); please
+do not open public issues for security problems. The same file has the threat
+model and what is and is not protected. Short version: end-to-end encryption
 is `libsignal`'s, untouched; this project's job is to never let a message
 from a stranger do anything to your terminal, your shell or your files.
 
@@ -238,10 +255,18 @@ make security      # the adversarial subset: terminal injection, path traversal,
 
 ## Status
 
-Works against a real account on this machine (linking, sending, receiving,
-attachments, receipts). Private for now; not on plugins.omarchy.org yet.
-See [`docs/STATUS.md`](docs/STATUS.md) for known issues.
+Works against a real account (linking, sending, receiving, attachments,
+receipts, reactions). Not listed on plugins.omarchy.org yet. See
+[`docs/STATUS.md`](docs/STATUS.md) for known issues.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for local
+setup, the validation suite, and the pull request process.
 
 ## License
 
-MIT.
+GNU General Public License v3.0 or later. See [LICENSE](LICENSE).
+Every source file carries an `SPDX-License-Identifier: GPL-3.0-or-later`
+header. `signal-cli` (GPL-3.0) and Quickshell are separate programs this
+plugin talks to; they are not bundled.

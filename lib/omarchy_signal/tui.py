@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The terminal client.
 
 A single-screen, keyboard-first messenger drawn with raw escape sequences on

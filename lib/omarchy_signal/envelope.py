@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Normalise ``signal-cli`` receive envelopes into plain, sanitised records.
 
 ``signal-cli`` emits one ``receive`` notification per envelope. The envelope is

@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Load the plugin's QML in a throwaway Quickshell instance (with the Omarchy
 # shell's qs.Commons / qs.Ui modules) and fail if Service.qml does not load.
 # install.sh runs this before copying anything into the live shell.

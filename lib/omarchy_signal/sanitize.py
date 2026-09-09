@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Input hardening for everything that crosses a trust boundary.
 
 Two boundaries matter:

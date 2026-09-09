@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Record a showcase video and screenshots of omarchy-signal on an empty
 # workspace, using fictional contacts (the test suite's fake signal-cli).
 #

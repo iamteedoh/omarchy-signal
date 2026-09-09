@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Install omarchy-signal on this machine.
 #
 #   ./install.sh            # copy the plugin into ~/.config/omarchy/plugins, link the CLI, enable the service
