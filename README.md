@@ -22,6 +22,22 @@ Omarchy theme.
  Tab list  Ctrl-U contacts  / search  Ctrl-A attach  Ctrl-G message  Ctrl-T chat
 ```
 
+## Tour
+
+![Twenty seconds of the terminal client: a message arrives with a popup, a reply with an emoji shortcode, an attachment with a thumbnail](docs/media/demo.webp)
+
+The full 76-second walkthrough with sound off is
+[`docs/media/demo.mp4`](docs/media/demo.mp4) (terminal client, popups, attach
+picker, settings, contact picker, chat window, reply dialog). It was recorded
+against the fake `signal-cli` in `scripts/demo-env.sh`, so every contact and
+message in it is fictional.
+
+| | |
+|---|---|
+| ![A message from Trinity arrives: unread badge in the list, popup top right](docs/media/incoming-message-and-popup.png) | ![Attach picker with path completion and a thumbnail of the picture](docs/media/attach-with-thumbnail.png) |
+| ![The sent picture rendered inline in the thread](docs/media/image-inline.png) | ![Settings screen modelled on Signal Desktop](docs/media/settings.png) |
+| ![The tabbed chat window over the terminal, with a reply just sent](docs/media/chat-window-reply.png) | ![The click-to-reply dialog after answering Morpheus](docs/media/reply-dialog-sent.png) |
+
 ## What you get
 
 **Terminal client** (`omarchy-signal tui`, `SUPER+SHIFT+G`)
