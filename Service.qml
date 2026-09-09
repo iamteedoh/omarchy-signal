@@ -71,6 +71,12 @@ Item {
   }
   property bool dnd: false
   property string lastError: ""
+  // `omarchy plugin add` only clones the folder. The command line, the bridge
+  // service and the keybindings come from install.sh; until it has run the
+  // bridge is offline and we say so once, with a click that runs it.
+  property bool serviceInstalled: true
+  property bool setupPrompted: false
+  readonly property string pluginDir: Qt.resolvedUrl(".").toString().replace("file://", "").replace(/\/$/, "")
 
   // Omarchy's Do Not Disturb, so our popups stay quiet when the user asked
   // the desktop to be quiet. Unread counts keep flowing regardless.
@@ -82,6 +88,29 @@ Item {
     onFileChanged: reload()
     onLoaded: root.dnd = Model.parseDnd(text())
     onLoadFailed: root.dnd = false
+  }
+
+  FileView {
+    id: unitFile
+    path: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/systemd/user/omarchy-signal.service"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { root.serviceInstalled = true; root.dismissKey("setup:install") }
+    onLoadFailed: { root.serviceInstalled = false; root.maybePromptSetup() }
+  }
+
+  function maybePromptSetup() {
+    if (root.connected || root.serviceInstalled || root.setupPrompted) return
+    root.setupPrompted = true
+    root.pushToast({ key: "setup:install", setup: true, sticky: true, attachments: 0, convName: "",
+                     title: "Signal: finish setup",
+                     body: "The plugin is installed, but its command line and bridge service are not set up yet. Click to run the installer in a terminal." })
+  }
+
+  function runInstaller() {
+    root.dismissKey("setup:install")
+    Util.execArgv(["omarchy-launch-terminal", root.pluginDir + "/scripts/run-installer.sh"])
   }
 
   // Toast queue: newest last. Each entry is the object Model.toastFromMessage builds.
@@ -153,6 +182,8 @@ Item {
       if ("attachmentThumbnails" in d) root.attachmentThumbnails = d.attachmentThumbnails !== false
       if (typeof d.scrollSpeed === "number") root.scrollSpeed = Math.max(0, Math.min(20, d.scrollSpeed))
       root.lastError = Model.singleLine(d.error || "", 200)
+      if (root.connected) root.dismissKey("setup:install")
+      else { unitFile.reload(); root.maybePromptSetup() }
       return
     }
     if (ev.event === "unread") {
@@ -198,7 +229,7 @@ Item {
   function pushToast(toast) {
     var list = root.toasts.filter(function(t) { return t.key !== toast.key })
     toast.id = Date.now() + "-" + Math.floor(Math.random() * 1e6)
-    toast.expires = Date.now() + root.toastTimeoutMs
+    toast.expires = Date.now() + (toast.sticky ? 1e12 : root.toastTimeoutMs)
     list.push(toast)
     while (list.length > root.maxToasts) list.shift()
     root.toasts = list
@@ -358,6 +389,7 @@ Item {
             onExited: toastHover.hovered = false
             onClicked: function(mouse) {
               if (mouse.button === Qt.RightButton) root.dismissToast(card.modelData.id)
+              else if (card.modelData.setup === true) root.runInstaller()
               else if (mouse.button === Qt.MiddleButton) root.openTerminal(card.modelData.key)
               else root.openReply(card.modelData.key, card.modelData.convName)
             }
@@ -412,7 +444,8 @@ Item {
             }
             Text {
               Layout.fillWidth: true
-              text: "click to reply  ·  middle-click for terminal  ·  right-click to dismiss"
+              text: card.modelData.setup === true ? "click to run install.sh  ·  right-click to dismiss"
+                                                  : "click to reply  ·  middle-click for terminal  ·  right-click to dismiss"
               textFormat: Text.PlainText
               color: Util.alpha(Color.notifications.text, 0.45)
               font.family: Style.font.family

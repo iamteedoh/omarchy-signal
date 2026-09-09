@@ -161,7 +161,7 @@ Panel {
     text: "󰭹" + (root.unread > 0 && !vertical ? " " + Model.unreadLabel(root.unread) : "")
     slotSize: Style.bar.iconSlot * (root.unread > 0 && !vertical ? 1.6 : 1)
     tooltipText: root.linked ? (root.unread > 0 ? root.unread + " unread Signal message" + (root.unread === 1 ? "" : "s") : "Signal")
-                             : (root.connected ? "Signal: not linked (omarchy-signal link)" : "Signal: bridge offline")
+                             : (root.connected ? "Signal: not linked (omarchy-signal link)" : "Signal: bridge offline (run install.sh from the plugin folder if you have not yet)")
     onPressed: function(b) {
       if (b === Qt.RightButton) { var argv = Model.tuiArgv(""); argv[0] = root.cliPath; Util.execArgv(argv) }
       else if (b === Qt.MiddleButton) root.refresh()
