@@ -1,5 +1,11 @@
 # omarchy-signal
 
+[![CI](https://github.com/iamteedoh/omarchy-signal/actions/workflows/ci.yml/badge.svg)](https://github.com/iamteedoh/omarchy-signal/actions/workflows/ci.yml)
+![License](https://img.shields.io/badge/license-GPL--3.0-blue)
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub%20Sponsors-%E2%9D%A4-ea4aaa?logo=githubsponsors)](https://github.com/sponsors/iamteedoh)
+[![Patreon](https://img.shields.io/badge/Patreon-support-f96854?logo=patreon)](https://patreon.com/iamteedoh)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/iamteedoh)
+
 Signal messenger for the [Omarchy](https://omarchy.org) desktop: a terminal
 client that renders images and links inline, popup notifications you can
 answer in place, a tabbed conversation window you can park in the scratchpad,
@@ -301,6 +307,17 @@ receipts, reactions). Not listed on plugins.omarchy.org yet. See
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for local
 setup, the validation suite, and the pull request process.
+
+## Support the Project
+
+omarchy-signal is free software built in my spare time. If it's useful to
+you, consider supporting development:
+
+- ❤ [GitHub Sponsors](https://github.com/sponsors/iamteedoh)
+- 🧡 [Patreon](https://patreon.com/iamteedoh)
+- ☕ [Buy Me a Coffee](https://buymeacoffee.com/iamteedoh)
+
+Stars, bug reports, and pull requests are just as appreciated!
 
 ## License
 
