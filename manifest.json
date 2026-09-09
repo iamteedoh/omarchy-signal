@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "iamteedoh.signal",
   "name": "Signal Messenger",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "iamteedoh",
   "license": "GPL-3.0-or-later",
   "description": "Signal messenger: terminal client, popup notifications you can answer in place, and a bar widget with unread count",

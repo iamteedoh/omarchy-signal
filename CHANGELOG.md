@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/iamteedoh/omarchy-signal/compare/v0.1.0...v0.2.0) (2026-09-09)
+
+
+### Features
+
+* guide setup after omarchy plugin add, full-length README animation ([8213fdf](https://github.com/iamteedoh/omarchy-signal/commit/8213fdf48ea6220cb6001b077c2508093f5e2253))
+
 ## 0.1.0 (2026-09-08)
 
 Initial public release. Adopts the Teedoh Labs OSS repo standard: CI
