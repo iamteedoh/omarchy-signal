@@ -4,8 +4,16 @@
   "bump-minor-pre-major": true,
   "packages": {
     ".": {
-      "package-name": "omarchy-signal"
+      "package-name": "omarchy-signal",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "manifest.json",
+          "jsonpath": "$.version"
+        }
+      ]
     }
   },
-  "include-component-in-tag": false
+  "include-component-in-tag": false,
+  "bootstrap-sha": "338e743a87e0cd6de94fab26be5f790c2dc19635"
 }

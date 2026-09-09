@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "iamteedoh.signal",
-  "name": "Signal",
+  "name": "Signal Messenger",
   "version": "0.1.0",
   "author": "iamteedoh",
   "license": "GPL-3.0-or-later",
@@ -16,7 +16,7 @@
     "service": "Service.qml"
   },
   "barWidget": {
-    "displayName": "Signal",
+    "displayName": "Signal Messenger",
     "description": "Unread Signal messages; opens the conversation list",
     "category": "Communication",
     "allowMultiple": false,
