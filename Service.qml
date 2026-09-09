@@ -231,9 +231,11 @@ Item {
     if (!Model.isConversationKey(key)) return
     root.dismissKey(key)
     root.replyKey = key
+    if (!name && root.tabNames[key]) name = root.tabNames[key]
     root.replyName = Model.singleLine(name || key, 80)
     root.replyOpen = true
     replyView.load(key, root.replyName)
+    if (!name) namesProc.running = true          // opened by key alone (IPC / CLI): look the title up
   }
 
   function closeReply() {
@@ -574,6 +576,10 @@ Item {
     if (changed) {
       root.tabNames = n
       if (root.activeTab && n[root.activeTab] && root.chatView && root.chatView.conversationName !== n[root.activeTab]) root.chatView.conversationName = n[root.activeTab]
+      if (root.replyOpen && n[root.replyKey] && root.replyName !== n[root.replyKey]) {
+        root.replyName = n[root.replyKey]
+        replyView.conversationName = root.replyName
+      }
       root.refreshTabs()
     }
   }

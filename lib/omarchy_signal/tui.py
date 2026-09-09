@@ -2177,7 +2177,14 @@ class App:
         if self.scroll:
             out.append(T.move(top + 2, left + width - 8) + T.fg(th.accent) + f"↑ {self.scroll}" + T.RESET)
         wanted: dict[int, tuple[int, int, int, int]] = {}
+        # Kitty placements sit above the text, so anything drawn over them
+        # (an overlay box, the emoji completion list) would show the picture
+        # through it. Hide the pictures such a box would cover; they come
+        # back on the frame after it closes.
+        covered = self._covered_rows()
         for y, col, (image_id, cols, irows) in placements:
+            if covered is not None and y <= covered[1] and y + irows - 1 >= covered[0]:
+                continue
             wanted[image_id] = (y, col, cols, irows)
         if self.preview:
             pid, prow, pcol, pcols, prows = self.preview
@@ -2211,6 +2218,18 @@ class App:
                     out.append(T.move(y, col) + kitty.encode_place(image_id, cols=cols, rows=irows))
                     self.placed[image_id] = (y, col, cols, irows)
         return "".join(out)
+
+    def _covered_rows(self) -> tuple[int, int] | None:
+        """Terminal rows an overlay or the emoji picker will draw on this frame."""
+        assert self.term
+        t = self.term
+        if self.overlay:
+            return (1, t.rows)          # overlays are centred boxes; treat the whole thread as covered
+        if self.emoji_suggestions and self.focus == "composer":
+            bottom = t.rows - 1 - self._composer_rows() - 2
+            top = max(3, bottom - len(self.emoji_suggestions) + 1)
+            return (top, bottom)
+        return None
 
     def _record_links(self, row: int, col: int, text: str) -> None:
         """Track OSC 8 spans so a mouse click can open them."""

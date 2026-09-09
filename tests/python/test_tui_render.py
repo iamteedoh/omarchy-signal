@@ -428,6 +428,18 @@ class FooterAndImageLifecycleTests(unittest.TestCase):
             fourth = app.term.text()
             self.assertIn("\x1b_Ga=t,", fourth)
             self.assertIn("\x1b_Ga=p,", fourth)
+            # an overlay box would be drawn under the picture: hide it while the box is open
+            app.open_overlay("settings")
+            app.term.out.clear()
+            app.draw()
+            fifth = app.term.text()
+            self.assertIn("\x1b_Ga=d,d=i,", fifth)
+            self.assertNotIn("\x1b_Ga=p,", fifth)
+            app.close_overlay()
+            app.term.out.clear()
+            app.draw()
+            sixth = app.term.text()
+            self.assertIn("\x1b_Ga=p,", sixth)
             # never mode: no rows reserved, no placement at all
             app.cfg.inline_images = "never"
             app.revealed.clear(); app.hidden.clear()

@@ -22,6 +22,7 @@ focus_title() { for _ in $(seq 1 40); do a=$(hyprctl clients -j | python3 -c "im
 
 cleanup() {
   say "cleaning up"
+  [[ ${DND_TOGGLED:-0} == 1 ]] && omarchy-toggle-notification-silencing >/dev/null 2>&1
   [[ -n ${REC_PID:-} ]] && kill -INT "$REC_PID" 2>/dev/null && wait "$REC_PID" 2>/dev/null
   omarchy-shell iamteedoh.signal closeChatWindow >/dev/null 2>&1
   omarchy-shell iamteedoh.signal close >/dev/null 2>&1
@@ -30,13 +31,18 @@ cleanup() {
   [[ -f $DEMO/bridge.pid ]] && kill "$(cat "$DEMO/bridge.pid")" 2>/dev/null
   sleep 1
   systemctl --user start omarchy-signal.service
-  hyprctl dispatch "hl.dsp.workspace({ workspace = \"$PREV_WS\" })" >/dev/null 2>&1
+  hyprctl dispatch "hl.dsp.focus({ workspace = $PREV_WS })" >/dev/null 2>&1
   say "real bridge restarted; output in $OUT"
 }
 trap cleanup EXIT
 
 PREV_WS=$(hyprctl activeworkspace -j | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-DEMO="/tmp/omarchy-signal-demo-$USER"
+# Silence every other app's notifications for the duration (the demo bridge ignores DND itself)
+DND_TOGGLED=0
+if ! grep -q '"dnd": *true' "$HOME/.local/state/omarchy/notifications.json" 2>/dev/null; then
+  omarchy-toggle-notification-silencing >/dev/null 2>&1 && DND_TOGGLED=1
+fi
+DEMO="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-signal-demo"
 say "stopping the real bridge for the demo"
 systemctl --user stop omarchy-signal.service
 # demo bridge on the REAL runtime dir (so the shell plugin talks to it), demo data elsewhere
@@ -48,39 +54,48 @@ kill "$(cat "$DEMO/bridge.pid")" 2>/dev/null; sleep 0.5
 ( XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR_REAL" "$HERE/bin/omarchy-signal" bridge --stderr >"$DEMO/bridge2.log" 2>&1 & echo $! >"$DEMO/bridge.pid" )
 export XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR_REAL"
 for _ in $(seq 1 50); do "$HERE/bin/omarchy-signal" status >/dev/null 2>&1 && break; sleep 0.2; done
-sleep 4   # let the shell's event streams reconnect to the demo bridge
+# the shell's event stream reconnects on its own (every ~3 s); wait until it reports the demo bridge
+for _ in $(seq 1 60); do omarchy-shell iamteedoh.signal state 2>/dev/null | grep -q '"connected":true' && break; sleep 0.5; done
+sleep 1
+say "shell: $(omarchy-shell iamteedoh.signal state 2>/dev/null)"
 "$HERE/bin/omarchy-signal" mark-read Trinity >/dev/null 2>&1
 
-hyprctl dispatch "hl.dsp.workspace({ workspace = \"$WS\" })" >/dev/null; sleep 1
+hyprctl dispatch "hl.dsp.focus({ workspace = $WS })" >/dev/null; sleep 1
 say "recording"
-gpu-screen-recorder -w "$MON" -f 30 -q high -c mp4 -o "$OUT/omarchy-signal-demo.mp4" >"$DEMO/rec.log" 2>&1 &
+# -fallback-cpu-encoding: record even where the GPU encoder is unusable (e.g. an nvenc/ffmpeg API mismatch)
+gpu-screen-recorder -w "$MON" -f 30 -q high -c mp4 -fallback-cpu-encoding yes -o "$OUT/omarchy-signal-demo.mp4" >"$DEMO/rec.log" 2>&1 &
 REC_PID=$!
-sleep 1.5
+sleep 2
+if ! kill -0 "$REC_PID" 2>/dev/null; then say "recorder failed to start:"; tail -3 "$DEMO/rec.log" >&2; REC_PID=""; exit 1; fi
 
-# 1. terminal client boots
-setsid ghostty --class=org.omarchy.signal-demo --title="Signal" -e env XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" XDG_STATE_HOME="$XDG_STATE_HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" "$HERE/bin/omarchy-signal" tui Trinity >/dev/null 2>&1 &
+# 1. terminal client boots (on Morpheus, so Trinity's message below is a "background" one)
+setsid ghostty --class=org.omarchy.signal-demo --title="Signal" -e env XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" XDG_STATE_HOME="$XDG_STATE_HOME" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" "$HERE/bin/omarchy-signal" tui Morpheus >/dev/null 2>&1 &
 focus_class org.omarchy.signal-demo || say "no client window"
 sleep 4.5
 shot 01-terminal-client
 
-# 2. Trinity types, then a message arrives (list, thread and a popup)
+# 2. Trinity types, then a message arrives: unread in the list, popup in the corner
 now=$(( $(date +%s) * 1000 ))
 typing "+15550002222" "Trinity" "$now"; sleep 2.5
 inject "+15550002222" "Trinity" "$((now + 2500))" "Bring a terminal. Ghostty preferred 😉"
 sleep 3.5
+say "toasts showing: $(omarchy-shell iamteedoh.signal toasts 2>/dev/null)"
 shot 02-incoming-message-and-popup
 
-# 3. reply with an emoji shortcode (picker shows, space converts)
+# 3. jump to Trinity with the contact picker, reply with an emoji shortcode (picker shows, Tab completes)
+wtype -M ctrl u -m ctrl; sleep 1.2
+type_slow "trin"; sleep 1.2
+wtype -k Return; sleep 2
+omarchy-shell iamteedoh.signal dismiss >/dev/null 2>&1
 type_slow "On my way :roc"; sleep 1.6
 wtype -k Tab; sleep 0.6
 type_slow " see you at the bridge"; sleep 0.8
 wtype -k Return; sleep 3
 shot 03-reply-sent
 
-# 4. attach a picture (path completion with thumbnail), send it
+# 4. attach a picture (path completion with thumbnail), send it. The prompt starts at ~/
 wtype -M ctrl a -m ctrl; sleep 1.2
-wtype -M ctrl u -m ctrl; sleep 0.3          # clear the prompt to ~/
-type_slow "$OMARCHY_SIGNAL_DEMO_PICS/zi"; sleep 2
+type_slow "${OMARCHY_SIGNAL_DEMO_PICS#"$HOME/"}/zi"; sleep 2
 shot 04-attach-with-thumbnail
 wtype -k Tab; sleep 0.8
 wtype -k Return; sleep 1

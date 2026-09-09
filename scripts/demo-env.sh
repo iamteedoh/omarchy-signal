@@ -9,7 +9,7 @@
 #   scripts/demo-env.sh --stop
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEMO="${OMARCHY_SIGNAL_DEMO_DIR:-/tmp/omarchy-signal-demo-$USER}"
+DEMO="${OMARCHY_SIGNAL_DEMO_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-signal-demo}"   # under $HOME: attachments must live there
 if [[ ${1:-} == --stop ]]; then
   [[ -f $DEMO/bridge.pid ]] && kill "$(cat "$DEMO/bridge.pid")" 2>/dev/null || true
   rm -rf "$DEMO"
@@ -23,6 +23,7 @@ ln -s "$HOME/.local/state/omarchy/current/theme" "$DEMO/theme/theme" 2>/dev/null
 cat > "$DEMO/config/omarchy-signal/config.toml" <<TOML
 signal_cli = "$HERE/tests/python/fake_signal_cli.py"
 notifications = "popup"
+respect_dnd = false      # the recording runs under Omarchy's Do Not Disturb to keep other apps' notifications out of frame
 TOML
 export XDG_CONFIG_HOME="$DEMO/config" XDG_DATA_HOME="$DEMO/data" XDG_STATE_HOME="$DEMO/state" XDG_RUNTIME_DIR="$DEMO/run"
 export FAKE_SIGNAL_ACCOUNT="+15550001111" FAKE_SIGNAL_EVENTS="$DEMO/events.jsonl" FAKE_SIGNAL_SENT_LOG="$DEMO/sent.jsonl"
