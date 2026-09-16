@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/iamteedoh/omarchy-signal/compare/v0.2.0...v0.3.0) (2026-09-16)
+
+
+### Features
+
+* copy and paste with mouse and keyboard ([#8](https://github.com/iamteedoh/omarchy-signal/issues/8)) ([7f200b0](https://github.com/iamteedoh/omarchy-signal/commit/7f200b0bbb74010f48d17ed10c242ba4ff84c057))
+* SUPER+W closes the popup conversation and the QR code ([#9](https://github.com/iamteedoh/omarchy-signal/issues/9)) ([660be16](https://github.com/iamteedoh/omarchy-signal/commit/660be162f34a72cd2209ac6e34e0c74d1fcb1b29))
+
 ## [0.2.0](https://github.com/iamteedoh/omarchy-signal/compare/v0.1.0...v0.2.0) (2026-09-09)
 
 
