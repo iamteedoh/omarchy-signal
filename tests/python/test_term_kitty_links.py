@@ -249,3 +249,58 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(cfg.notification_content, "name-only")
         cfg = Config.from_dict({"notification_preview": False, "notification_content": "none"})
         self.assertEqual(cfg.notification_content, "none")
+
+
+class ScreenCellsTests(unittest.TestCase):
+    def test_replays_moves_colours_links_and_images(self):
+        frame = ("\x1b[?2026h\x1b[1;1H\x1b[2Kgarbage\x1b[1;1H\x1b[2K\x1b[38;2;1;2;3mhello\x1b[0m"
+                 "\x1b[2;3H\x1b]8;;https://x.io\x1b\\link\x1b]8;;\x1b\\ 日本\x1b_Ga=p,i=1\x1b\\!")
+        grid = term.screen_cells(frame, 20, 3)
+        self.assertEqual("".join(grid[0]).rstrip(), "hello")
+        self.assertEqual("".join(grid[1]).rstrip(), "  link 日本!")
+        self.assertEqual(grid[1][8], "")                      # right half of a wide glyph
+
+    def test_cells_text_reads_a_stream_within_columns(self):
+        grid = term.screen_cells("\x1b[1;1Habc│one two\x1b[2;1Hdef│three\x1b[3;1Hghi│four", 20, 3)
+        self.assertEqual(term.cells_text(grid, (1, 9), (3, 8), 5, 20), "two\nthree\nfour")
+        self.assertEqual(term.cells_text(grid, (3, 6), (1, 5), 5, 20), "one two\nthree\nfo")   # either direction
+        self.assertEqual(term.cells_text(grid, (2, 1), (2, 3)), "def")
+
+    def test_drag_motion_is_reported_as_button_32(self):
+        keys = term.KeyParser().feed(b"\x1b[<0;3;4M\x1b[<32;9;4M\x1b[<0;9;4m")
+        self.assertEqual([(k.button, k.x, k.release) for k in keys], [(0, 3, False), (32, 9, False), (0, 9, True)])
+
+
+class ClipboardTests(unittest.TestCase):
+    def test_image_only_when_no_text_is_offered(self):
+        from omarchy_signal import clipboard
+        self.assertEqual(clipboard.image_type(["image/png"]), "image/png")
+        self.assertEqual(clipboard.image_type(["image/jpeg", "image/png"]), "image/png")
+        self.assertEqual(clipboard.image_type(["text/html", "image/png"]), "")     # copied from a web page: paste the text
+        self.assertEqual(clipboard.image_type(["UTF8_STRING"]), "")
+        self.assertEqual(clipboard.image_type(["image/bmp"]), "")
+
+    def test_round_trip_through_wl_clipboard_stand_ins(self):
+        from omarchy_signal import clipboard
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            store = Path(tmp) / "store"
+            # Fake wl-copy / wl-paste that keep the selection in a file.
+            (bin_dir / "wl-copy").write_text(f'#!/bin/sh\n[ "$1" = --primary ] && shift\nshift\nprintf %s "$1" > {store}\n')
+            (bin_dir / "wl-paste").write_text(
+                f'#!/bin/sh\ncase "$*" in *--list-types*) echo image/png ;; *image/png*) printf PNGDATA ;; *) cat {store} ;; esac\n')
+            for f in bin_dir.iterdir():
+                f.chmod(0o755)
+            old = os.environ["PATH"]
+            os.environ["PATH"] = f"{bin_dir}:{old}"
+            try:
+                clipboard.copy("héllo\nworld")
+                self.assertEqual(clipboard.paste_text(), "héllo\nworld")
+                self.assertEqual(clipboard.types(), ["image/png"])
+                dest = clipboard.paste_image(Path(tmp) / "pasted", "image/png")
+                self.assertEqual(dest.read_bytes(), b"PNGDATA")
+                self.assertEqual(dest.suffix, ".png")
+                self.assertNotEqual(clipboard.paste_image(Path(tmp) / "pasted", "image/png"), dest)   # never overwrites
+            finally:
+                os.environ["PATH"] = old

@@ -43,6 +43,7 @@ missing=()
 command -v python3 >/dev/null || missing+=(python)
 command -v qrencode >/dev/null || missing+=(qrencode)
 command -v magick >/dev/null || command -v convert >/dev/null || missing+=(imagemagick)
+command -v wl-copy >/dev/null && command -v wl-paste >/dev/null || missing+=(wl-clipboard)
 if ((${#missing[@]})); then
   say "Installing packages: ${missing[*]}"
   if command -v omarchy-pkg-add >/dev/null; then omarchy-pkg-add "${missing[@]}"; else sudo pacman -S --needed --noconfirm "${missing[@]}"; fi

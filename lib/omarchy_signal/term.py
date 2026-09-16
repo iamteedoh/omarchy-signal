@@ -122,6 +122,76 @@ def wrap(text: str, width: int) -> list[str]:
     return lines or [""]
 
 
+# --- screen text -------------------------------------------------------------
+
+_FRAME_TOKEN = re.compile(r"\x1b\[([0-9;?<>]*) ?([A-Za-z~])|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b_[^\x1b]*\x1b\\|\x1b.?")
+
+
+def screen_cells(frame: str, cols: int, rows: int) -> list[list[str]]:
+    """Replay a frame we drew into a grid of cells, one string per cell, so a
+    mouse selection can be turned back into text. Understands exactly what
+    the client emits: cursor moves, line erases, SGR, OSC 8 links and kitty
+    graphics. The right half of a wide character is an empty string."""
+    grid = [[" "] * cols for _ in range(rows)]
+    r = c = 0
+    pos = 0
+
+    def put(text: str) -> None:
+        nonlocal c
+        prev_w = 0
+        for ch in text:
+            w = char_width(ch)
+            if w == 0:
+                if c > 0 and 0 <= r < rows and c - 1 < cols:
+                    grid[r][c - 1] += ch
+                if ch == "️" and prev_w == 1:
+                    # Same rule as str_width: VS16 widens a one-cell glyph.
+                    if 0 <= r < rows and c < cols:
+                        grid[r][c] = ""
+                    c += 1
+                    prev_w = 2
+                continue
+            if 0 <= r < rows and c + w <= cols:
+                grid[r][c] = ch
+                if w == 2:
+                    grid[r][c + 1] = ""
+            c += w
+            prev_w = w
+
+    for m in _FRAME_TOKEN.finditer(frame):
+        if m.start() > pos:
+            put(frame[pos:m.start()])
+        pos = m.end()
+        final = m.group(2)
+        if final == "H":
+            nums = [int(p) for p in (m.group(1) or "").split(";") if p.isdigit()]
+            r = (nums[0] if nums else 1) - 1
+            c = (nums[1] if len(nums) > 1 else 1) - 1
+        elif final == "K" and 0 <= r < rows:
+            grid[r] = [" "] * cols
+    if pos < len(frame):
+        put(frame[pos:])
+    return grid
+
+
+def cells_text(grid: list[list[str]], start: tuple[int, int], end: tuple[int, int],
+               col_min: int = 1, col_max: int = 0) -> str:
+    """Text between two 1-based (row, col) cells, inclusive, reading order,
+    kept within columns col_min..col_max (a pane or an overlay box)."""
+    if not grid:
+        return ""
+    col_max = col_max or len(grid[0])
+    (r0, c0), (r1, c1) = sorted([start, end])
+    out = []
+    for row in range(max(1, r0), min(len(grid), r1) + 1):
+        lo = c0 if row == r0 else col_min
+        hi = c1 if row == r1 else col_max
+        lo, hi = max(lo, col_min), min(hi, col_max)
+        cells = grid[row - 1][lo - 1:hi]
+        out.append("".join(cells).rstrip())
+    return "\n".join(out).strip("\n")
+
+
 # --- keys ------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -298,14 +368,15 @@ class Terminal:
         raw[6][termios.VMIN] = 0
         raw[6][termios.VTIME] = 0
         termios.tcsetattr(self.fd_in, termios.TCSAFLUSH, raw)
-        self.write(CSI + "?1049h" + CSI + "?25l" + CSI + "?1000h" + CSI + "?1006h" + CSI + "?2004h")
+        # 1002: button presses plus motion while a button is held, for drag-to-select.
+        self.write(CSI + "?1049h" + CSI + "?25l" + CSI + "?1000h" + CSI + "?1002h" + CSI + "?1006h" + CSI + "?2004h")
         self.write(CSI + ">1u")  # kitty keyboard protocol: disambiguate escape codes (ignored elsewhere)
         self.flush()
         self.measure()
         return self
 
     def __exit__(self, *exc):
-        self.write(CSI + "<u" + CSI + "?2004l" + CSI + "?1006l" + CSI + "?1000l" + CSI + "0 q" + CSI + "?25h" + CSI + "?1049l")
+        self.write(CSI + "<u" + CSI + "?2004l" + CSI + "?1006l" + CSI + "?1002l" + CSI + "?1000l" + CSI + "0 q" + CSI + "?25h" + CSI + "?1049l")
         self.flush()
         if self._saved is not None:
             termios.tcsetattr(self.fd_in, termios.TCSAFLUSH, self._saved)

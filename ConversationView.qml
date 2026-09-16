@@ -104,9 +104,10 @@ Item {
 
   property var siblings: []              // other detached windows: [{key, name}]
 
-  // Esc peels one layer at a time: picker → message actions → quote → the window.
+  // Esc peels one layer at a time: picker → text selection → message actions → quote → the window.
   function handleEscape() {
     if (view.pickerOpen) { view.pickerOpen = false; composer.forceActiveFocus(); return true }
+    if (view.selectionTs) { view.selectionTs = 0; composer.forceActiveFocus(); return true }
     if (view.emojiRowOpen || view.selectedTs) { view.emojiRowOpen = false; view.selectedTs = 0; return true }
     if (view.quote) { view.quote = null; return true }
     view.requestClose()
@@ -252,6 +253,38 @@ Item {
     actionProc.running = true
     view.emojiRowOpen = false
     view.selectedTs = 0
+  }
+
+  // ---- clipboard
+  property real selectionTs: 0           // the message whose text is selected; starting a selection elsewhere clears it
+  property string notice: ""
+
+  function copyText(t) {
+    if (!t) return
+    Util.execArgv(["wl-copy", "--", t])
+    view.notice = t.indexOf("\n") >= 0 ? "copied " + t.split("\n").length + " lines" : "copied"
+    noticeTimer.restart()
+  }
+  Timer { id: noticeTimer; interval: 2500; onTriggered: view.notice = "" }
+
+  // Ctrl+V with a picture (and no text) on the clipboard attaches it; text is
+  // pasted by the field itself.
+  function pasteImage() {
+    if (pasteImageProc.running) return
+    pasteImageProc.command = [view.cliPath, "paste-image"]
+    pasteImageProc.running = true
+  }
+  Process {
+    id: pasteImageProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var obj = null
+        try { obj = JSON.parse(text) } catch (e) { obj = null }
+        if (!obj || typeof obj.path !== "string" || obj.path.charAt(0) !== "/") return
+        if (view.attachments.indexOf(obj.path) < 0 && view.attachments.length < 8) view.attachments = view.attachments.concat([obj.path])
+      }
+    }
   }
 
   function quoteRow(row) {
@@ -495,7 +528,8 @@ Item {
             onClicked: function(mouse) {
               if (mouse.button === Qt.MiddleButton) { view.quoteRow(row.modelData); return }
               if (mouse.button === Qt.RightButton) {
-                // Right-click: straight to the reaction row.
+                // Right-click on selected text copies it; anywhere else it opens the reaction row.
+                if (bodyText.selectedText.length > 0) { view.copyText(bodyText.selectedText); return }
                 view.selectedTs = row.modelData.ts
                 view.emojiRowOpen = true
                 return
@@ -551,15 +585,60 @@ Item {
                 MouseArea { anchors.fill: parent; onClicked: Util.execArgv(["xdg-open", row.modelData.image]) }
               }
             }
-            Text {
+            // Selectable: drag to select, Ctrl+C (or Super+C, or a right-click) copies.
+            TextEdit {
+              id: bodyText
               visible: row.modelData.body.length > 0
               Layout.fillWidth: true
               text: row.modelData.body
-              textFormat: Text.PlainText
-              wrapMode: Text.Wrap
+              textFormat: TextEdit.PlainText
+              wrapMode: TextEdit.Wrap
+              readOnly: true
+              selectByMouse: true
+              selectByKeyboard: true
+              persistentSelection: true      // survives clicking Copy or moving to the composer
               color: Color.popups.text
+              selectionColor: Util.alpha(Color.accent, 0.45)
+              selectedTextColor: Color.popups.text
               font.family: Style.font.family
               font.pixelSize: Style.font.body
+              readonly property bool ownsSelection: view.selectionTs === row.modelData.ts
+              onOwnsSelectionChanged: if (!ownsSelection) deselect()
+              onSelectedTextChanged: {
+                if (selectedText.length > 0) view.selectionTs = row.modelData.ts
+                else if (ownsSelection) view.selectionTs = 0
+              }
+              // A plain click still opens the message actions; a drag does not.
+              TapHandler {
+                acceptedButtons: Qt.LeftButton
+                onTapped: {
+                  view.emojiRowOpen = false
+                  view.selectedTs = view.selectedTs === row.modelData.ts ? 0 : row.modelData.ts
+                }
+              }
+              Keys.onPressed: function(event) {
+                var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
+                if (event.matches(StandardKey.Copy) || (ctrl && event.key === Qt.Key_Insert)) {
+                  view.copyText(selectedText.length > 0 ? selectedText : row.modelData.body)
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Escape) {
+                  view.handleEscape()
+                  event.accepted = true
+                } else if (event.matches(StandardKey.SelectAll) || event.key === Qt.Key_Shift || event.key === Qt.Key_Control
+                           || event.key === Qt.Key_Alt || event.key === Qt.Key_Meta || event.key === Qt.Key_Super_L) {
+                  // selection keys and lone modifiers stay here
+                } else {
+                  // Anything else is meant for the composer: go back to it and deliver the key.
+                  composer.forceActiveFocus()
+                  if (event.matches(StandardKey.Paste) || (event.key === Qt.Key_Insert && (event.modifiers & Qt.ShiftModifier))) {
+                    composer.paste()
+                    view.pasteImage()
+                  } else if (!ctrl && !(event.modifiers & Qt.AltModifier) && event.text.length > 0 && event.text.charCodeAt(0) >= 32) {
+                    composer.insert(composer.cursorPosition, event.text)
+                  }
+                  event.accepted = true
+                }
+              }
             }
             Text {
               visible: row.modelData.filesText.length > 0 && !row.modelData.image
@@ -609,7 +688,7 @@ Item {
             model: view.emojiRowOpen ? view.quickEmojis : []
             delegate: Button { required property string modelData; text: modelData; onClicked: view.react(row.modelData, modelData) }
           }
-          Button { text: "Copy"; onClicked: Util.execArgv(["wl-copy", "--", row.modelData.body]) }
+          Button { text: "Copy"; onClicked: view.copyText(bodyText.selectedText.length > 0 ? bodyText.selectedText : row.modelData.body) }
         }
       }
     }
@@ -869,6 +948,8 @@ Item {
           if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && (event.modifiers & Qt.ControlModifier)) {
             view.cycleWindow((event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab ? -1 : 1)
             event.accepted = true
+          } else if (event.matches(StandardKey.Paste) || (event.key === Qt.Key_Insert && (event.modifiers & Qt.ShiftModifier))) {
+            view.pasteImage()               // not accepted: the field still pastes any text
           } else if ((event.key === Qt.Key_O && (event.modifiers & Qt.ControlModifier))
                      || (event.key === Qt.Key_A && (event.modifiers & Qt.ControlModifier) && (event.modifiers & Qt.ShiftModifier))) {
             view.pickAttachment()
@@ -884,7 +965,8 @@ Item {
       spacing: Style.space(8)
       Text {
         Layout.fillWidth: true
-        text: view.error ? view.error : (view.sending ? "Encrypting…" : "click a message: Reply · React · Copy  ·  right-click: react  ·  middle-click: reply  ·  Ctrl+O attach  ·  Esc closes")
+        text: view.error ? view.error : (view.sending ? "Encrypting…" : view.notice ? view.notice
+              : "click a message: Reply · React · Copy  ·  select text, Ctrl+C or right-click copies  ·  right-click: react  ·  middle-click: reply  ·  Ctrl+V pastes (pictures too)  ·  Ctrl+O attach  ·  Esc closes")
         textFormat: Text.PlainText
         elide: Text.ElideRight
         color: view.error ? Color.urgent : Util.alpha(Color.popups.text, 0.5)

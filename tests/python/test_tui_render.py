@@ -9,7 +9,10 @@ which all start with ESC followed by '[', ']8;', '_G' or a known SGR).
 
 import asyncio
 import re
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 import _helpers  # noqa: F401
 from omarchy_signal import tui
@@ -59,6 +62,12 @@ class FakeTerminal:
 ALLOWED = re.compile(r"\x1b\[[0-9;?<>]* ?[A-Za-z]|\x1b\]8;[^;\x1b]*;[^\x1b]*\x1b\\|\x1b_G[^\x1b]*\x1b\\|\x1b\]0;[^\x07]*\x07")
 
 HOSTILE = "hi \x1b]52;c;cHduZWQ=\x07 \x1b[2J \x1b_Ga=T;AAAA\x1b\\ a‮b \x9b1m end"
+
+
+async def click(app, x, y):
+    """A left click as a terminal reports it: press, then release in place."""
+    await app._handle_mouse(Key("mouse", x=x, y=y, button=0))
+    await app._handle_mouse(Key("mouse", x=x, y=y, button=0, release=True))
 
 
 def make_app(cols=120, rows=40):
@@ -243,9 +252,95 @@ class RenderTests(unittest.TestCase):
     def test_mouse_selects_conversation(self):
         app = make_app()
         seed(app)
-        asyncio.run(app._handle_mouse(Key("mouse", x=3, y=5, button=0)))
+        asyncio.run(click(app, x=3, y=5))
         # Two-line rows: row 5 is the second conversation's name line.
         self.assertEqual(app.selected, 1)
+
+    def test_drag_selects_and_copies_message_text(self):
+        app = make_app()
+        seed(app)
+        app.draw()
+        grid = tui.screen_cells(app.frame_text, app.term.cols, app.term.rows)
+        row = next(i + 1 for i, cells in enumerate(grid) if "I know kung fu." in "".join(cells))
+        col = "".join(grid[row - 1]).index("I know") + 1
+        copied = []
+        with mock.patch.object(tui.clipboard, "copy", lambda text, primary=False: copied.append((text, primary))):
+            async def go():
+                await app._handle_mouse(Key("mouse", x=col, y=row, button=0))
+                await app._handle_mouse(Key("mouse", x=col + 5, y=row + 1, button=32))
+                app.draw()
+                self.assertIn(tui.T.bg(app.theme.selection), app.term.text())     # highlighted while dragging
+                await app._handle_mouse(Key("mouse", x=col + 5, y=row + 1, button=0, release=True))
+                self.assertEqual(copied, [("I know kung fu.\nI know", False), ("I know kung fu.\nI know", True)])
+                self.assertEqual(app.overlay, "")
+                # Ctrl-C copies the selection again instead of asking to quit; after that it is gone.
+                await app.handle_key(Key("char", char="c", ctrl=True))
+                self.assertEqual(copied[-1], ("I know kung fu.\nI know", False))
+                self.assertEqual(app.overlay, "")
+                await app.handle_key(Key("char", char="c", ctrl=True))
+                self.assertEqual(app.overlay, "quit")
+            asyncio.run(go())
+        # A drag that starts in the message pane never picks up the conversation list.
+        app.close_overlay()
+        app.draw()
+        app.sel_cols = app._selection_columns(tui.LIST_WIDTH + 5, 10)
+        self.assertEqual(app.sel_cols, (tui.LIST_WIDTH + 1, app.term.cols))
+
+    def test_paste_keys_and_clicks(self):
+        app = make_app()
+        seed(app)
+        board = {"clip": "from clipboard", "primary": "from primary"}
+        with mock.patch.object(tui.clipboard, "types", lambda primary=False: ["text/plain"]), \
+             mock.patch.object(tui.clipboard, "paste_text", lambda primary=False: board["primary" if primary else "clip"]):
+            async def go():
+                await app.handle_key(Key("char", char="v", ctrl=True))
+                self.assertEqual(app.composer.text, "from clipboard")
+                await app.handle_key(Key("char", char="x", ctrl=True))
+                await app.handle_key(Key("insert", shift=True))
+                self.assertEqual(app.composer.text, "from clipboard")
+                await app.handle_key(Key("char", char="x", ctrl=True))
+                await app._handle_mouse(Key("mouse", x=60, y=20, button=1))        # middle click
+                self.assertEqual(app.composer.text, "from primary")
+                await app._handle_mouse(Key("mouse", x=60, y=20, button=2))        # right click
+                self.assertEqual(app.composer.text, "from primaryfrom clipboard")
+                await app.handle_key(Key("char", char="x", ctrl=True))
+                # From the list, a paste lands in the composer.
+                app.focus = "list"
+                await app.handle_key(Key("paste", char="hi\x1b[2J"))
+                self.assertEqual((app.focus, app.composer.text), ("composer", "hi[2J"))
+                await app.handle_key(Key("char", char="x", ctrl=True))
+                # Into an overlay's text field as one line; menus ignore it.
+                app.open_overlay("contacts")
+                board["clip"] = "Trin\nity"
+                await app.handle_key(Key("char", char="v", ctrl=True))
+                self.assertEqual(app.overlay_query, "Trin ity")
+                app.close_overlay()
+                app.open_overlay("help")
+                await app.handle_key(Key("paste", char="q"))
+                self.assertEqual(app.overlay, "help")
+                app.close_overlay()
+                board["clip"] = ""
+                await app.handle_key(Key("char", char="v", ctrl=True))
+                self.assertEqual(app.toast, "nothing to paste")
+            asyncio.run(go())
+
+    def test_pasting_a_picture_attaches_it(self):
+        app = make_app()
+        seed(app)
+        with tempfile.TemporaryDirectory() as tmp:
+            app.paths = Paths(data_dir=Path(tmp))
+            pic = Path(tmp) / "pasted" / "pasted-1.png"
+
+            def fake_image(dest_dir, mime):
+                self.assertEqual((dest_dir, mime), (Path(tmp) / "pasted", "image/png"))
+                pic.parent.mkdir()
+                pic.write_bytes(b"png")
+                return pic
+            with mock.patch.object(tui.clipboard, "types", lambda primary=False: ["image/png"]), \
+                 mock.patch.object(tui.clipboard, "paste_image", fake_image):
+                asyncio.run(app.handle_key(Key("char", char="v", ctrl=True)))
+            self.assertEqual(app.composer.attachments, [str(pic)])
+            self.assertEqual(app.composer.text, "")
 
     def test_events_update_state(self):
         app = make_app()
@@ -553,7 +648,7 @@ class AttachmentFlowTests(unittest.TestCase):
         self.assertNotIn("\x1b_Ga=p", out)              # not placed yet
         row = next(r for r, spans in app.link_map.items() if any(h.startswith("file://") for _, _, h in spans))
         start, _, _ = app.link_map[row][0]
-        asyncio.run(app._handle_mouse(Key("mouse", x=start + 1, y=row, button=0)))
+        asyncio.run(click(app, x=start + 1, y=row))
         self.assertEqual(app.overlay, "")                 # revealed directly, no menu
         app.term.out.clear()
         app.draw()
@@ -565,7 +660,7 @@ class AttachmentFlowTests(unittest.TestCase):
         app.draw()
         row = next(r for r, spans in app.link_map.items() if any(h.startswith("file://") for _, _, h in spans))
         start, _, _ = app.link_map[row][0]
-        asyncio.run(app._handle_mouse(Key("mouse", x=start + 1, y=row, button=0)))
+        asyncio.run(click(app, x=start + 1, y=row))
         self.assertEqual(app.overlay, "attachment")
         app.close_overlay()
         # Clicking the picture itself (the rows above the name) opens the menu too.
@@ -575,7 +670,7 @@ class AttachmentFlowTests(unittest.TestCase):
         self.assertGreaterEqual(len(image_rows), 2, "image rows should be click targets")
         top_row = min(image_rows)
         x0, _, _ = app.link_map[top_row][0]
-        asyncio.run(app._handle_mouse(Key("mouse", x=x0 + 1, y=top_row, button=0)))
+        asyncio.run(click(app, x=x0 + 1, y=top_row))
         self.assertEqual(app.overlay, "attachment")
         asyncio.run(app.handle_key(Key("char", char="v")))
         app.term.out.clear()
@@ -647,6 +742,6 @@ class AttachmentFlowTests(unittest.TestCase):
             app.draw()
             row = next(r for r, spans in app.link_map.items() if any(h.startswith("file://") for _, _, h in spans))
             start, _, _ = app.link_map[row][0]
-            await app._handle_mouse(Key("mouse", x=start + 1, y=row, button=0))
+            await click(app, x=start + 1, y=row)
             self.assertEqual(app.overlay, "attachment")
         asyncio.run(go())
