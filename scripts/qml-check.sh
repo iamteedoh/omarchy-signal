@@ -29,7 +29,18 @@ ShellRoot {
   }
 }
 QML
-out=$(cd "$tmp" && timeout 15 qs -p "$tmp/shell.qml" 2>&1 || true)
+# Qt.quit() does not end a Quickshell instance, so stop it as soon as the
+# result line appears instead of waiting out the timeout.
+(cd "$tmp" && exec timeout 15 qs -p "$tmp/shell.qml") >"$tmp/out.log" 2>&1 &
+qs_pid=$!
+for _ in $(seq 150); do
+  grep -q "QMLCHECK" "$tmp/out.log" 2>/dev/null && break
+  kill -0 "$qs_pid" 2>/dev/null || break
+  sleep 0.1
+done
+kill "$qs_pid" 2>/dev/null || true
+wait "$qs_pid" 2>/dev/null || true
+out=$(cat "$tmp/out.log")
 if grep -q "QMLCHECK OK" <<<"$out" && ! grep -q -E "QMLCHECK ERROR|Cannot assign|is not a type|Unexpected token|Expected token" <<<"$out"; then
   echo "qml-check: Service.qml loads"
   exit 0

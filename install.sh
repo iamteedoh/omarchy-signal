@@ -35,20 +35,78 @@ for arg in "$@"; do
   esac
 done
 
-say() { printf '\033[1;36m▸\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m!\033[0m %s\n' "$*" >&2; }
+# --- progress ------------------------------------------------------------------
+# Every step prints a numbered header, and anything that can take more than a
+# moment runs under a spinner with the elapsed time, so the installer never
+# sits silent. Without a terminal (a log, CI) the spinner becomes plain lines.
+TOTAL_STEPS=9
+STEP=0
+STARTED=$SECONDS
+TTY=0; [[ -t 1 ]] && TTY=1
+if (( TTY )); then
+  C_STEP=$'\033[1;36m' C_BOLD=$'\033[1m' C_OK=$'\033[1;32m' C_WARN=$'\033[1;33m' C_ERR=$'\033[1;31m' C_DIM=$'\033[2m' C_SPIN=$'\033[36m' C_OFF=$'\033[0m'
+else
+  C_STEP="" C_BOLD="" C_OK="" C_WARN="" C_ERR="" C_DIM="" C_SPIN="" C_OFF=""
+fi
+
+step() {
+  STEP=$((STEP + 1))
+  printf '\n%s[%d/%d]%s %s%s%s\n' "$C_STEP" "$STEP" "$TOTAL_STEPS" "$C_OFF" "$C_BOLD" "$*" "$C_OFF"
+}
+say() { printf '  %s✓%s %s\n' "$C_OK" "$C_OFF" "$*"; }
+note() { printf '  %s- %s%s\n' "$C_DIM" "$*" "$C_OFF"; }
+warn() { printf '  %s!%s %s\n' "$C_WARN" "$C_OFF" "$*" >&2; }
+
+# run LABEL CMD...: run a non-interactive command behind a spinner. Its output
+# is shown only if it fails; the exit status is passed through.
+run() {
+  local label=$1; shift
+  local log; log=$(mktemp)
+  local t0=$SECONDS status=0
+  if (( TTY )); then
+    "$@" >"$log" 2>&1 &
+    local pid=$! i=0 frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+    while kill -0 "$pid" 2>/dev/null; do
+      printf '\r  %s%s%s %s %s(%ds)%s\033[K' "$C_SPIN" "${frames[i++ % ${#frames[@]}]}" "$C_OFF" "$label" "$C_DIM" $((SECONDS - t0)) "$C_OFF"
+      sleep 0.1
+    done
+    wait "$pid" || status=$?
+    printf '\r\033[K'
+  else
+    printf '  - %s...\n' "$label"
+    "$@" >"$log" 2>&1 || status=$?
+  fi
+  if (( status == 0 )); then
+    say "$label ($((SECONDS - t0))s)"
+    # The command's own last word, e.g. "qml-check: no Wayland display, skipping".
+    local last; last=$(grep -v '^[[:space:]]*$' "$log" | tail -n 1 || true)
+    [[ -n $last ]] && note "$last"
+  else
+    printf '  %s✗%s %s (exit %d)\n' "$C_ERR" "$C_OFF" "$label" "$status" >&2
+    sed 's/^/    /' "$log" >&2
+  fi
+  rm -f "$log"
+  return "$status"
+}
 
 # --- prerequisites -----------------------------------------------------------
+step "Checking prerequisites"
 missing=()
 command -v python3 >/dev/null || missing+=(python)
 command -v qrencode >/dev/null || missing+=(qrencode)
 command -v magick >/dev/null || command -v convert >/dev/null || missing+=(imagemagick)
 command -v wl-copy >/dev/null && command -v wl-paste >/dev/null || missing+=(wl-clipboard)
 if ((${#missing[@]})); then
-  say "Installing packages: ${missing[*]}"
+  # Not behind the spinner: the package manager may ask for a password.
+  note "Installing packages: ${missing[*]} (the package manager shows its own progress)"
   if command -v omarchy-pkg-add >/dev/null; then omarchy-pkg-add "${missing[@]}"; else sudo pacman -S --needed --noconfirm "${missing[@]}"; fi
+  say "Packages installed: ${missing[*]}"
+else
+  say "python3, qrencode, ImageMagick and wl-clipboard are present"
 fi
-if ! command -v signal-cli >/dev/null; then
+if command -v signal-cli >/dev/null; then
+  say "signal-cli is present"
+else
   warn "signal-cli is not installed. It is the component that speaks the Signal protocol."
   echo "  Install one of (AUR):"
   echo "    omarchy pkg aur add signal-cli-native-bin   # prebuilt native binary, fastest to install"
@@ -62,9 +120,11 @@ fi
 # --- preflight -----------------------------------------------------------------
 # Refuse to deploy QML the shell cannot load: a broken Service.qml means no
 # popups and no chat window until the next install.
-"$HERE/scripts/qml-check.sh" || { warn "QML check failed; nothing was installed"; exit 1; }
+step "Checking that the shell can load the plugin"
+run "Loading the plugin's QML in a test shell" "$HERE/scripts/qml-check.sh" || { warn "QML check failed; nothing was installed"; exit 1; }
 
 # --- plugin --------------------------------------------------------------------
+step "Installing the plugin files"
 mkdir -p "$PLUGINS_DIR" "$BIN_DIR" "$UNIT_DIR" "$CONFIG_DIR"
 # Directories the hardened service unit may write to; the unit tolerates their
 # absence but the bridge wants them owner-only from the first run.
@@ -90,10 +150,11 @@ else
   say "Installed plugin to $PLUGIN_DIR"
 fi
 if command -v omarchy-plugin-validate >/dev/null; then
-  omarchy-plugin-validate "$HERE" || { warn "plugin validation failed"; exit 1; }
+  run "Validating the plugin manifest" omarchy-plugin-validate "$HERE" || { warn "plugin validation failed"; exit 1; }
 fi
 
 # --- CLI ---------------------------------------------------------------------------
+step "Linking the command and writing the config"
 ln -sf "$PLUGIN_DIR/bin/omarchy-signal" "$BIN_DIR/omarchy-signal"
 say "Linked $BIN_DIR/omarchy-signal"
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) warn "$BIN_DIR is not on PATH in this shell (Omarchy adds it at login)";; esac
@@ -103,26 +164,28 @@ if [[ ! -f $CONFIG_DIR/config.toml ]]; then
   cp "$HERE/docs/config.example.toml" "$CONFIG_DIR/config.toml"
   chmod 600 "$CONFIG_DIR/config.toml"
   say "Wrote default config to $CONFIG_DIR/config.toml"
+else
+  say "Keeping your config at $CONFIG_DIR/config.toml"
 fi
 
 # --- systemd -------------------------------------------------------------------------
+step "Setting up the background service"
 install -m 644 "$HERE/systemd/omarchy-signal.service" "$UNIT_DIR/omarchy-signal.service"
-systemctl --user daemon-reload
+run "Reloading systemd" systemctl --user daemon-reload
 if command -v signal-cli >/dev/null; then
   if systemctl --user is-active --quiet omarchy-signal.service; then
     # A running bridge keeps executing the code it started with; hand it the new one.
-    systemctl --user restart omarchy-signal.service
-    say "Bridge service restarted with the new code"
+    run "Restarting the bridge service with the new code" systemctl --user restart omarchy-signal.service
   else
-    systemctl --user enable --now omarchy-signal.service
-    say "Bridge service enabled and started"
+    run "Enabling and starting the bridge service" systemctl --user enable --now omarchy-signal.service
   fi
 else
-  systemctl --user enable omarchy-signal.service
+  run "Enabling the bridge service" systemctl --user enable omarchy-signal.service
   warn "Bridge service enabled but not started (install signal-cli first, then: systemctl --user start omarchy-signal)"
 fi
 
 # --- keybinding ----------------------------------------------------------------------
+step "Keybindings"
 if (( DO_BIND )); then
   # The block is rewritten on every install, so an update also updates the
   # bindings. Everything between the markers belongs to this plugin.
@@ -169,12 +232,19 @@ LUA
     sed -i '/^-- BEGIN omarchy-signal$/,/^-- END omarchy-signal$/d' "$BINDINGS"
     printf '%s\n' "$block" >> "$BINDINGS"
     say "Wrote keybindings to $BINDINGS (SUPER+SHIFT+G, SUPER+CTRL+G, SUPER+W closes the popup)"
-    hyprctl reload >/dev/null 2>&1 || true
+    run "Reloading Hyprland" hyprctl reload || true
   fi
+else
+  note "Skipped (--no-bind)"
 fi
 
 # --- menu entry ----------------------------------------------------------------------
-if (( DO_MENU )) && [[ -f $MENU ]]; then
+step "Omarchy menu entry"
+if (( ! DO_MENU )); then
+  note "Skipped (--no-menu)"
+elif [[ ! -f $MENU ]]; then
+  note "Skipped: no menu extensions file at $MENU"
+else
   if grep -q '"signal-tui"' "$MENU"; then
     say "Menu entry already present"
   else
@@ -201,29 +271,36 @@ fi
 # --- post-update hook -------------------------------------------------------------------
 # After `omarchy update`, check that the plugin still loads and the service is
 # enabled, and notify if not.
+step "Post-update check"
 HOOK_DIR="$HOME/.config/omarchy/hooks/post-update.d"
 mkdir -p "$HOOK_DIR"
 install -m 755 "$HERE/scripts/post-update-hook.sh" "$HOOK_DIR/omarchy-signal"
 say "Post-update check installed ($HOOK_DIR/omarchy-signal)"
 
 # --- shell ---------------------------------------------------------------------------
+step "Loading the plugin into the Omarchy shell"
+enable_plugin() {
+  omarchy-plugin-enable "$PLUGIN_ID" --section right || omarchy-plugin-enable "$PLUGIN_ID"
+}
 if command -v omarchy-shell >/dev/null; then
   # The shell hot-reloads bar widgets and panels on file changes but keeps a
   # running service (Service.qml) as it is, so a restart is the only way to
   # pick up service changes. It comes back within a second or two.
-  omarchy-plugin-enable "$PLUGIN_ID" --section right >/dev/null 2>&1 || omarchy-plugin-enable "$PLUGIN_ID" >/dev/null 2>&1 || true
+  run "Enabling the plugin" enable_plugin || warn "Could not enable the plugin; enable it from the shell's plugin settings"
   if command -v omarchy-restart-shell >/dev/null; then
-    omarchy-restart-shell >/dev/null 2>&1 || true
-    say "Plugin enabled; shell restarted so the notification service picks up the new code"
+    run "Restarting the shell so the notification service picks up the new code" omarchy-restart-shell \
+      || warn "Shell restart failed; run: omarchy restart shell"
   else
-    omarchy-shell -q shell rescanPlugins >/dev/null 2>&1 || true
-    say "Plugin enabled in the shell (run 'omarchy restart shell' to reload the notification service)"
+    run "Rescanning plugins" omarchy-shell -q shell rescanPlugins || true
+    note "Run 'omarchy restart shell' to reload the notification service"
   fi
+else
+  note "Skipped: omarchy-shell not found"
 fi
 
+printf '\n%sDone%s in %ds.' "$C_OK" "$C_OFF" $((SECONDS - STARTED))
 cat <<DONE
-
-Done. Next steps:
+ Next steps:
   1. Link this computer to your Signal account:   omarchy-signal link
   2. Open the client:                             omarchy-signal tui   (or SUPER+SHIFT+G)
   3. Check everything:                            omarchy-signal doctor
