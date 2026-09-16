@@ -216,7 +216,7 @@ bindings or menu files; it appends clearly marked blocks that
 | right-click a message | reactions |
 | middle-click a message | reply to it |
 | click a picture | open it larger |
-| `Enter` | send (shortcodes and emoticons convert after the space) |
+| `Enter` / `Shift+Enter` or `Alt+Enter` | send / new line; the message box grows to 10 lines, then scrolls (shortcodes and emoticons convert after the space) |
 | `Ctrl+V` / `SUPER+V`, right-click the message field, middle-click | paste (right-click shows Cut · Copy · Paste); a picture on the clipboard is attached |
 | `Ctrl+O` / `Ctrl+Shift+A` / 󰁦 | attachment picker: arrows move, `Enter` attaches, `Backspace` on an empty filter goes up a folder |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab`, click a tab | switch conversation tab; ✕ closes a tab |

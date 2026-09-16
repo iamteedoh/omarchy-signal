@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import QtQuick
+import QtQuick.Controls as QQC
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
@@ -927,37 +928,76 @@ Item {
       }
     }
 
-    // Composer
+    // Composer: a multi-line box that grows with the message (3 to 10 lines,
+    // then scrolls), so a long reply can be read over before it is sent.
+    // Enter sends; Shift+Enter or Alt+Enter starts a new line.
     RowLayout {
       Layout.fillWidth: true
       spacing: Style.space(8)
-      Button { text: "󰁦"; onClicked: view.pickAttachment() }
-      TextField {
-        id: composer
+      Button { Layout.alignment: Qt.AlignBottom; text: "󰁦"; onClicked: view.pickAttachment() }
+      QQC.ScrollView {
+        id: composerScroll
         Layout.fillWidth: true
-        placeholderText: view.linked ? "Message… (Enter sends, :smile: works)" : "No account linked: omarchy-signal link"
-        enabled: !view.sending && view.linked
-        onAccepted: view.send()
-        onTextEdited: {
-          if (!view.emojiAutoconvert) return
-          var r = Emoji.convertBeforeCursor(text, cursorPosition)
-          if (r) { text = r.text; cursorPosition = r.cursor }
+        readonly property real chrome: composer.topPadding + composer.bottomPadding
+        Layout.preferredHeight: Math.min(composerMetrics.lineSpacing * 10, Math.max(composerMetrics.lineSpacing * 3, composer.contentHeight)) + chrome
+        QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
+        readonly property var borderSpec: Border.controlSpec(composer.activeFocus ? "focus" : (composer.hovered ? "hover-cursor" : "normal"), Color.foreground, Color.accent)
+        background: BorderSurface {
+          color: Style.controlFill(composer.activeFocus, composer.hovered, Color.foreground, Color.accent)
+          borderSpec: composerScroll.borderSpec
+          radius: Style.cornerRadius
         }
-        Keys.onEscapePressed: function(event) { view.handleEscape(); event.accepted = true }
-        Keys.onPressed: function(event) {
-          if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && (event.modifiers & Qt.ControlModifier)) {
-            view.cycleWindow((event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab ? -1 : 1)
-            event.accepted = true
-          } else if (event.matches(StandardKey.Paste) || (event.key === Qt.Key_Insert && (event.modifiers & Qt.ShiftModifier))) {
-            view.pasteImage()               // not accepted: the field still pastes any text
-          } else if ((event.key === Qt.Key_O && (event.modifiers & Qt.ControlModifier))
-                     || (event.key === Qt.Key_A && (event.modifiers & Qt.ControlModifier) && (event.modifiers & Qt.ShiftModifier))) {
-            view.pickAttachment()
-            event.accepted = true
+        FontMetrics { id: composerMetrics; font: composer.font }
+
+        QQC.TextArea {
+          id: composer
+          property bool converting: false
+          wrapMode: TextEdit.Wrap
+          textFormat: TextEdit.PlainText
+          placeholderText: view.linked ? "Message…  (Enter sends · Shift+Enter new line · :smile: works)" : "No account linked: omarchy-signal link"
+          enabled: !view.sending && view.linked
+          background: null
+          font.family: Style.font.family
+          font.pixelSize: Style.font.body
+          color: Color.foreground
+          selectionColor: Style.selectionFillFor(Color.foreground, Color.accent)
+          selectedTextColor: Color.foreground
+          placeholderTextColor: Qt.darker(Color.foreground, 1.6)
+          leftPadding: Style.spacing.controlPaddingX + Border.left(composerScroll.borderSpec)
+          rightPadding: Style.spacing.controlPaddingX + Border.right(composerScroll.borderSpec)
+          topPadding: Style.spacing.inputPaddingY + Border.top(composerScroll.borderSpec)
+          bottomPadding: Style.spacing.inputPaddingY + Border.bottom(composerScroll.borderSpec)
+          onTextChanged: {
+            // The space after :smile: or :D turns it into the emoji, as you type.
+            if (converting || !activeFocus || !view.emojiAutoconvert) return
+            var r = Emoji.convertBeforeCursor(text, cursorPosition)
+            if (!r) return
+            converting = true
+            text = r.text
+            cursorPosition = r.cursor
+            converting = false
+          }
+          Keys.onEscapePressed: function(event) { view.handleEscape(); event.accepted = true }
+          Keys.onPressed: function(event) {
+            var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
+            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              if (event.modifiers & (Qt.ShiftModifier | Qt.AltModifier)) insert(cursorPosition, "\n")
+              else view.send()
+              event.accepted = true
+            } else if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && ctrl) {
+              view.cycleWindow((event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab ? -1 : 1)
+              event.accepted = true
+            } else if (event.matches(StandardKey.Paste) || (event.key === Qt.Key_Insert && (event.modifiers & Qt.ShiftModifier))) {
+              view.pasteImage()               // not accepted: the box still pastes any text
+            } else if ((event.key === Qt.Key_O && ctrl)
+                       || (event.key === Qt.Key_A && ctrl && (event.modifiers & Qt.ShiftModifier))) {
+              view.pickAttachment()
+              event.accepted = true
+            }
           }
         }
       }
-      Button { text: "Send"; enabled: !view.sending && view.linked; onClicked: view.send() }
+      Button { Layout.alignment: Qt.AlignBottom; text: "Send"; enabled: !view.sending && view.linked; onClicked: view.send() }
     }
 
     RowLayout {
@@ -966,7 +1006,7 @@ Item {
       Text {
         Layout.fillWidth: true
         text: view.error ? view.error : (view.sending ? "Encrypting…" : view.notice ? view.notice
-              : "click a message: Reply · React · Copy  ·  select text, Ctrl+C or right-click copies  ·  right-click: react  ·  middle-click: reply  ·  Ctrl+V pastes (pictures too)  ·  Ctrl+O attach  ·  Esc closes")
+              : "click a message: Reply · React · Copy  ·  select text, Ctrl+C or right-click copies  ·  right-click: react  ·  middle-click: reply  ·  Shift+Enter new line  ·  Ctrl+V pastes (pictures too)  ·  Ctrl+O attach  ·  Esc closes")
         textFormat: Text.PlainText
         elide: Text.ElideRight
         color: view.error ? Color.urgent : Util.alpha(Color.popups.text, 0.5)
