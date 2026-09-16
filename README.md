@@ -177,6 +177,7 @@ bindings or menu files; it appends clearly marked blocks that
 | `SUPER+SHIFT+G` | open or focus the terminal client |
 | `SUPER+CTRL+G` | new conversation: the bar's searchable contact picker |
 | `SUPER+ALT+S` / `SUPER+S` | park the chat window in the scratchpad / bring it back (Omarchy defaults) |
+| `SUPER+W` | close the popup conversation (or the linking QR code) while one is on screen; otherwise closes the active window as usual |
 
 ### Terminal client
 
@@ -219,7 +220,7 @@ bindings or menu files; it appends clearly marked blocks that
 | `Ctrl+V` / `SUPER+V`, right-click the message field, middle-click | paste (right-click shows Cut · Copy · Paste); a picture on the clipboard is attached |
 | `Ctrl+O` / `Ctrl+Shift+A` / 󰁦 | attachment picker: arrows move, `Enter` attaches, `Backspace` on an empty filter goes up a folder |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab`, click a tab | switch conversation tab; ✕ closes a tab |
-| `Esc` | closes one layer at a time: picker → text selection → message actions → quote → window |
+| `Esc` | closes one layer at a time: picker → text selection → message actions → quote → window (`SUPER+W` closes the popup at once) |
 | Detach / Terminal buttons | move the popup into the chat window / open the terminal client |
 
 ### Bar panel

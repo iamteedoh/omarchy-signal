@@ -124,11 +124,9 @@ fi
 
 # --- keybinding ----------------------------------------------------------------------
 if (( DO_BIND )); then
-  if [[ -f $BINDINGS ]] && grep -qF -- "$MARK_BEGIN" "$BINDINGS"; then
-    say "Keybinding block already present in $BINDINGS"
-  else
-    mkdir -p "$(dirname "$BINDINGS")"
-    cat >> "$BINDINGS" <<'LUA'
+  # The block is rewritten on every install, so an update also updates the
+  # bindings. Everything between the markers belongs to this plugin.
+  block=$(cat <<'LUA'
 -- BEGIN omarchy-signal
 -- SUPER+SHIFT+G is Omarchy's Signal key; point it at the terminal client.
 hl.unbind("SUPER + SHIFT + G")
@@ -137,9 +135,40 @@ o.bind("SUPER + SHIFT + G", "Signal", "omarchy-signal open")
 o.bind("SUPER + CTRL + G", "Signal: new conversation", "omarchy-shell iamteedoh.signal.bar toggle")
 -- Detached conversation windows float themselves (720x640, centred) when they
 -- open; SUPER+ALT+S moves one to the scratchpad, SUPER+S brings it back.
+-- The popup conversation and the linking QR code are layer surfaces, not
+-- windows, so SUPER+W closes them itself while one is on screen, and closes
+-- the active window as usual otherwise.
+local signal_layers = { ["omarchy-signal-reply"] = { open = 0, ipc = "close" }, ["omarchy-signal-qr"] = { open = 0, ipc = "hideQr" } }
+hl.on("layer.opened", function(layer)
+  local l = signal_layers[layer.namespace]
+  if l then l.open = l.open + 1 end
+end)
+hl.on("layer.closed", function(layer)
+  local l = signal_layers[layer.namespace]
+  if l and l.open > 0 then l.open = l.open - 1 end
+end)
+hl.unbind("SUPER + W")
+o.bind("SUPER + W", "Close window", function()
+  for _, l in pairs(signal_layers) do
+    if l.open > 0 then
+      hl.dispatch(hl.dsp.exec_cmd("omarchy-shell iamteedoh.signal " .. l.ipc))
+      return
+    end
+  end
+  hl.dispatch(hl.dsp.window.close())
+end)
 -- END omarchy-signal
 LUA
-    say "Added SUPER+SHIFT+G → omarchy-signal tui to $BINDINGS"
+)
+  mkdir -p "$(dirname "$BINDINGS")"
+  touch "$BINDINGS"
+  before=$(sed -n '/^-- BEGIN omarchy-signal$/,/^-- END omarchy-signal$/p' "$BINDINGS")
+  if [[ $before == "$block" ]]; then
+    say "Keybinding block up to date in $BINDINGS"
+  else
+    sed -i '/^-- BEGIN omarchy-signal$/,/^-- END omarchy-signal$/d' "$BINDINGS"
+    printf '%s\n' "$block" >> "$BINDINGS"
+    say "Wrote keybindings to $BINDINGS (SUPER+SHIFT+G, SUPER+CTRL+G, SUPER+W closes the popup)"
     hyprctl reload >/dev/null 2>&1 || true
   fi
 fi
