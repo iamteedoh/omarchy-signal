@@ -40,9 +40,9 @@ echo "no shell-string execution in QML"
 if grep -n "execDetached\|bash -c\|sh -c" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" "$ROOT/Model.js"; then echo "  FAIL shell strings found"; fail=1; else echo "  ok   argv only"; fi
 echo "no 32-bit int holds a Signal timestamp"
 if grep -n -E "property int (\w*[a-z0-9_]Ts|ts|\w*Timestamp)\b" "$ROOT"/*.qml; then echo "  FAIL use real/var for timestamps"; fail=1; else echo "  ok"; fi
-echo "every Text is PlainText"
-n_text=$(grep -c "^\s*Text {" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" | awk -F: '{s+=$2} END {print s}')
-n_plain=$(grep -c "textFormat: Text.PlainText" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" | awk -F: '{s+=$2} END {print s}')
+echo "every Text and TextEdit is PlainText"
+n_text=$(grep -c -E "^\s*(Text|TextEdit) \{" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" | awk -F: '{s+=$2} END {print s}')
+n_plain=$(grep -c -E "textFormat: (Text|TextEdit).PlainText" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" | awk -F: '{s+=$2} END {print s}')
 if [[ $n_text -eq $n_plain ]]; then echo "  ok   $n_text/$n_plain"; else echo "  FAIL $n_text Text blocks, $n_plain PlainText"; fail=1; fi
 
 exit $fail

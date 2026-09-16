@@ -21,12 +21,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, emoji, kitty, links, pathcomplete, qr
+from . import __version__, clipboard, emoji, kitty, links, pathcomplete, qr
 from .bridge import _guess_mime
 from .client import BridgeClient, BridgeError, BridgeUnavailable
 from .config import RESTART_REQUIRED, SETTINGS, Config, Paths, coerce_setting, save_config
 from .sanitize import InvalidAttachment, clean_name, clean_text, safe_attachment_path, safe_filename
-from .term import Key, KeyParser, Terminal, pad, str_width, truncate, wrap
+from .term import Key, KeyParser, Terminal, cells_text, pad, screen_cells, str_width, truncate, wrap
 from .theme import Theme, mix
 
 T = Terminal
@@ -34,6 +34,8 @@ T = Terminal
 LIST_WIDTH = 30
 MIN_COLS = 70
 MIN_ROWS = 14
+# Overlays with a text field that a paste types into.
+TEXT_OVERLAYS = ("contacts", "search", "attach", "saveas", "react", "setting-text", "prompt", "members", "forward")
 
 
 @dataclass
@@ -162,6 +164,11 @@ class App:
         self.link_map: dict[int, list[tuple[int, int, str]]] = {}   # screen row -> [(col_start, col_end, href)]
         self._line_cache: dict[tuple, list] = {}                  # message signature -> rendered lines
         self._line_cache_epoch: tuple = ()
+        self.frame_text = ""                 # the last frame drawn, replayed into cells for mouse selection
+        self.press: Key | None = None        # left button down, waiting to become a click or a drag
+        self.sel_anchor: tuple[int, int] | None = None   # (row, col) where the drag started
+        self.sel_head: tuple[int, int] | None = None     # (row, col) under the pointer now
+        self.sel_cols = (1, 0)                           # columns the selection stays within
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -269,6 +276,8 @@ class App:
         if self.term:
             self.term.measure()
         # Cell geometry changed: recompute every image box and re-place.
+        self.clear_selection()
+        self.press = None
         self.images.clear()
         self.reset_images = True
         self.dirty = True
@@ -1019,7 +1028,12 @@ class App:
         if key.name == "mouse":
             await self._handle_mouse(key)
             return
+        selection = self.selected_text()
+        self.clear_selection()
         if key.ctrl and key.char == "c":
+            if selection:
+                self._copy_to_clipboard(selection)
+                return
             if self.overlay:
                 self.close_overlay()
                 return
@@ -1030,9 +1044,14 @@ class App:
             self.reset_images = True
             self.dirty = True
             return
+        if (key.ctrl and key.char == "v") or (key.name == "insert" and key.shift):
+            await self._paste_from_clipboard()
+            return
         if self.overlay:
             await self._overlay_key(key)
             return
+        if key.name == "paste" and self.focus == "list":
+            self.focus = "composer"
         if self.emoji_suggestions and self.focus == "composer" and key.name in ("tab", "enter", "up", "down", "escape"):
             await self._composer_key(key)   # the picker owns these keys while it is open
             return
@@ -1203,10 +1222,13 @@ class App:
                         self.emoji_suggestions = []
                 await self._maybe_typing()
         elif key.name == "paste":
-            text = key.char.replace("\r\n", "\n").replace("\r", "\n")
+            # clean_text: a copied web page can carry escape sequences, and the composer is drawn raw.
+            text = clean_text(key.char)
             if len(c.text) + len(text) <= 60000:
                 c.insert(text)
                 self._update_emoji_suggestions()
+            else:
+                self.show_toast("too long to paste: a message holds 60000 characters")
         if key.name in ("char", "backspace", "delete", "left", "right", "home", "end"):
             self._update_emoji_suggestions()
 
@@ -1215,6 +1237,12 @@ class App:
         if key.name == "escape":
             self.close_overlay()
             return
+        if key.name == "paste":
+            # Into a text field, as one line; everywhere else a paste is ignored.
+            text = clean_text(key.char, max_length=4000, single_line=True).strip()
+            if name not in TEXT_OVERLAYS or not text:
+                return
+            key = Key("char", char=text)
         if name == "help":
             if key.name in ("enter", "char"):
                 self.close_overlay()
@@ -1452,14 +1480,50 @@ class App:
                 self.overlay_results = await self.client.request("search", query=q, limit=30)
 
     async def _handle_mouse(self, key: Key) -> None:
+        # Left button: press, drag (button 32) and release. A drag selects text
+        # and copies it on release; a press and release in place is a click.
+        if key.button == 32 and self.press and self.term:
+            y = max(1, min(self.term.rows, key.y))
+            x = max(self.sel_cols[0], min(self.sel_cols[1], key.x))
+            if self.sel_head is not None or (y, x) != self.sel_anchor:
+                self.sel_head = (y, x)
+                self.dirty = True
+            return
+        if key.button == 0 and not key.release:
+            self.clear_selection()
+            self.press = key
+            if self.term:
+                self.sel_anchor = (key.y, key.x)
+                self.sel_cols = self._selection_columns(key.x, key.y)
+            return
+        if key.button == 0 and key.release:
+            press, self.press = self.press, None
+            if press is None:
+                return
+            text = self.selected_text()
+            if text:
+                self._copy_to_clipboard(text, primary_too=True)
+                return
+            self.clear_selection()
+            await self._click(press)
+            return
         if key.release:
             return
+        if key.button == 1:
+            await self._paste_from_clipboard(primary=True)
+            return
+        if key.button == 2:
+            await self._paste_from_clipboard()
+            return
         if key.button in (64, 65):
+            self.clear_selection()
             if key.x <= LIST_WIDTH:
                 self._select_index(self.selected + (1 if key.button == 65 else -1))
             else:
                 self.scroll = max(0, self.scroll + (3 if key.button == 64 else -3))
             return
+
+    async def _click(self, key: Key) -> None:
         if key.button == 0 and key.x <= LIST_WIDTH and 3 <= key.y and self.term:
             two_line = len(self.conversations) * 2 <= self.term.rows - 4
             index = (key.y - 3) // 2 if two_line else key.y - 3
@@ -1663,16 +1727,39 @@ class App:
             return
         self.show_toast(f"saved {dest}", 6)
 
-    def _copy_to_clipboard(self, text: str) -> None:
-        exe = shutil.which("wl-copy")
-        if not exe:
-            self.show_toast("wl-copy not found")
-            return
+    def _copy_to_clipboard(self, text: str, *, primary_too: bool = False) -> None:
         try:
-            subprocess.run([exe, "--", text], input=None, timeout=3, check=False)
-            self.show_toast("copied")
-        except (OSError, subprocess.SubprocessError):
-            self.show_toast("copy failed")
+            clipboard.copy(text)
+            if primary_too:
+                clipboard.copy(text, primary=True)   # middle-click pastes it too, as in any terminal
+        except clipboard.ClipboardError as exc:
+            self.show_toast(str(exc))
+            return
+        lines = text.count("\n") + 1
+        self.show_toast("copied" if lines == 1 else f"copied {lines} lines")
+
+    async def _paste_from_clipboard(self, *, primary: bool = False) -> None:
+        """Ctrl-V, right-click (clipboard) and middle-click (primary selection).
+        Text goes wherever typing would; a picture becomes an attachment."""
+        try:
+            mime = "" if primary else clipboard.image_type(await asyncio.to_thread(clipboard.types))
+            if mime:
+                if self.overlay or not self.active_key:
+                    self.show_toast("open a conversation to paste a picture into it")
+                    return
+                path = await asyncio.to_thread(clipboard.paste_image, clipboard.pasted_dir(self.paths.data_dir), mime)
+                self.composer.attachments.append(str(path))
+                self.focus = "composer"
+                self.show_toast(f"attached {path.name} (Esc removes it)")
+                return
+            text = await asyncio.to_thread(clipboard.paste_text, primary=primary)
+        except (clipboard.ClipboardError, OSError) as exc:
+            self.show_toast(f"paste failed: {exc}")
+            return
+        if not text:
+            self.show_toast("nothing to paste")
+            return
+        await self.handle_key(Key("paste", char=text))
 
     def _open_href(self, href: str) -> None:
         opener = shutil.which("xdg-open")
@@ -1759,10 +1846,66 @@ class App:
         out.append(self._draw_footer())
         if self.overlay:
             out.append(self._draw_overlay())
+        self.frame_text = "".join(out)
+        out.append(self._draw_selection())
         out.append(self._cursor())
         out.append("\x1b[?2026l")
         t.write("".join(out))
         t.flush()
+
+    def _draw_selection(self) -> str:
+        """Repaint the selected cells over the frame in the selection colour."""
+        if not self.term or not self.sel_anchor or not self.sel_head or self.sel_anchor == self.sel_head:
+            return ""
+        th = self.theme
+        grid = screen_cells(self.frame_text, self.term.cols, self.term.rows)
+        (r0, c0), (r1, c1) = sorted([self.sel_anchor, self.sel_head])
+        col_min, col_max = max(1, self.sel_cols[0]), min(self.term.cols, self.sel_cols[1])
+        out = []
+        for row in range(max(1, r0), min(self.term.rows, r1) + 1):
+            cells = grid[row - 1]
+            lo = max(col_min, c0 if row == r0 else col_min)
+            hi = min(col_max, c1 if row == r1 else col_max)
+            while hi >= lo and cells[hi - 1] == " ":
+                hi -= 1                       # stop at the end of the text, like a terminal
+            if hi < lo:
+                continue
+            if cells[lo - 1] == "" and lo > 1:
+                lo -= 1                       # started on the right half of a wide glyph
+            if hi < len(cells) and cells[hi] == "":
+                hi += 1                       # ended on the left half of one
+            out.append(T.move(row, lo) + T.bg(th.selection) + T.fg(th.bright_foreground) + "".join(cells[lo - 1:hi]) + T.RESET)
+        return "".join(out)
+
+    def selected_text(self) -> str:
+        if not self.term or not self.sel_anchor or not self.sel_head or self.sel_anchor == self.sel_head:
+            return ""
+        grid = screen_cells(self.frame_text, self.term.cols, self.term.rows)
+        lines = cells_text(grid, self.sel_anchor, self.sel_head, *self.sel_cols).split("\n")
+        # Drop the pane margin and bubble indent that every selected line shares.
+        indents = [len(l) - len(l.lstrip(" ")) for l in lines[1:] if l.strip()]
+        cut = min(indents) if indents else 0
+        lines = [lines[0][min(cut, len(lines[0]) - len(lines[0].lstrip(" "))):]] + [l[cut:] for l in lines[1:]]
+        return "\n".join(lines)
+
+    def clear_selection(self) -> None:
+        if self.sel_anchor or self.sel_head:
+            self.dirty = True
+        self.sel_anchor = self.sel_head = None
+
+    def _selection_columns(self, x: int, y: int) -> tuple[int, int]:
+        """A drag stays inside the part of the screen it started in."""
+        assert self.term
+        if self.overlay:
+            top, left, w, h = self._overlay_box()
+            if top <= y < top + h and left <= x < left + w:
+                return left, left + w - 1
+            return 1, self.term.cols
+        if x < LIST_WIDTH and y >= 3:
+            return 1, LIST_WIDTH - 1
+        if x > LIST_WIDTH and y >= 3:
+            return LIST_WIDTH + 1, self.term.cols
+        return 1, self.term.cols
 
     def _cursor(self) -> str:
         """Position (and shape) the hardware cursor. A blinking bar while
@@ -2325,7 +2468,7 @@ class App:
         t = self.term
         name = self.overlay
         w = min(t.cols - 6, 84 if name == "settings" else 72)
-        rows_needed = {"contacts": min(t.rows - 6, 20), "search": min(t.rows - 6, 18), "help": 20, "link": min(t.rows - 4, 32),
+        rows_needed = {"contacts": min(t.rows - 6, 20), "search": min(t.rows - 6, 18), "help": min(t.rows - 4, 25), "link": min(t.rows - 4, 32),
                        "quit": 5, "attach": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
                        "saveas": min(t.rows - 6, 5 + min(12, len(self.overlay_results))),
                        "react": 6, "attachment": min(t.rows - 6, 9 + min(10, len(self.att_items))),
@@ -2510,7 +2653,8 @@ class App:
                     ("Alt-D (w in the list)", "detach this chat into the shell's chat window"),
                     ("Ctrl-E / m", "mute conversation"), ("Ctrl-S / F2", "settings"), ("Ctrl-L", "redraw"), ("Ctrl-X", "clear composer"),
                     ("Ctrl-Z", "put a failed message back in the composer"), (":smile:", "emoji shortcodes; a picker opens as you type"),
-                    ("Ctrl-C", "quit")]
+                    ("drag", "select text; it is copied when you let go"), ("Ctrl-V, right-click", "paste; a picture attaches (SUPER+V pastes text only)"),
+                    ("middle-click", "paste the last selection"), ("Ctrl-C", "copy the selection, otherwise quit")]
             for i, (k, v) in enumerate(keys[:h - 3]):
                 out.append(T.move(top + 1 + i, body_left) + bg + T.fg(th.accent) + pad(k, 22) + T.fg(th.foreground) + truncate(v, body_w - 22) + T.RESET)
         elif name == "quit":

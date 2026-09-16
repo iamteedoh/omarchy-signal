@@ -55,6 +55,9 @@ it is fictional.
 - Message actions on any message: react, quote/reply, edit, delete for
   everyone, forward, copy, info. Attachment menu: open larger, save, save as,
   copy path, show/hide inline.
+- Copy and paste with mouse or keyboard: drag to select any text on screen
+  (copied when you let go), `Ctrl-V` or right-click to paste, middle-click
+  pastes the last selection. A picture on the clipboard becomes an attachment.
 - Conversation menu: disappearing timer, mute, archive, block, message
   requests, safety number with verification, group members, rename, leave,
   new group, Note to Self.
@@ -155,7 +158,7 @@ omarchy-signal doctor
 
 External programs: `signal-cli` (AUR `signal-cli-native-bin`; holds the
 account keys and does every cryptographic operation), `qrencode` (linking
-QR), ImageMagick (image conversion), and optionally `wl-copy`, `pw-play` and
+QR), ImageMagick (image conversion), and optionally `wl-clipboard` (copy and paste), `pw-play` and
 `xdg-open`. The installer asks before installing any of them; package
 installation is the only step that touches the system outside your home
 directory, and it goes through `omarchy-pkg-add` (or `pacman` with `sudo`
@@ -196,20 +199,27 @@ bindings or menu files; it appends clearly marked blocks that
 | `Ctrl-S` / `F2` | settings |
 | `Ctrl-Z` | put a failed message back in the composer |
 | `Ctrl-X` / `Ctrl-L` | clear composer / redraw |
-| `?` | help · `Ctrl-C` quit |
+| drag with the mouse | select text; copied to the clipboard (and the primary selection) on release |
+| `Ctrl-C` | copy the selection; with nothing selected, quit |
+| `Ctrl-V`, right-click | paste into the composer or the open prompt; a picture on the clipboard is attached |
+| `SUPER+V`, `Shift-Insert`, `Ctrl-Shift-V` | paste text (the terminal does this paste itself, and terminals paste text only) |
+| middle-click | paste the primary selection |
+| `?` | help |
 
 ### Popup and chat window
 
 | Key or mouse | Action |
 |--------------|--------|
 | click a message | action row: Reply · React (quick emojis) · Copy |
+| drag across message text | select it; `Ctrl+C` / `SUPER+C` or a right-click on it copies (Copy then copies just the selection) |
 | right-click a message | reactions |
 | middle-click a message | reply to it |
 | click a picture | open it larger |
 | `Enter` | send (shortcodes and emoticons convert after the space) |
+| `Ctrl+V` / `SUPER+V`, right-click the message field, middle-click | paste (right-click shows Cut · Copy · Paste); a picture on the clipboard is attached |
 | `Ctrl+O` / `Ctrl+Shift+A` / 󰁦 | attachment picker: arrows move, `Enter` attaches, `Backspace` on an empty filter goes up a folder |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab`, click a tab | switch conversation tab; ✕ closes a tab |
-| `Esc` | closes one layer at a time: picker → message actions → quote → window |
+| `Esc` | closes one layer at a time: picker → text selection → message actions → quote → window |
 | Detach / Terminal buttons | move the popup into the chat window / open the terminal client |
 
 ### Bar panel

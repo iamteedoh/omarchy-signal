@@ -114,6 +114,23 @@ def cmd_ls_files(args) -> int:
     return 0
 
 
+def cmd_paste_image(args) -> int:
+    """For the window's Ctrl+V: when the clipboard holds a picture and no
+    text, save it where the bridge may read it and print the path. With text
+    on the clipboard it does nothing (the text field pastes that itself)."""
+    from . import clipboard
+    try:
+        mime = clipboard.image_type(clipboard.types())
+        if not mime:
+            return 1
+        path = clipboard.paste_image(clipboard.pasted_dir(_paths().data_dir), mime)
+    except (clipboard.ClipboardError, OSError) as exc:
+        print(f"omarchy-signal: {exc}", file=sys.stderr)
+        return 1
+    _print_json({"path": str(path)})
+    return 0
+
+
 def cmd_float_window(args) -> int:
     """Float, size and centre the Hyprland window with the given title (used by
     the shell for detached conversation windows; window rules proved flaky)."""
@@ -577,6 +594,7 @@ def cmd_doctor(args) -> int:
           "omarchy pkg aur add signal-cli  (or signal-cli-native-bin)")
     check("qrencode (for linking)", shutil.which("qrencode"), "omarchy pkg add qrencode")
     check("ImageMagick (for image previews)", shutil.which("magick") or shutil.which("convert"), "omarchy pkg add imagemagick")
+    check("wl-clipboard (for copy and paste)", shutil.which("wl-copy") and shutil.which("wl-paste"), "omarchy pkg add wl-clipboard")
     check("XDG_RUNTIME_DIR set", bool(os.environ.get("XDG_RUNTIME_DIR")))
     check(f"bridge socket {paths.socket}", paths.socket.exists(), "systemctl --user enable --now omarchy-signal")
     theme = paths.omarchy_theme_dir / "colors.toml"
@@ -671,6 +689,9 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("ls-files", help=argparse.SUPPRESS)
     s.add_argument("dir", nargs="?")
     s.set_defaults(fn=cmd_ls_files)
+
+    s = sub.add_parser("paste-image", help=argparse.SUPPRESS)
+    s.set_defaults(fn=cmd_paste_image)
 
     s = sub.add_parser("window", help="open a conversation in its own window, detached from the client")
     s.add_argument("conversation", nargs="?")
