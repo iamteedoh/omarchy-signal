@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/iamteedoh/omarchy-signal/compare/v0.4.0...v0.4.1) (2026-09-17)
+
+
+### Bug Fixes
+
+* work on Omarchy 4.0.0, and catch version-skewed APIs in CI ([#14](https://github.com/iamteedoh/omarchy-signal/issues/14)) ([b427b66](https://github.com/iamteedoh/omarchy-signal/commit/b427b6676ea6dd73b8179f1440d165da10e77085))
+
 ## [0.4.0](https://github.com/iamteedoh/omarchy-signal/compare/v0.3.0...v0.4.0) (2026-09-16)
 
 
