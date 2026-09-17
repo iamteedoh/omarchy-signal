@@ -102,7 +102,7 @@ and driven over JSON-RPC; the single shell string in the code base is the
 launch command handed to Omarchy's `omarchy-launch-or-focus` (which evals
 it), assembled from our own fixed argv with `shlex.quote` and never from
 message text; the Quickshell plugin launches `omarchy-signal` via
-`Util.execArgv` with arrays built by `Model.tuiArgv` / `Model.sendArgv`, which
+`execArgv` with arrays built by `Model.tuiArgv` / `Model.sendArgv`, which
 validate the conversation key against `^(number|uuid|group|username):[A-Za-z0-9+/=_.-]+$`
 and pass free text as `--message=…` after which the key follows `--`.
 

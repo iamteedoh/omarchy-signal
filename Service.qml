@@ -14,9 +14,19 @@ import "Model.js" as Model
 //
 // Everything shown comes from the bridge already sanitised; Model.cleanText
 // runs on it again here, and every Text is PlainText. No string from the
-// network is ever passed to a shell: replies go through Util.execArgv.
+// network is ever passed to a shell: replies go through execArgv.
 Item {
   id: root
+
+  // Omarchy only grew Util.execArgv during the 4.0.x series (absent in 4.0.0,
+  // present by 4.0.4), so calling it throws on an Omarchy that predates it and
+  // every action here silently does nothing. Vendor it instead of depending on
+  // the version. Same form as upstream: argv is passed as positional
+  // parameters and never interpolated into a shell string, and `bash -lc`
+  // keeps the login PATH that resolves omarchy-* helpers.
+  function execArgv(argv) {
+    Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "bash"].concat(argv))
+  }
 
   property var shell: null
   property var manifest: null
@@ -66,7 +76,7 @@ Item {
 
   function raiseWindow(key) {
     if (!root.showTab(key)) return false
-    if (root.chatWindow) Util.execArgv([root.cliPath, "raise-window", "--", root.chatWindow.title])
+    if (root.chatWindow) root.execArgv([root.cliPath, "raise-window", "--", root.chatWindow.title])
     return true
   }
   property bool dnd: false
@@ -109,8 +119,10 @@ Item {
   }
 
   function runInstaller() {
+    // Launch before dismissing: if the exec fails the popup stays up rather
+    // than vanishing and leaving the user with nothing to click.
+    root.execArgv(["omarchy-launch-terminal", root.pluginDir + "/scripts/run-installer.sh"])
     root.dismissKey("setup:install")
-    Util.execArgv(["omarchy-launch-terminal", root.pluginDir + "/scripts/run-installer.sh"])
   }
 
   // Toast queue: newest last. Each entry is the object Model.toastFromMessage builds.
@@ -207,14 +219,14 @@ Item {
       if (root.chatView && toast.key === root.activeTab) return   // the chat window is showing it
       if (root.respectDnd && root.dnd) return
       if (root.notificationMode === "system") {
-        Util.execArgv(["omarchy-notification-send", "--app-name", "Signal", "-g", "󰭹", toast.title, toast.body,
+        root.execArgv(["omarchy-notification-send", "--app-name", "Signal", "-g", "󰭹", toast.title, toast.body,
                        "--exec", "omarchy-signal", "open", toast.key])
         return
       }
       if (root.notificationMode !== "popup") return
       root.pushToast(toast)
       if (root.notificationSound && /^\/[^\0]+\.(wav|ogg|oga|mp3|flac)$/i.test(root.notificationSound))
-        Util.execArgv(["pw-play", root.notificationSound])
+        root.execArgv(["pw-play", root.notificationSound])
       return
     }
   }
@@ -280,7 +292,7 @@ Item {
     var hadWindow = root.chatWindow !== null
     if (root.windows.indexOf(key) < 0) root.windows = root.windows.concat([key])   // creates the window when it is the first tab
     root.showTab(key)
-    if (hadWindow && root.chatWindow) Util.execArgv([root.cliPath, "raise-window", "--", root.chatWindow.title])
+    if (hadWindow && root.chatWindow) root.execArgv([root.cliPath, "raise-window", "--", root.chatWindow.title])
     root.dismissKey(key)
     return true
   }
@@ -302,17 +314,17 @@ Item {
   function openTerminal(key) {
     var argv = Model.tuiArgv(key)
     argv[0] = root.cliPath
-    Util.execArgv(argv)
+    root.execArgv(argv)
     root.closeReply()
     if (key) root.dismissKey(key)
   }
 
   IpcHandler {
     target: "iamteedoh.signal"
-    function open(): string { Util.execArgv(Model.tuiArgv("")); return "ok" }
+    function open(): string { root.execArgv(Model.tuiArgv("")); return "ok" }
     function reply(key: string): string { root.openReply(key, ""); return "ok" }
     function window(key: string): string {
-      if (!key) { Util.execArgv([root.cliPath, "open"]); return "ok" }
+      if (!key) { root.execArgv([root.cliPath, "open"]); return "ok" }
       return root.openWindow(key, "") ? "ok" : "refused"
     }
     function closeWindow(key: string): string { root.closeWindow(key); return "ok" }
@@ -321,7 +333,7 @@ Item {
     function closeChatWindow(): string { root.windows = []; root.activeTab = ""; root.refreshTabs(); return "ok" }
     function dismiss(): string { root.dismissAll(); return "ok" }
     function close(): string { root.closeReply(); return "ok" }
-    function demo(): string { Util.execArgv([root.cliPath, "demo"]); return "ok" }
+    function demo(): string { root.execArgv([root.cliPath, "demo"]); return "ok" }
     function toasts(): string { return String(root.toasts.length) }
     function showQr(path: string): string { return root.showQr(path) ? "ok" : "refused" }
     function hideQr(): string { root.hideQr(); return "ok" }

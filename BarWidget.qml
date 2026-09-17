@@ -14,6 +14,16 @@ Panel {
   id: root
   moduleName: "iamteedoh.signal"
   ipcTarget: "iamteedoh.signal.bar"
+
+  // Omarchy only grew Util.execArgv during the 4.0.x series (absent in 4.0.0,
+  // present by 4.0.4), so calling it throws on an Omarchy that predates it and
+  // every action here silently does nothing. Vendor it instead of depending on
+  // the version. Same form as upstream: argv is passed as positional
+  // parameters and never interpolated into a shell string, and `bash -lc`
+  // keeps the login PATH that resolves omarchy-* helpers.
+  function execArgv(argv) {
+    Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "bash"].concat(argv))
+  }
   readonly property bool vertical: bar ? bar.vertical : false
 
   property int unread: 0
@@ -84,7 +94,7 @@ Panel {
       argv = inTerminal ? Model.tuiArgv(row.key) : [root.cliPath, "window", "--", row.key]
     }
     argv[0] = root.cliPath
-    Util.execArgv(argv)
+    root.execArgv(argv)
     root.close()
   }
 
@@ -163,7 +173,7 @@ Panel {
     tooltipText: root.linked ? (root.unread > 0 ? root.unread + " unread Signal message" + (root.unread === 1 ? "" : "s") : "Signal")
                              : (root.connected ? "Signal: not linked (omarchy-signal link)" : "Signal: bridge offline (run install.sh from the plugin folder if you have not yet)")
     onPressed: function(b) {
-      if (b === Qt.RightButton) { var argv = Model.tuiArgv(""); argv[0] = root.cliPath; Util.execArgv(argv) }
+      if (b === Qt.RightButton) { var argv = Model.tuiArgv(""); argv[0] = root.cliPath; root.execArgv(argv) }
       else if (b === Qt.MiddleButton) root.refresh()
       else root.toggle()
     }
@@ -268,7 +278,7 @@ Panel {
         Text {
           visible: root.rows.length === 0
           width: parent.width
-          text: root.linked ? (root.query ? "No match. Enter opens the client." : (root.showContacts ? "No contacts yet." : "No conversations yet. Tab for contacts.")) : "Link this computer first: omarchy-signal link"
+          text: root.linked ? (root.query ? "No match. Enter opens the client." : (root.showContacts ? "No contacts yet." : "No conversations yet. Tab for contacts.")) : (root.connected ? "Link this computer first: omarchy-signal link" : "Setup is not finished: run install.sh in the plugin folder")
           textFormat: Text.PlainText
           wrapMode: Text.Wrap
           color: Util.alpha(root.bar.foreground, 0.6)
