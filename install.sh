@@ -228,8 +228,7 @@ step "Keybindings"
 if (( DO_BIND )); then
   # The block is rewritten on every install, so an update also updates the
   # bindings. Everything between the markers belongs to this plugin.
-  block=$(cat <<'LUA'
--- BEGIN omarchy-signal
+  body=$(cat <<'LUA'
 -- SUPER+SHIFT+G is Omarchy's Signal key; point it at the terminal client.
 hl.unbind("SUPER + SHIFT + G")
 o.bind("SUPER + SHIFT + G", "Signal", "omarchy-signal open")
@@ -259,16 +258,18 @@ o.bind("SUPER + W", "Close window", function()
   end
   hl.dispatch(hl.dsp.window.close())
 end)
--- END omarchy-signal
 LUA
 )
+  # Markers come from MARK_BEGIN/MARK_END so the block that is written and the
+  # ranges that match it can never drift apart.
+  block=$(printf '%s\n%s\n%s' "$MARK_BEGIN" "$body" "$MARK_END")
   mkdir -p "$(dirname "$BINDINGS")"
   touch "$BINDINGS"
-  before=$(sed -n '/^-- BEGIN omarchy-signal$/,/^-- END omarchy-signal$/p' "$BINDINGS")
+  before=$(sed -n "/^$MARK_BEGIN\$/,/^$MARK_END\$/p" "$BINDINGS")
   if [[ $before == "$block" ]]; then
     say "Keybinding block up to date in $BINDINGS"
   else
-    sed -i '/^-- BEGIN omarchy-signal$/,/^-- END omarchy-signal$/d' "$BINDINGS"
+    sed -i "/^$MARK_BEGIN\$/,/^$MARK_END\$/d" "$BINDINGS"
     printf '%s\n' "$block" >> "$BINDINGS"
     say "Wrote keybindings to $BINDINGS (SUPER+SHIFT+G, SUPER+CTRL+G, SUPER+W closes the popup)"
     run "Reloading Hyprland" hyprctl reload || true
