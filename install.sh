@@ -66,8 +66,14 @@ run() {
   if (( TTY )); then
     "$@" >"$log" 2>&1 &
     local pid=$! i=0 frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+    # Keep one frame on one row: "  x label (NNNs)" is the label plus about 14
+    # columns of chrome. A wrapped line makes \r jump to the wrapped row and
+    # \033[K clear only that row, which smears frames across the screen.
+    local cols=${COLUMNS:-0} spin_label=$label
+    (( cols > 0 )) || cols=$(tput cols 2>/dev/null || echo 80)
+    (( ${#spin_label} > cols - 14 )) && spin_label="${spin_label:0:cols-17}..."
     while kill -0 "$pid" 2>/dev/null; do
-      printf '\r  %s%s%s %s %s(%ds)%s\033[K' "$C_SPIN" "${frames[i++ % ${#frames[@]}]}" "$C_OFF" "$label" "$C_DIM" $((SECONDS - t0)) "$C_OFF"
+      printf '\r  %s%s%s %s %s(%ds)%s\033[K' "$C_SPIN" "${frames[i++ % ${#frames[@]}]}" "$C_OFF" "$spin_label" "$C_DIM" $((SECONDS - t0)) "$C_OFF"
       sleep 0.1
     done
     wait "$pid" || status=$?
@@ -111,9 +117,42 @@ else
   echo "  Install one of (AUR):"
   echo "    omarchy pkg aur add signal-cli-native-bin   # prebuilt native binary, fastest to install"
   echo "    omarchy pkg aur add signal-cli              # Java build (needs a JRE)"
-  if [[ -t 0 && -t 1 ]] && command -v yay >/dev/null; then
-    read -r -p "  Install signal-cli-native-bin now with yay? [y/N] " ans
-    if [[ ${ans,,} == y ]]; then yay -S --needed signal-cli-native-bin; fi
+  echo "  The native build is a ~340 MB download and usually takes a few minutes."
+  install_signal_cli() {
+    # omarchy-pkg-aur-add wraps `yay -S --noconfirm --needed` and re-checks with
+    # pacman afterwards, because yay can exit 0 having installed nothing. Going
+    # through it also spares the user yay's cleanBuild / diff / PGP-import /
+    # proceed prompts, which have nothing to do with this plugin.
+    if command -v omarchy-pkg-aur-add >/dev/null; then
+      omarchy-pkg-aur-add signal-cli-native-bin
+    else
+      yay -S --noconfirm --needed signal-cli-native-bin
+    fi
+  }
+  if [[ -t 0 && -t 1 ]] && { command -v omarchy-pkg-aur-add >/dev/null || command -v yay >/dev/null; }; then
+    read -r -p "  Install signal-cli-native-bin now? [y/N] " ans
+    if [[ ${ans,,} == y ]]; then
+      install_signal_cli || warn "The package manager reported a failure."
+      # Never advance into the rest of the install on a half-finished package:
+      # every later step assumes signal-cli exists.
+      if command -v signal-cli >/dev/null; then
+        say "signal-cli installed ($(signal-cli --version 2>/dev/null || echo present))"
+      else
+        warn "signal-cli is still not on PATH; nothing further was installed."
+        echo "  Install it, then run this script again:"
+        echo "    omarchy pkg aur add signal-cli-native-bin"
+        exit 1
+      fi
+    else
+      warn "Continuing without signal-cli; the bridge cannot start until it is installed."
+    fi
+  else
+    # No TTY (or no AUR helper): say so plainly instead of continuing as though
+    # the requirement were met.
+    warn "Cannot install it here (no terminal to ask in, or no AUR helper)."
+    echo "  Install it, then run this script again:"
+    echo "    omarchy pkg aur add signal-cli-native-bin"
+    exit 1
   fi
 fi
 
@@ -189,8 +228,7 @@ step "Keybindings"
 if (( DO_BIND )); then
   # The block is rewritten on every install, so an update also updates the
   # bindings. Everything between the markers belongs to this plugin.
-  block=$(cat <<'LUA'
--- BEGIN omarchy-signal
+  body=$(cat <<'LUA'
 -- SUPER+SHIFT+G is Omarchy's Signal key; point it at the terminal client.
 hl.unbind("SUPER + SHIFT + G")
 o.bind("SUPER + SHIFT + G", "Signal", "omarchy-signal open")
@@ -220,16 +258,18 @@ o.bind("SUPER + W", "Close window", function()
   end
   hl.dispatch(hl.dsp.window.close())
 end)
--- END omarchy-signal
 LUA
 )
+  # Markers come from MARK_BEGIN/MARK_END so the block that is written and the
+  # ranges that match it can never drift apart.
+  block=$(printf '%s\n%s\n%s' "$MARK_BEGIN" "$body" "$MARK_END")
   mkdir -p "$(dirname "$BINDINGS")"
   touch "$BINDINGS"
-  before=$(sed -n '/^-- BEGIN omarchy-signal$/,/^-- END omarchy-signal$/p' "$BINDINGS")
+  before=$(sed -n "/^$MARK_BEGIN\$/,/^$MARK_END\$/p" "$BINDINGS")
   if [[ $before == "$block" ]]; then
     say "Keybinding block up to date in $BINDINGS"
   else
-    sed -i '/^-- BEGIN omarchy-signal$/,/^-- END omarchy-signal$/d' "$BINDINGS"
+    sed -i "/^$MARK_BEGIN\$/,/^$MARK_END\$/d" "$BINDINGS"
     printf '%s\n' "$block" >> "$BINDINGS"
     say "Wrote keybindings to $BINDINGS (SUPER+SHIFT+G, SUPER+CTRL+G, SUPER+W closes the popup)"
     run "Reloading Hyprland" hyprctl reload || true
@@ -298,6 +338,13 @@ else
   note "Skipped: omarchy-shell not found"
 fi
 
+# Say "Done" only about a service that is actually running.
+if systemctl --user is-active --quiet omarchy-signal.service; then
+  say "Bridge service is running"
+else
+  warn "The bridge service is not running. Check: journalctl --user -u omarchy-signal -n 50"
+fi
+
 printf '\n%sDone%s in %ds.' "$C_OK" "$C_OFF" $((SECONDS - STARTED))
 cat <<DONE
  Next steps:
@@ -307,3 +354,22 @@ cat <<DONE
 
 Config: $CONFIG_DIR/config.toml   Logs: journalctl --user -u omarchy-signal
 DONE
+
+# Offer the remaining step here rather than leaving it as homework: the QR code
+# appears in this same window, which is already open and already trusted.
+if [[ -t 0 && -t 1 ]] && command -v omarchy-signal >/dev/null; then
+  # Anchored and case-sensitive on purpose: the unlinked line reads
+  # "account     : NOT LINKED, run `omarchy-signal link`", which a loose
+  # match for "linked" would read as success.
+  if omarchy-signal status 2>/dev/null | grep -qE '^account[[:space:]]*:[[:space:]]*linked[[:space:]]*$'; then
+    say "This computer is already linked"
+  else
+    printf '\n'
+    read -r -p "  Link this computer to your Signal account now? [Y/n] " link_ans
+    if [[ -z $link_ans || ${link_ans,,} == y ]]; then
+      omarchy-signal link || warn "Linking did not complete; run it again with: omarchy-signal link"
+    else
+      note "Link later with: omarchy-signal link"
+    fi
+  fi
+fi

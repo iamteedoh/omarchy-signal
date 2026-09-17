@@ -37,7 +37,7 @@ jobs:
       - name: Install tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qrencode imagemagick jq
+          sudo apt-get install -y --no-install-recommends qrencode imagemagick jq shellcheck
           pip install yamllint
 
       - name: Check YAML
@@ -46,13 +46,18 @@ jobs:
       - name: Check shell syntax
         run: bash -n install.sh uninstall.sh scripts/*.sh tests/bash/run.sh
 
+      # install.sh, uninstall.sh and the hooks all run against a user's live
+      # system; they were shipping with no lint beyond a syntax check.
+      - name: Shell lint (shellcheck)
+        run: shellcheck -S warning install.sh uninstall.sh scripts/*.sh tests/bash/run.sh
+
       - name: Python tests (bridge, TUI, sanitiser; fake signal-cli)
         run: make python
 
       - name: Model.js tests
         run: make qml
 
-      - name: Static checks (systemd unit, manifest, QML hygiene)
+      - name: Static checks (systemd unit, manifest, QML hygiene, Omarchy API baseline)
         run: make bash
 
       - name: Generated files are current

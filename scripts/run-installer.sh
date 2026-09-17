@@ -8,9 +8,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$HERE/install.sh"
 status=$?
 echo
-if (( status == 0 )); then
-  echo "Setup finished. Next: omarchy-signal link   (then SUPER+SHIFT+G opens the client)"
-else
+# install.sh prints its own closing message and next steps; repeating them here
+# just made the end of the run read twice. Only speak up when it failed.
+if (( status != 0 )); then
   echo "install.sh exited with status $status; see the messages above."
 fi
 read -rp "Press Enter to close this window"

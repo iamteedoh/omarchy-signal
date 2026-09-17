@@ -16,6 +16,16 @@ import "Emoji.js" as Emoji
 Item {
   id: view
 
+  // Omarchy only grew Util.execArgv during the 4.0.x series (absent in 4.0.0,
+  // present by 4.0.4), so calling it throws on an Omarchy that predates it and
+  // every action here silently does nothing. Vendor it instead of depending on
+  // the version. Same form as upstream: argv is passed as positional
+  // parameters and never interpolated into a shell string, and `bash -lc`
+  // keeps the login PATH that resolves omarchy-* helpers.
+  function execArgv(argv) {
+    Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "bash"].concat(argv))
+  }
+
   required property string cliPath
   property string conversationKey: ""
   property string conversationName: ""
@@ -262,7 +272,7 @@ Item {
 
   function copyText(t) {
     if (!t) return
-    Util.execArgv(["wl-copy", "--", t])
+    view.execArgv(["wl-copy", "--", t])
     view.notice = t.indexOf("\n") >= 0 ? "copied " + t.split("\n").length + " lines" : "copied"
     noticeTimer.restart()
   }
@@ -583,7 +593,7 @@ Item {
                 smooth: true
                 fillMode: Image.PreserveAspectFit
                 sourceSize.width: 480
-                MouseArea { anchors.fill: parent; onClicked: Util.execArgv(["xdg-open", row.modelData.image]) }
+                MouseArea { anchors.fill: parent; onClicked: view.execArgv(["xdg-open", row.modelData.image]) }
               }
             }
             // Selectable: drag to select, Ctrl+C (or Super+C, or a right-click) copies.

@@ -15,8 +15,11 @@ rm -rf "$HOME/.config/omarchy/plugins/$PLUGIN_ID"
 rm -f "$HOME/.local/bin/omarchy-signal"
 rm -f "$HOME/.config/omarchy/hooks/post-update.d/omarchy-signal"
 BINDINGS="$HOME/.config/hypr/bindings.lua"
+# Must stay identical to install.sh's MARK_BEGIN/MARK_END.
+MARK_BEGIN="-- BEGIN omarchy-signal"
+MARK_END="-- END omarchy-signal"
 if [[ -f $BINDINGS ]]; then
-  sed -i '/^-- BEGIN omarchy-signal$/,/^-- END omarchy-signal$/d' "$BINDINGS"
+  sed -i "/^$MARK_BEGIN\$/,/^$MARK_END\$/d" "$BINDINGS"
   hyprctl reload >/dev/null 2>&1 || true
 fi
 MENU="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
