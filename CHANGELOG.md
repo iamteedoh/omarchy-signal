@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/iamteedoh/omarchy-signal/compare/v0.3.0...v0.4.0) (2026-09-16)
+
+
+### Features
+
+* installer shows progress for every step ([#11](https://github.com/iamteedoh/omarchy-signal/issues/11)) ([66270f1](https://github.com/iamteedoh/omarchy-signal/commit/66270f14b9c2cb2d8c70564121412e8c84459d3b))
+* multi-line message box in the popup and chat window ([#12](https://github.com/iamteedoh/omarchy-signal/issues/12)) ([650f7ab](https://github.com/iamteedoh/omarchy-signal/commit/650f7ab3e87f2911535f93e25fe2497ca7706334))
+
 ## [0.3.0](https://github.com/iamteedoh/omarchy-signal/compare/v0.2.0...v0.3.0) (2026-09-16)
 
 
