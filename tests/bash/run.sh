@@ -11,6 +11,15 @@ check bash -n "$ROOT/install.sh"
 check bash -n "$ROOT/uninstall.sh"
 check bash -n "$ROOT/tests/bash/run.sh"
 
+if command -v shellcheck >/dev/null; then
+  echo "shellcheck"
+  for f in "$ROOT/install.sh" "$ROOT/uninstall.sh" "$ROOT"/scripts/*.sh "$ROOT/tests/bash/run.sh"; do
+    check shellcheck -S warning "$f"
+  done
+else
+  echo "shellcheck: not installed, skipping"
+fi
+
 echo "launcher"
 check test -x "$ROOT/bin/omarchy-signal"
 check "$ROOT/bin/omarchy-signal" --version
@@ -37,7 +46,43 @@ check grep -q "ExecStart=%h/.local/bin/omarchy-signal bridge" "$ROOT/systemd/oma
 check grep -q "NoNewPrivileges=yes" "$ROOT/systemd/omarchy-signal.service"
 
 echo "no shell-string execution in QML"
-if grep -n "execDetached\|bash -c\|sh -c" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" "$ROOT/Model.js"; then echo "  FAIL shell strings found"; fail=1; else echo "  ok   argv only"; fi
+# One vetted exception: the vendored execArgv helper. It hands argv to bash as
+# positional parameters via `exec "$@"` and never builds a shell string, which
+# is exactly what Omarchy's own Util.execArgv does. Matched as a fixed string,
+# so any other use of execDetached / bash -c / sh -c still fails.
+EXEC_HELPER='Quickshell.execDetached(["bash", "-lc", '"'"'exec "$@"'"'"', "bash"].concat(argv))'
+shell_hits=$(grep -n "execDetached\|bash -c\|sh -c" \
+  "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" "$ROOT/Model.js" \
+  | grep -vF "$EXEC_HELPER" || true)
+n_helper=$(grep -cF "$EXEC_HELPER" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" | awk -F: '{s+=$2} END {print s}')
+if [[ -n $shell_hits ]]; then echo "$shell_hits"; echo "  FAIL shell strings found"; fail=1
+elif [[ $n_helper -ne 3 ]]; then echo "  FAIL expected the execArgv helper in all 3 components, found $n_helper"; fail=1
+else echo "  ok   argv only (execArgv helper x$n_helper)"; fi
+
+echo "no Omarchy API outside the supported baseline"
+# The bug this catches: a qs.Commons member that exists on the development
+# machine but not on the oldest supported Omarchy. QML resolves it at call
+# time, so the file loads, the plugin enables, and the action silently does
+# nothing. Runs anywhere -- no Omarchy or Quickshell needed.
+BASELINE="$ROOT/tests/omarchy-api-baseline.txt"
+if [[ -f $BASELINE ]]; then
+  min_omarchy=$(grep -E '^MIN_OMARCHY=' "$BASELINE" | cut -d= -f2)
+  allowed=$(grep -vE '^#|^MIN_OMARCHY=|^$' "$BASELINE" | sort -u)
+  actual=$(sed 's|//.*||' "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" \
+    | grep -ohE '\b(Util|Style|Color)\.[A-Za-z_][A-Za-z0-9_.]*' | sort -u)
+  extra=$(comm -13 <(printf '%s\n' "$allowed") <(printf '%s\n' "$actual"))
+  if [[ -n $extra ]]; then
+    echo "  FAIL these Omarchy APIs are not in the baseline (verified against ${min_omarchy}):"
+    printf '         %s\n' $extra
+    echo "         Confirm each exists in ${min_omarchy} and add it to tests/omarchy-api-baseline.txt,"
+    echo "         or vendor it the way execArgv is vendored in the QML components."
+    fail=1
+  else
+    echo "  ok   $(printf '%s\n' "$actual" | grep -c .) APIs, all in the ${min_omarchy} baseline"
+  fi
+else
+  echo "  FAIL tests/omarchy-api-baseline.txt is missing"; fail=1
+fi
 echo "no 32-bit int holds a Signal timestamp"
 if grep -n -E "property int (\w*[a-z0-9_]Ts|ts|\w*Timestamp)\b" "$ROOT"/*.qml; then echo "  FAIL use real/var for timestamps"; fail=1; else echo "  ok"; fi
 echo "every Text, TextEdit and TextArea is PlainText"

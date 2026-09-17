@@ -1,0 +1,47 @@
+# Omarchy APIs this plugin depends on, one per line.
+#
+# Every entry must exist in the OLDEST Omarchy release the plugin supports,
+# recorded below. Omarchy's shell singletons gain members between patch
+# releases: Util.execArgv did not exist in 4.0.0 but did by 4.0.4, and because
+# QML resolves a singleton member at call time, using one that is missing fails
+# silently at runtime -- the file still loads, the plugin still enables, and
+# the action simply does nothing. A load check cannot see it; this list can.
+#
+# Adding a line here is a deliberate statement that the API exists in
+# MIN_OMARCHY. Verify before adding:
+#     grep -n "alpha" /usr/share/omarchy/shell/Commons/Util.qml
+# and if it is newer, either avoid it or vendor it the way execArgv is vendored
+# in the three QML components.
+#
+MIN_OMARCHY=4.0.0
+Color.accent
+Color.foreground
+Color.menu.scrim
+Color.notifications.background
+Color.notifications.border
+Color.notifications.countdown
+Color.notifications.text
+Color.popups.background
+Color.popups.border
+Color.popups.text
+Color.urgent
+Style.bar.iconSlot
+Style.bar.sizeHorizontal
+Style.controlFill
+Style.cornerRadius
+Style.font.body
+Style.font.caption
+Style.font.displayLarge
+Style.font.family
+Style.font.icon
+Style.font.subtitle
+Style.font.title
+Style.gapsOut
+Style.hoverFill
+Style.selectedBorderColor
+Style.selectedFill
+Style.selectionFillFor
+Style.space
+Style.spacing.controlPaddingX
+Style.spacing.inputPaddingY
+Util.alpha

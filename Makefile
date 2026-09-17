@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-.PHONY: test security qml python bash validate install dev
+.PHONY: test security qml python bash shellcheck validate install dev
 
 PY := python3
 
-test: python qml bash validate qmlcheck
+test: python qml bash shellcheck validate qmlcheck
 
 qmlcheck:
 	./scripts/qml-check.sh
@@ -23,6 +23,9 @@ qml:
 
 bash:
 	bash tests/bash/run.sh
+
+shellcheck:
+	shellcheck -S warning install.sh uninstall.sh scripts/*.sh tests/bash/run.sh
 
 validate:
 	omarchy-plugin-validate . >/dev/null 2>&1 && echo "manifest: valid" || echo "manifest: omarchy-plugin-validate unavailable or failed"
