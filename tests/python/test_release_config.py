@@ -71,6 +71,24 @@ class ChangelogSectionTests(unittest.TestCase):
         self.assertIn("BEGIN_COMMIT_OVERRIDE", text)
         self.assertIn("END_COMMIT_OVERRIDE", text)
 
+    def test_the_guidance_does_not_create_the_trap_it_warns_about(self):
+        """OMSIG-8: release-please uses the FIRST opening marker in a PR body.
+
+        A second one in prose makes it swallow the text in between, drop the
+        whole pull request from the notes, and still exit 0. The guidance is
+        copied into PR bodies, so it must not ship two of them itself.
+        """
+        text = CONTRIBUTING.read_text()
+        self.assertEqual(
+            text.count("BEGIN_COMMIT_OVERRIDE"), 1,
+            "CONTRIBUTING.md spells the opening marker more than once; copying it into a "
+            "PR body would then break the override block it is documenting",
+        )
+        self.assertIn(
+            "exactly once", text,
+            "the once-only rule is the whole point of the warning and must be stated",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
