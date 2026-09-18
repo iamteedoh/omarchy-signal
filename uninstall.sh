@@ -3,36 +3,38 @@
 # Remove omarchy-signal. Keeps signal-cli's account data and your message
 # history unless --purge is given.
 set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ID="iamteedoh.signal"
+PLUGIN_DIR="$HOME/.config/omarchy/plugins/$PLUGIN_ID"
+BINDINGS="$HOME/.config/hypr/bindings.lua"
+MENU="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
 PURGE=0
 [[ ${1:-} == --purge ]] && PURGE=1
+
+# Same helper the installer writes with, so what is removed is exactly what was
+# added -- markers and menu entry included. It has to run before the plugin
+# directory goes, because that is where it lives.
+confedit() { PYTHONPATH="$HERE/lib" python3 -m omarchy_signal.confedit "$@"; }
+
+if [[ -f $BINDINGS ]]; then
+  # Refuses to act on an unbalanced marker pair instead of deleting from the
+  # opening marker to end of file, which is what the old sed range did to a
+  # hand-edited bindings.lua.
+  if confedit block-remove --file "$BINDINGS" >/dev/null; then
+    hyprctl reload >/dev/null 2>&1 || true
+  else
+    echo "Left $BINDINGS alone; remove the omarchy-signal block by hand." >&2
+  fi
+fi
+if [[ -f $MENU ]]; then confedit menu-remove --file "$MENU" >/dev/null; fi
 
 systemctl --user disable --now omarchy-signal.service 2>/dev/null || true
 rm -f "$HOME/.config/systemd/user/omarchy-signal.service"
 systemctl --user daemon-reload || true
 command -v omarchy-plugin-disable >/dev/null && omarchy-plugin-disable "$PLUGIN_ID" 2>/dev/null || true
-rm -rf "$HOME/.config/omarchy/plugins/$PLUGIN_ID"
+rm -rf "$PLUGIN_DIR"
 rm -f "$HOME/.local/bin/omarchy-signal"
 rm -f "$HOME/.config/omarchy/hooks/post-update.d/omarchy-signal"
-BINDINGS="$HOME/.config/hypr/bindings.lua"
-# Must stay identical to install.sh's MARK_BEGIN/MARK_END.
-MARK_BEGIN="-- BEGIN omarchy-signal"
-MARK_END="-- END omarchy-signal"
-if [[ -f $BINDINGS ]]; then
-  sed -i "/^$MARK_BEGIN\$/,/^$MARK_END\$/d" "$BINDINGS"
-  hyprctl reload >/dev/null 2>&1 || true
-fi
-MENU="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
-if [[ -f $MENU ]] && grep -q '"signal-tui"' "$MENU"; then
-  python3 - "$MENU" <<'PY'
-import re, sys
-path = sys.argv[1]
-src = open(path, encoding="utf-8").read()
-src = re.sub(r'^[ \t]*"signal-tui":.*\n?', "", src, flags=re.M)
-src = re.sub(r",(\s*\})\s*$", r"\1\n", src)   # no dangling comma when it was the last entry
-open(path, "w", encoding="utf-8").write(src)
-PY
-fi
 command -v omarchy-shell >/dev/null && omarchy-shell -q shell rescanPlugins >/dev/null 2>&1 || true
 if (( PURGE )); then
   rm -rf "$HOME/.local/share/omarchy-signal" "$HOME/.local/state/omarchy-signal" "$HOME/.config/omarchy-signal"

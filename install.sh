@@ -21,8 +21,11 @@ UNIT_DIR="$HOME/.config/systemd/user"
 BINDINGS="$HOME/.config/hypr/bindings.lua"
 MENU="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
 CONFIG_DIR="$HOME/.config/omarchy-signal"
-MARK_BEGIN="-- BEGIN omarchy-signal"
-MARK_END="-- END omarchy-signal"
+# bindings.lua and omarchy-menu.jsonc belong to the user, so both are edited
+# through one helper that models the format instead of matching raw text. It
+# owns the marker strings and the menu entry too, so nothing has to be kept in
+# step by hand. See lib/omarchy_signal/confedit.py.
+confedit() { PYTHONPATH="$HERE/lib" python3 -m omarchy_signal.confedit "$@"; }
 
 LINK_MODE=0; DO_BIND=1; DO_MENU=1
 for arg in "$@"; do
@@ -260,17 +263,16 @@ o.bind("SUPER + W", "Close window", function()
 end)
 LUA
 )
-  # Markers come from MARK_BEGIN/MARK_END so the block that is written and the
-  # ranges that match it can never drift apart.
-  block=$(printf '%s\n%s\n%s' "$MARK_BEGIN" "$body" "$MARK_END")
   mkdir -p "$(dirname "$BINDINGS")"
   touch "$BINDINGS"
-  before=$(sed -n "/^$MARK_BEGIN\$/,/^$MARK_END\$/p" "$BINDINGS")
-  if [[ $before == "$block" ]]; then
+  # An unbalanced marker pair means the file is in a shape this plugin did not
+  # write. The helper then leaves it alone and says so, where the sed range it
+  # replaces deleted everything from the opening marker to end of file.
+  if ! bind_result=$(printf '%s\n' "$body" | confedit block-write --file "$BINDINGS"); then
+    warn "Left $BINDINGS unchanged. Fix the omarchy-signal markers there and re-run."
+  elif [[ $bind_result == unchanged ]]; then
     say "Keybinding block up to date in $BINDINGS"
   else
-    sed -i "/^$MARK_BEGIN\$/,/^$MARK_END\$/d" "$BINDINGS"
-    printf '%s\n' "$block" >> "$BINDINGS"
     say "Wrote keybindings to $BINDINGS (SUPER+SHIFT+G, SUPER+CTRL+G, SUPER+W closes the popup)"
     run "Reloading Hyprland" hyprctl reload || true
   fi
@@ -285,25 +287,13 @@ if (( ! DO_MENU )); then
 elif [[ ! -f $MENU ]]; then
   note "Skipped: no menu extensions file at $MENU"
 else
-  if grep -q '"signal-tui"' "$MENU"; then
+  # The entry goes after the last real member, not after whatever text happens to
+  # precede the closing brace: Omarchy ships this file full of commented-out
+  # examples that end in commas, and reading one of those as "a comma is already
+  # there" is what used to leave the file unparseable.
+  if [[ $(confedit menu-add --file "$MENU") == unchanged ]]; then
     say "Menu entry already present"
   else
-    python3 - "$MENU" <<'PY'
-import re, sys
-path = sys.argv[1]
-src = open(path, encoding="utf-8").read()
-entry = '  "signal-tui": {"icon":"󰭹","label":"Signal (terminal)","action":"omarchy-signal open"},\n'
-# Insert before the final closing brace of the top-level object.
-idx = src.rstrip().rfind("}")
-if idx < 0:
-    src = "{\n" + entry + "}\n"
-else:
-    head = src[:idx].rstrip()
-    if not head.endswith("{") and not head.endswith(","):
-        head += ","
-    src = head + "\n" + entry + "}\n"
-open(path, "w", encoding="utf-8").write(src)
-PY
     say "Added 'Signal (terminal)' to the Omarchy menu"
   fi
 fi
