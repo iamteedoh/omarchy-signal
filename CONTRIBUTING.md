@@ -101,9 +101,34 @@ END_COMMIT_OVERRIDE
 ```
 
 Each line is an ordinary Conventional Commit and lands in its own section. The
-block only works with a squash merge, which is what this repository does. It is
-also retroactive: editing a merged PR's body fixes the notes, as long as the
-release PR has not been merged yet.
+block only works with a squash merge, which is what this repository does.
+
+**The opening marker must appear exactly once in the body.** release-please takes
+the *first* occurrence as the start of the block, so a PR that also mentions the
+marker in prose — while explaining this very mechanism, say — makes it swallow
+the prose in between and try to parse list bullets as commits. Describe it as
+"the override block" rather than spelling the marker a second time.
+
+That failure is silent: release-please still exits 0 and the release proceeds.
+The symptoms are a changelog that is thinner than the work that landed, and a
+line in the release-please run log reading:
+
+```
+commit could not be parsed: <sha> <the PR title>
+error message: Error: unexpected token ' ' at 1:2, valid tokens [(, !, :]
+```
+
+followed by a `Considering: N commits` count lower than expected.
+
+To repair it, edit the merged PR's body so the marker appears once, then re-run
+the workflow:
+
+```
+gh run rerun "$(gh run list --workflow=release-please.yml --limit 1 --json databaseId -q '.[0].databaseId')"
+```
+
+This works on an already-merged PR as long as the release PR has not been merged
+yet, and it is how the v0.4.2 notes were corrected.
 
 ## Releases
 
