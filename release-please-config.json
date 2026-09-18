@@ -15,5 +15,18 @@
     }
   },
   "include-component-in-tag": false,
-  "bootstrap-sha": "338e743a87e0cd6de94fab26be5f790c2dc19635"
+  "bootstrap-sha": "338e743a87e0cd6de94fab26be5f790c2dc19635",
+  "changelog-sections": [
+    { "type": "feat", "section": "Features", "hidden": false },
+    { "type": "fix", "section": "Bug Fixes", "hidden": false },
+    { "type": "perf", "section": "Performance", "hidden": false },
+    { "type": "refactor", "section": "Improvements", "hidden": false },
+    { "type": "docs", "section": "Documentation", "hidden": false },
+    { "type": "test", "section": "Tests", "hidden": false },
+    { "type": "build", "section": "Build & Packaging", "hidden": false },
+    { "type": "ci", "section": "Continuous Integration", "hidden": false },
+    { "type": "style", "section": "Styling", "hidden": false },
+    { "type": "revert", "section": "Reverts", "hidden": false },
+    { "type": "chore", "section": "Chores", "hidden": true }
+  ]
 }
