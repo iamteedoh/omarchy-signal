@@ -136,7 +136,17 @@ start on a live socket.
   `history_retain_days`.
 - Attachments: `~/.local/share/signal-cli/attachments/`, chmod 0600/0700 by
   the bridge when it locates them.
-- Logs: never contain message bodies, names, numbers or file names.
+- Logs: the bridge's own log lines never contain message bodies, names,
+  numbers or file names, at any log level. Two qualifications:
+  - Under the systemd user unit the logs go to **journald**, not to a file —
+    `setup_logging` picks stderr whenever `INVOCATION_ID` is set. The
+    `0600` file at `~/.local/state/omarchy-signal/` is used only when the
+    bridge is run outside systemd. journald's user-unit logs are readable by
+    you and by root.
+  - `log_level = "debug"` also passes `--verbose` to `signal-cli` and records
+    that process's stderr. That output belongs to `signal-cli`, not to this
+    project, and is not filtered here — so the guarantee above covers our own
+    lines only. `debug` is for troubleshooting, not for everyday use.
 - `signal-cli` runs with `--trust-new-identities on-first-use` by default,
   the same policy as official clients; set `never` to hard-fail on safety
   number changes.
