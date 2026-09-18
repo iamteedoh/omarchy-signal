@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.3](https://github.com/iamteedoh/omarchy-signal/compare/v0.4.2...v0.4.3) (2026-09-18)
+
+
+### Documentation
+
+* say what the logging guarantee actually covers ([#21](https://github.com/iamteedoh/omarchy-signal/issues/21)) ([e63d664](https://github.com/iamteedoh/omarchy-signal/commit/e63d664d66e485a47a4e3350052b4008fbf4b452))
+* warn that the release override marker must appear once in a PR body ([#19](https://github.com/iamteedoh/omarchy-signal/issues/19)) ([2807d92](https://github.com/iamteedoh/omarchy-signal/commit/2807d9224c8ec0456e844648f264fd84dc02a808))
+
 ## [0.4.2](https://github.com/iamteedoh/omarchy-signal/compare/v0.4.1...v0.4.2) (2026-09-18)
 
 
