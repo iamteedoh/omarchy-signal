@@ -23,9 +23,10 @@ qml:
 
 bash:
 	bash tests/bash/run.sh
+	bash tests/bash/install-e2e.sh
 
 shellcheck:
-	shellcheck -S warning install.sh uninstall.sh scripts/*.sh tests/bash/run.sh
+	shellcheck -S warning install.sh uninstall.sh scripts/*.sh tests/bash/*.sh
 
 validate:
 	omarchy-plugin-validate . >/dev/null 2>&1 && echo "manifest: valid" || echo "manifest: omarchy-plugin-validate unavailable or failed"
