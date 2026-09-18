@@ -15,4 +15,8 @@ Nothing in this package ever touches Signal key material: it lives in
 ``signal-cli``'s data directory and only ``signal-cli`` reads it.
 """
 
-__version__ = "0.1.0"
+# Kept in step with manifest.json by release-please (the "generic" extra-file
+# updater rewrites the version on the annotated line). tests/python/test_version.py
+# fails if the two ever drift, because a --version that matches no release makes
+# every bug report harder to act on.
+__version__ = "0.4.1"  # x-release-please-version
