@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-.PHONY: test security qml python bash shellcheck validate install dev
+.PHONY: test security qml python bash shellcheck validate install dev legend-wrap
 
 PY := python3
 
@@ -23,9 +23,10 @@ qml:
 
 bash:
 	bash tests/bash/run.sh
+	bash tests/bash/install-e2e.sh
 
 shellcheck:
-	shellcheck -S warning install.sh uninstall.sh scripts/*.sh tests/bash/run.sh
+	shellcheck -S warning install.sh uninstall.sh scripts/*.sh tests/bash/*.sh tests/qml/*.sh
 
 validate:
 	omarchy-plugin-validate . >/dev/null 2>&1 && echo "manifest: valid" || echo "manifest: omarchy-plugin-validate unavailable or failed"
@@ -35,3 +36,8 @@ install:
 
 dev:
 	./install.sh --link
+
+# Renders ConversationView at several widths to prove the bottom legend wraps.
+# Opens a real window for a few seconds, so it is not part of `make test`.
+legend-wrap:
+	./tests/qml/legend-wrap.sh

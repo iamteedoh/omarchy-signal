@@ -83,12 +83,46 @@ The PR title becomes the squash commit subject and drives release-please:
 `fix:` creates a patch release, `feat:` creates a minor release, and a `!` or
 `BREAKING CHANGE:` footer creates a breaking release.
 
+### A pull request that does more than one thing
+
+Because every merge is a squash, the PR title is the only commit that reaches
+`main` — so a PR normally contributes exactly **one** line to the release notes,
+however much it contains.
+
+When a PR carries several distinct changes, list them in an override block in
+the **PR body** and release-please will use those lines instead of the title:
+
+```
+BEGIN_COMMIT_OVERRIDE
+fix: keep the installer from truncating bindings.lua
+fix: keep the installer from corrupting the Omarchy menu
+test: run the installer end to end against a sandbox HOME
+END_COMMIT_OVERRIDE
+```
+
+Each line is an ordinary Conventional Commit and lands in its own section. The
+block only works with a squash merge, which is what this repository does. It is
+also retroactive: editing a merged PR's body fixes the notes, as long as the
+release PR has not been merged yet.
+
 ## Releases
 
-release-please watches `main`. After a `feat:` or `fix:` lands it opens (or
+release-please watches `main`. After a releasable commit lands it opens (or
 updates) a PR titled `chore(main): release X.Y.Z` that bumps `version` in
 `manifest.json`, updates `CHANGELOG.md` and `.release-please-manifest.json`.
 Merging that PR creates the `vX.Y.Z` tag and the GitHub Release.
+
+`changelog-sections` in `release-please-config.json` decides what appears in the
+notes. Release-please hides most types by default — only `feat`, `fix`, `perf`
+and `revert` would show — so every type this project uses is listed there
+explicitly with `hidden: false`. Only `chore` stays hidden, because
+release-please's own `chore(main): release X.Y.Z` commits would otherwise appear
+in the notes.
+
+One consequence is deliberate: release-please treats a visible type as
+*releasable*, so a `docs:`-only or `ci:`-only PR can open a release PR and bump
+the patch version. There is no way to show a type in the notes without making it
+releasable, and complete notes are worth the occasional extra patch release.
 
 GitHub does not run workflows on pull requests opened by the Actions token,
 so a fresh release PR shows no checks and the protected branch refuses it.

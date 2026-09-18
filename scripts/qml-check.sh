@@ -1,9 +1,58 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Load the plugin's QML in a throwaway Quickshell instance (with the Omarchy
-# shell's qs.Commons / qs.Ui modules) and fail if Service.qml does not load.
+# shell's qs.Commons / qs.Ui modules) and fail if a component does not load.
 # install.sh runs this before copying anything into the live shell.
+#
+# Sourcing it with QMLCHECK_LIB_ONLY=1 defines qmlcheck_verdict and returns,
+# which is how tests/bash/run.sh exercises the verdict against recorded logs.
 set -euo pipefail
+
+# qmlcheck_verdict LOGFILE: decide from a finished (or truncated) run log.
+# Prints the human-readable result and returns 0 only on a complete success.
+#
+# The poll loop below used to stop at the first line matching QMLCHECK, which
+# matches "QMLCHECK LOADED Service.qml" -- the FIRST component. It killed
+# Quickshell before the other two reported, so the terminal QMLCHECK OK never
+# arrived and a healthy plugin was reported as a failed load, intermittently,
+# depending only on whether all three finished inside one 100ms tick (OMSIG-2).
+# Only OK and ERROR are terminal; LOADED means work is still in progress.
+qmlcheck_verdict() {
+  local log=$1 out
+  out=$(cat "$log" 2>/dev/null || true)
+  local failed
+  failed=$(grep -o 'QMLCHECK ERROR .*' <<<"$out" | head -1 || true)
+  if [[ -n $failed ]]; then
+    echo "qml-check: ${failed#QMLCHECK }" >&2
+    return 1
+  fi
+  # Errors Quickshell reports without reaching our own error branch.
+  local qml_errors
+  qml_errors=$(grep -E "Cannot assign|is not a type|Unexpected token|Expected token" <<<"$out" | head -5 || true)
+  if [[ -n $qml_errors ]]; then
+    echo "qml-check: QML errors:" >&2
+    sed 's/^/  /' <<<"$qml_errors" >&2
+    return 1
+  fi
+  if grep -q "QMLCHECK OK" <<<"$out"; then
+    echo "qml-check: $(grep -c 'QMLCHECK LOADED' <<<"$out") component(s) load"
+    return 0
+  fi
+  # No verdict line at all: the run was cut short. Say so, and name the last
+  # component that did report, rather than presenting it as the one that broke.
+  local last
+  last=$(grep -o 'QMLCHECK LOADED .*' <<<"$out" | tail -1 || true)
+  if [[ -n $last ]]; then
+    echo "qml-check: run did not finish (last loaded: ${last#QMLCHECK LOADED }); no component reported an error" >&2
+  else
+    echo "qml-check: run did not finish; Quickshell produced no QMLCHECK output" >&2
+    grep -i -E "error|warn" <<<"$out" | grep -v portal | head -5 >&2 || true
+  fi
+  return 1
+}
+
+[[ ${QMLCHECK_LIB_ONLY:-0} == 1 ]] && return 0
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # --strict turns "cannot check here" into a failure, for callers that know the
 # environment should support it. Default stays lenient so `make test` on a
@@ -49,22 +98,16 @@ ShellRoot {
   }
 }
 QML
-# Qt.quit() does not end a Quickshell instance, so stop it as soon as the
-# result line appears instead of waiting out the timeout.
+# Qt.quit() does not end a Quickshell instance, so stop it as soon as a verdict
+# appears instead of waiting out the timeout. Wait for a TERMINAL line only --
+# a LOADED line means there is still work in flight.
 (cd "$tmp" && exec timeout 15 qs -p "$tmp/shell.qml") >"$tmp/out.log" 2>&1 &
 qs_pid=$!
 for _ in $(seq 150); do
-  grep -q "QMLCHECK" "$tmp/out.log" 2>/dev/null && break
+  grep -qE "QMLCHECK (OK|ERROR)" "$tmp/out.log" 2>/dev/null && break
   kill -0 "$qs_pid" 2>/dev/null || break
   sleep 0.1
 done
 kill "$qs_pid" 2>/dev/null || true
 wait "$qs_pid" 2>/dev/null || true
-out=$(cat "$tmp/out.log")
-if grep -q "QMLCHECK OK" <<<"$out" && ! grep -q -E "QMLCHECK ERROR|Cannot assign|is not a type|Unexpected token|Expected token" <<<"$out"; then
-  echo "qml-check: $(grep -c 'QMLCHECK LOADED' <<<"$out") component(s) load"
-  exit 0
-fi
-echo "qml-check: a component FAILED to load:" >&2
-grep -i -E "error|warn|QMLCHECK" <<<"$out" | grep -v portal | head -10 >&2
-exit 1
+qmlcheck_verdict "$tmp/out.log"
