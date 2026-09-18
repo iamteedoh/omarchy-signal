@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.2](https://github.com/iamteedoh/omarchy-signal/compare/v0.4.1...v0.4.2) (2026-09-18)
+
+
+### Bug Fixes
+
+* keep the installer from corrupting the Omarchy menu file ([5e79615](https://github.com/iamteedoh/omarchy-signal/commit/5e79615e4afcf34405805d68a1792bda18d51de5))
+* keep the installer from truncating bindings.lua when a marker is missing ([5e79615](https://github.com/iamteedoh/omarchy-signal/commit/5e79615e4afcf34405805d68a1792bda18d51de5))
+* report the installed release from --version and status ([#16](https://github.com/iamteedoh/omarchy-signal/issues/16)) ([3551063](https://github.com/iamteedoh/omarchy-signal/commit/3551063c53678de2ec59c0237921c7b1bc65b77c))
+* stop the install-time QML check failing at random ([5e79615](https://github.com/iamteedoh/omarchy-signal/commit/5e79615e4afcf34405805d68a1792bda18d51de5))
+* wrap the chat window's bottom legend instead of cutting it off ([5e79615](https://github.com/iamteedoh/omarchy-signal/commit/5e79615e4afcf34405805d68a1792bda18d51de5))
+
+
+### Tests
+
+* run the installer end to end, and verify its copy list by running it ([5e79615](https://github.com/iamteedoh/omarchy-signal/commit/5e79615e4afcf34405805d68a1792bda18d51de5))
+
+
+### Build & Packaging
+
+* put every kind of change in the release notes ([5e79615](https://github.com/iamteedoh/omarchy-signal/commit/5e79615e4afcf34405805d68a1792bda18d51de5))
+
 ## [0.4.1](https://github.com/iamteedoh/omarchy-signal/compare/v0.4.0...v0.4.1) (2026-09-17)
 
 
