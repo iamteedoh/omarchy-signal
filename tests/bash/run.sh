@@ -14,7 +14,7 @@ check bash -n "$ROOT/tests/bash/install-e2e.sh"
 
 if command -v shellcheck >/dev/null; then
   echo "shellcheck"
-  for f in "$ROOT/install.sh" "$ROOT/uninstall.sh" "$ROOT"/scripts/*.sh "$ROOT"/tests/bash/*.sh; do
+  for f in "$ROOT/install.sh" "$ROOT/uninstall.sh" "$ROOT"/scripts/*.sh "$ROOT"/tests/bash/*.sh "$ROOT"/tests/qml/*.sh; do
     check shellcheck -S warning "$f"
   done
 else
@@ -192,6 +192,27 @@ if [[ -f $BASELINE ]]; then
 else
   echo "  FAIL tests/omarchy-api-baseline.txt is missing"; fail=1
 fi
+echo "the bottom legend wraps instead of eliding"
+# OMSIG-6: the legend was a single elided line, so the only way to read the end
+# of it ("Ctrl+O attach · Esc closes") was to widen the window. All three
+# properties below are load-bearing -- in particular, without preferredWidth 0
+# the RowLayout honours the Text's full single-line implicitWidth and never asks
+# it to be narrower, so it silently goes back to one line.
+legend=$(awk '/objectName: "legendText"/{p=1} p{print} p&&/^      }$/{exit}' "$ROOT/ConversationView.qml")
+if [[ -z $legend ]]; then
+  echo "  FAIL could not find the legendText block in ConversationView.qml"; fail=1
+else
+  for prop in 'wrapMode: Text.WordWrap' 'Layout.preferredWidth: 0' 'Layout.fillWidth: true'; do
+    if grep -qF "$prop" <<<"$legend"; then echo "  ok   legend sets $prop"
+    else echo "  FAIL legend is missing $prop"; fail=1; fi
+  done
+  if grep -q 'elide:' <<<"$legend"; then
+    echo "  FAIL legend elides again; it cannot both elide and wrap"; fail=1
+  else
+    echo "  ok   legend does not elide"
+  fi
+fi
+
 echo "no 32-bit int holds a Signal timestamp"
 if grep -n -E "property int (\w*[a-z0-9_]Ts|ts|\w*Timestamp)\b" "$ROOT"/*.qml; then echo "  FAIL use real/var for timestamps"; fail=1; else echo "  ok"; fi
 echo "every Text, TextEdit and TextArea is PlainText"

@@ -1014,17 +1014,30 @@ Item {
       Layout.fillWidth: true
       spacing: Style.space(8)
       Text {
+        objectName: "legendText"
+        // The legend used to elide on one line, so the only way to read the end
+        // of it was to widen the window. It wraps instead.
+        //
+        // preferredWidth 0 is what makes that work inside a RowLayout: an
+        // unwrapped Text reports its full single-line width as implicitWidth,
+        // the layout honours that as the preferred size, and the row then never
+        // asks the text to be narrower than one line -- so it elides again. With
+        // a preferred width of zero and fillWidth, the buttons take what they
+        // need and the legend wraps into whatever is left.
         Layout.fillWidth: true
+        Layout.preferredWidth: 0
+        Layout.alignment: Qt.AlignBottom
         text: view.error ? view.error : (view.sending ? "Encrypting…" : view.notice ? view.notice
               : "click a message: Reply · React · Copy  ·  select text, Ctrl+C or right-click copies  ·  right-click: react  ·  middle-click: reply  ·  Shift+Enter new line  ·  Ctrl+V pastes (pictures too)  ·  Ctrl+O attach  ·  Esc closes")
         textFormat: Text.PlainText
-        elide: Text.ElideRight
+        wrapMode: Text.WordWrap
         color: view.error ? Color.urgent : Util.alpha(Color.popups.text, 0.5)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
       }
-      Button { visible: !view.detached; text: "Detach ⧉"; onClicked: view.requestDetach() }
-      Button { text: "Terminal"; onClicked: view.requestTerminal() }
+      // Bottom-aligned so they stay on the legend's last line as it grows.
+      Button { Layout.alignment: Qt.AlignBottom; visible: !view.detached; text: "Detach ⧉"; onClicked: view.requestDetach() }
+      Button { Layout.alignment: Qt.AlignBottom; text: "Terminal"; onClicked: view.requestTerminal() }
     }
   }
 }
