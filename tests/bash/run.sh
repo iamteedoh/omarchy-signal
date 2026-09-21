@@ -213,6 +213,28 @@ else
   fi
 fi
 
+echo "every GitHub Action is pinned to a commit SHA"
+# OMSIG-10: a major-version tag like @v7 is mutable. If upstream moves it, or the
+# action's repo is compromised, the changed code runs here -- and
+# release-please.yml holds contents/issues/pull-requests write, which is enough to
+# rewrite this repo's release path. The marketplace review blocked the submission
+# on exactly this. Every uses: must name a full 40-hex commit SHA.
+unpinned=0
+while IFS= read -r line; do
+  [[ -z $line ]] && continue
+  ref=${line##*@}
+  ref=${ref%%[[:space:]]*}
+  if [[ ! $ref =~ ^[0-9a-f]{40}$ ]]; then
+    echo "  FAIL not pinned to a commit SHA: $line"; fail=1; unpinned=$((unpinned + 1))
+  fi
+done < <(grep -rhoE "uses: [^[:space:]]+@[^[:space:]]+" "$ROOT"/.github/workflows/ 2>/dev/null || true)
+n_uses=$(grep -rhcE "uses: [^[:space:]]+@" "$ROOT"/.github/workflows/ 2>/dev/null | awk '{s+=$1} END {print s+0}')
+if (( n_uses == 0 )); then
+  echo "  FAIL found no uses: lines to check; this guard is not testing anything"; fail=1
+elif (( unpinned == 0 )); then
+  echo "  ok   $n_uses action(s), all pinned to a 40-char SHA"
+fi
+
 echo "no 32-bit int holds a Signal timestamp"
 if grep -n -E "property int (\w*[a-z0-9_]Ts|ts|\w*Timestamp)\b" "$ROOT"/*.qml; then echo "  FAIL use real/var for timestamps"; fail=1; else echo "  ok"; fi
 echo "every Text, TextEdit and TextArea is PlainText"
