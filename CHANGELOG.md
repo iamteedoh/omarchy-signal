@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.4](https://github.com/iamteedoh/omarchy-signal/compare/v0.4.3...v0.4.4) (2026-09-21)
+
+
+### Continuous Integration
+
+* pin every GitHub Action to a verified commit SHA ([#22](https://github.com/iamteedoh/omarchy-signal/issues/22)) ([b881bb9](https://github.com/iamteedoh/omarchy-signal/commit/b881bb93a2a0b9ef229785097e962adecd31488c))
+
 ## [0.4.3](https://github.com/iamteedoh/omarchy-signal/compare/v0.4.2...v0.4.3) (2026-09-18)
 
 
