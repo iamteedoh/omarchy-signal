@@ -288,9 +288,10 @@ conversation key, or `me` for Note to Self. Add `--json` for machine output.
 Everything the installer places lives under your home directory, which
 `omarchy update` does not rewrite. The installer also drops a post-update hook
 (`~/.config/omarchy/hooks/post-update.d/omarchy-signal`) that re-checks the
-plugin still loads against the new shell and that the bridge service is
-enabled, and raises a critical notification if anything needs attention;
-`omarchy-signal doctor` gives the details. A manual `omarchy refresh shell`
+plugin still loads against the new shell and that the bridge service is still
+installed, and raises a critical notification if anything needs attention;
+`omarchy-signal doctor` gives the details. The hook only reports: if you have
+disabled or masked the bridge service, it stays off after an update. A manual `omarchy refresh shell`
 resets `shell.json` (dropping the bar widget); re-run `./install.sh` after it.
 
 ## Security

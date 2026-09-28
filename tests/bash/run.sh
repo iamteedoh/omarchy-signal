@@ -235,6 +235,50 @@ elif (( unpinned == 0 )); then
   echo "  ok   $n_uses action(s), all pinned to a 40-char SHA"
 fi
 
+echo "the post-update hook never turns the bridge back on"
+# The marketplace review found the hook treating a disabled omarchy-signal.service
+# as a fault and running `systemctl --user enable --now` after every Omarchy
+# update, which silently restarted the account-linked bridge after the user had
+# turned it off. The hook may only report. Run the real hook against a stub
+# systemctl in every unit state it branches on, and fail if it ever asks systemd
+# for anything but is-enabled, or raises a notification for a deliberate choice.
+hs=$(mktemp -d)
+mkdir -p "$hs/bin" "$hs/home/.config/omarchy/plugins/iamteedoh.signal"
+echo '{}' >"$hs/home/.config/omarchy/plugins/iamteedoh.signal/manifest.json"
+cat >"$hs/bin/systemctl" <<'STUB'
+#!/bin/bash
+echo "$*" >>"$HOOK_LOG"
+if [[ " $* " == *" is-enabled "* ]]; then
+  [[ $UNIT_STATE != none ]] && echo "$UNIT_STATE"
+  [[ $UNIT_STATE == enabled ]]
+fi
+STUB
+printf '#!/bin/bash\necho "signal-cli 0.14.8"\n' >"$hs/bin/signal-cli"
+printf '#!/bin/bash\necho "$*" >>"$NOTIFY_LOG"\n' >"$hs/bin/omarchy-notification-send"
+printf '#!/bin/bash\nexit 0\n' >"$hs/bin/omarchy-plugin-validate"
+chmod +x "$hs"/bin/*
+# state : exit code the hook must return : whether a notification is expected
+for row in enabled:0:no disabled:0:no masked:0:no linked:0:no not-found:1:yes none:1:yes; do
+  IFS=: read -r st want_rc want_notify <<<"$row"
+  : >"$hs/calls"; : >"$hs/notified"
+  out=$(HOME="$hs/home" PATH="$hs/bin:/usr/bin:/bin" HOOK_LOG="$hs/calls" NOTIFY_LOG="$hs/notified" \
+    UNIT_STATE="$st" bash "$ROOT/scripts/post-update-hook.sh" 2>&1)
+  rc=$?
+  changed=$(grep -vE '(^| )is-(enabled|active)( |$)' "$hs/calls" || true)
+  if [[ -n $changed ]]; then
+    echo "  FAIL unit $st: the hook asked systemd to change the service: $changed"; fail=1
+  elif [[ $rc != "$want_rc" ]]; then
+    echo "  FAIL unit $st: exit $rc, expected $want_rc: $out"; fail=1
+  elif [[ $want_notify == no && -s $hs/notified ]]; then
+    echo "  FAIL unit $st: raised a notification: $(cat "$hs/notified")"; fail=1
+  elif [[ $want_notify == yes && ! -s $hs/notified ]]; then
+    echo "  FAIL unit $st: a missing unit must still be reported"; fail=1
+  else
+    echo "  ok   unit $st: exit $rc, service state untouched"
+  fi
+done
+rm -rf "$hs"
+
 echo "no 32-bit int holds a Signal timestamp"
 if grep -n -E "property int (\w*[a-z0-9_]Ts|ts|\w*Timestamp)\b" "$ROOT"/*.qml; then echo "  FAIL use real/var for timestamps"; fail=1; else echo "  ok"; fi
 echo "every Text, TextEdit and TextArea is PlainText"
