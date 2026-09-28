@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.4](https://github.com/iamteedoh/omarchy-signal/compare/v0.4.3...v0.4.4) (2026-09-28)
+
+
+### Bug Fixes
+
+* leave a disabled bridge service off after Omarchy updates ([#24](https://github.com/iamteedoh/omarchy-signal/issues/24)) ([79bb3d5](https://github.com/iamteedoh/omarchy-signal/commit/79bb3d599559334abcd36ba5f4fe995b5c0ec408))
+
+
+### Continuous Integration
+
+* pin every GitHub Action to a verified commit SHA ([#22](https://github.com/iamteedoh/omarchy-signal/issues/22)) ([b881bb9](https://github.com/iamteedoh/omarchy-signal/commit/b881bb93a2a0b9ef229785097e962adecd31488c))
+
 ## [0.4.3](https://github.com/iamteedoh/omarchy-signal/compare/v0.4.2...v0.4.3) (2026-09-18)
 
 
