@@ -86,7 +86,7 @@ The PR title becomes the squash commit subject and drives release-please:
 ### A pull request that does more than one thing
 
 Because every merge is a squash, the PR title is the only commit that reaches
-`main` — so a PR normally contributes exactly **one** line to the release notes,
+`main`, so a PR normally contributes exactly **one** line to the release notes,
 however much it contains.
 
 When a PR carries several distinct changes, list them in an override block in
@@ -105,7 +105,7 @@ block only works with a squash merge, which is what this repository does.
 
 **The opening marker must appear exactly once in the body.** release-please takes
 the *first* occurrence as the start of the block, so a PR that also mentions the
-marker in prose — while explaining this very mechanism, say — makes it swallow
+marker in prose (while explaining this very mechanism, say) makes it swallow
 the prose in between and try to parse list bullets as commits. Describe it as
 "the override block" rather than spelling the marker a second time.
 
@@ -138,8 +138,8 @@ updates) a PR titled `chore(main): release X.Y.Z` that bumps `version` in
 Merging that PR creates the `vX.Y.Z` tag and the GitHub Release.
 
 `changelog-sections` in `release-please-config.json` decides what appears in the
-notes. Release-please hides most types by default — only `feat`, `fix`, `perf`
-and `revert` would show — so every type this project uses is listed there
+notes. Release-please hides most types by default (only `feat`, `fix`, `perf`
+and `revert` would show), so every type this project uses is listed there
 explicitly with `hidden: false`. Only `chore` stays hidden, because
 release-please's own `chore(main): release X.Y.Z` commits would otherwise appear
 in the notes.
