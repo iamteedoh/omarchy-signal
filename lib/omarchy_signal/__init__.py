@@ -19,4 +19,4 @@ Nothing in this package ever touches Signal key material: it lives in
 # updater rewrites the version on the annotated line). tests/python/test_version.py
 # fails if the two ever drift, because a --version that matches no release makes
 # every bug report harder to act on.
-__version__ = "0.4.3"  # x-release-please-version
+__version__ = "0.4.4"  # x-release-please-version
