@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.5.0](https://github.com/iamteedoh/omarchy-signal/compare/v0.4.4...v0.5.0) (2026-11-13)
+
+
+### Features
+
+* native Omarchy look, socket client and in-place updates ([#27](https://github.com/iamteedoh/omarchy-signal/issues/27)) ([496f823](https://github.com/iamteedoh/omarchy-signal/commit/496f823f560fb604e1944e4c07d8b77bc7fe1d4b))
+
+
+### Documentation
+
+* refresh the terminal client screenshots and README ([#28](https://github.com/iamteedoh/omarchy-signal/issues/28)) ([3547f95](https://github.com/iamteedoh/omarchy-signal/commit/3547f9503484697e6a6fb9765f67f23055612577))
+
+
+### Continuous Integration
+
+* add an owner-only workflow that files an issue in the private tracker ([#25](https://github.com/iamteedoh/omarchy-signal/issues/25)) ([0ee9cea](https://github.com/iamteedoh/omarchy-signal/commit/0ee9cea521099e1855099f2d2985e93ff97350d6))
+
 ## [0.4.4](https://github.com/iamteedoh/omarchy-signal/compare/v0.4.3...v0.4.4) (2026-09-28)
 
 
