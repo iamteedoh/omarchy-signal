@@ -909,7 +909,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
 
-    s = sub.add_parser("events", help="stream events as JSON lines (used by the shell plugin)")
+    s = sub.add_parser("events", help="stream the bridge's events as JSON lines")
     s.add_argument("--once", action="store_true", help="exit when the bridge disconnects")
     s.set_defaults(fn=cmd_events)
 

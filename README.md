@@ -13,19 +13,20 @@ and a bar widget with your unread count. Everything follows the active
 Omarchy theme.
 
 ```
- ◢ SIGNAL // OMARCHY   ◉ SECURE                          2 unread ▸ lumon ▸ IMG
- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- ▶ ● Trinity           2 │ Trinity  +15550002222
-     wake up, neo…       │ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-   ● Morpheus            │              ┈┈ Tuesday, 08 September 2026 ┈┈
-     the red pill        │ Trinity · 00:41
-   ● Nebuchadnezzar crew │   wake up, neo…
-     Tank: ready         │   🖼 matrix.png · 213.0KB
-                         │ You · 00:42 ✓✓
-                         │   I know kung fu. 🥋
-                         │ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-                         │ ▌ Message… (Enter to send, Alt-Enter for a new line)
- Tab list  Ctrl-U contacts  / search  Ctrl-A attach  Ctrl-G message  Ctrl-T chat
+ ◢ SIGNAL // OMARCHY  ◉ SECURE                       3 unread ▸ lumon-dark ▸ IMG
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ● Morpheus          1 │ Trinity  +15550002222
+     The Oracle will se… │ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+   ● Tank              2 │ You · 00:33 ✓
+     Pick up on the sec… │   Which way out?
+ ▌ ● Trinity       00:38 │ Trinity · 00:35 ✓✓
+     Tank has the line … │   Tunnel grid 07. Your route is in red, out through exit 04.
+   ● Nebuchadnezzar crew │   🖼 tunnel-grid-07.png · 630.5KB
+     Van is running. Ba… │ You · 00:37 ✓
+                         │   Got it. Heading out now 👍  🔥
+                         │ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                         │ ▌
+ Tab list  Ctrl-U contacts  / search  Ctrl-A attach  Ctrl-G message  Ctrl-S settings
 ```
 
 ## Tour
@@ -44,17 +45,20 @@ above; Catppuccin Latte and Gruvbox below.
 | ![A popup, at rest](docs/media/notification.png) | ![The reply dialog on Lumon](docs/media/reply-dialog.png) |
 | ![The bar panel: every conversation, unread counts, search](docs/media/chat-list.png) | |
 
-The terminal client:
+The terminal client, in Ghostty with the same theme:
+
+![The terminal client: the conversation list with unread counts, and Trinity's map drawn inline in the thread](docs/media/tui-chat.png)
 
 | | |
 |---|---|
-| ![Attach picker with path completion and a thumbnail of the picture](docs/media/attach-with-thumbnail.png) | ![The sent picture rendered inline in the thread](docs/media/image-inline.png) |
-| ![Settings screen modelled on Signal Desktop](docs/media/settings.png) | |
+| ![Attaching a file: the path prompt lists the folder and previews the highlighted picture](docs/media/tui-attach.png) | ![The settings screen, grouped like Signal's own client](docs/media/tui-settings.png) |
 
-The pictures of the popups and the chat window are rendered offscreen by
-`make screenshots` against the fake `signal-cli` in `scripts/demo-env.sh`, in
-a throwaway home directory: every contact, message and file in them is
-fictional, and nothing is captured from a screen.
+Every contact, message and file in these pictures is fictional: they come
+from the fake `signal-cli` in `scripts/demo-env.sh`, in a throwaway home
+directory. `make screenshots` renders the popups, the chat window and the bar
+panel offscreen. `make tui-screenshots` photographs the terminal client in a
+private nested Hyprland that runs nothing but one Ghostty, so nothing from
+the real desktop can end up in a picture.
 
 ## What you get
 
@@ -80,7 +84,9 @@ fictional, and nothing is captured from a screen.
   new group, Note to Self.
 - Attach files with a path prompt that completes as you type, lists the folder,
   and previews the highlighted image.
-- Settings screen (`Ctrl-S`) grouped like Signal's own client.
+- Settings screen (`Ctrl-S`) grouped like Signal's own client. When a new
+  release is out, the client says so and `u` on the settings screen installs
+  it and comes back.
 
 **Popups and the chat window** (Quickshell)
 - An incoming message slides in top right, drawn like Omarchy's own
@@ -241,7 +247,7 @@ bindings or menu files; it appends clearly marked blocks that
 | `Alt-D` | detach this chat into the chat window |
 | `Ctrl-E` | mute conversation |
 | `:smile:` / `:D` | emoji shortcodes and emoticons convert after the space (setting); a picker opens as you type |
-| `Ctrl-S` / `F2` | settings |
+| `Ctrl-S` / `F2` | settings (`u` there installs an available update, `r` restarts the bridge after a restart-only change) |
 | `Ctrl-Z` | put a failed message back in the composer |
 | `Ctrl-X` / `Ctrl-L` | clear composer / redraw |
 | drag with the mouse | select text; copied to the clipboard (and the primary selection) on release |
@@ -327,6 +333,7 @@ omarchy-signal conversations | contacts [--refresh] | history <chat> -n 30
 omarchy-signal mark-read <chat>            # also clears the phone's notification
 omarchy-signal link [--force] [--qr-style …]
 omarchy-signal settings [key [value]]
+omarchy-signal events [--once]             # the bridge's event stream as JSON lines
 omarchy-signal status | doctor | demo
 ```
 
@@ -356,7 +363,8 @@ from a stranger do anything to your terminal, your shell or your files.
 
 ```bash
 make test          # python unit + integration tests (fake signal-cli), node tests, shell checks, QML load check
-make screenshots   # re-render preview.png and docs/media offscreen, from the demo bridge
+make screenshots      # re-render preview.png and docs/media offscreen, from the demo bridge
+make tui-screenshots  # re-take the terminal client pictures in a private nested Hyprland
 make security      # the adversarial subset: terminal injection, path traversal, protocol abuse
 ```
 
