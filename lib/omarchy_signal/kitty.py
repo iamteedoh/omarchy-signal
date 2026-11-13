@@ -24,6 +24,8 @@ import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import bounded
+
 CHUNK = 4096
 MAX_PIXELS = 40_000_000       # 40 Mpx ≈ the ceiling of anything a phone produces
 MAX_PNG_BYTES = 32 * 1024 * 1024
@@ -170,10 +172,12 @@ def to_png(path: Path, *, max_side: int = 1600) -> bytes | None:
            src + ("[0]" if info.format == "gif" else ""), "-auto-orient", "-strip",
            "-resize", f"{max_side}x{max_side}>", "PNG:-"]
     try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=CONVERT_TIMEOUT + 5, check=False,
-                              env={"PATH": os.environ.get("PATH", "/usr/bin"), "HOME": os.environ.get("HOME", "/"),
-                                   "MAGICK_TEMPORARY_PATH": os.environ.get("TMPDIR", "/tmp")})
-    except (subprocess.TimeoutExpired, OSError):
+        # Its output is read with a ceiling and one deadline (bounded.py): the
+        # picture came from somebody else.
+        proc = bounded.run(cmd, limit=MAX_PNG_BYTES, timeout=CONVERT_TIMEOUT + 5, stderr_limit=4096,
+                           env={"PATH": os.environ.get("PATH", "/usr/bin"), "HOME": os.environ.get("HOME", "/"),
+                                "MAGICK_TEMPORARY_PATH": os.environ.get("TMPDIR", "/tmp")})
+    except (subprocess.SubprocessError, OSError):
         return None
     if proc.returncode != 0 or not proc.stdout.startswith(b"\x89PNG") or len(proc.stdout) > MAX_PNG_BYTES:
         return None

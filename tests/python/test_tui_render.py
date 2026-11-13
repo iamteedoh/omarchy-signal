@@ -370,6 +370,89 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class DisappearingTests(unittest.TestCase):
+    def test_an_expired_message_sent_from_this_client_leaves_the_screen_and_the_list(self):
+        app = make_app()
+        seed(app)
+        key = app.active_key
+        app.status["account"] = "+15550001111"
+        # Sent from this client: kept as sender "me", which the bridge calls by the account.
+        app.messages[key].append({"conversation": key, "ts": 1700000070000, "sender": "me", "senderName": "You",
+                                  "outgoing": True, "body": "this should disappear", "attachments": [], "status": "sent"})
+        app.conversations[0]["preview"] = "this should disappear"
+        asyncio.run(app._on_event("removed", {"conversation": key, "ts": 1700000070000, "sender": "number:+15550001111",
+                                              "outgoing": True, "expired": True, "preview": "older"}))
+        self.assertNotIn("this should disappear", [m.get("body") for m in app.messages[key]])
+        self.assertEqual(app.conversations[0]["preview"], "older")
+        self.assertEqual(len(app.messages[key]), 3, "nothing else went with it")
+
+    def _menu(self):
+        app = make_app()
+        seed(app)
+        asked = []
+
+        class Client:
+            async def request(self, op, **kw):
+                asked.append((op, kw))
+                return {}
+        app.client = Client()
+        app.open_conversation_menu()
+        return app, asked
+
+    def press(self, app, *names):
+        for name in names:
+            key = tui.Key("char", char=name[1:]) if name.startswith("'") else tui.Key(name)
+            asyncio.run(app._menu_key(key))
+
+    def test_arrows_pick_a_timer_and_enter_saves_it_and_closes(self):
+        app, asked = self._menu()
+        row = [a for a, _ in app.menu_items].index("expiration")
+        self.press(app, *["down"] * row)
+        self.press(app, "right", "right", "right", "left")
+        self.assertEqual(asked, [], "the arrows only pick a value")
+        self.assertEqual((app.overlay, app.menu_index, app.menu_timer), ("convmenu", row, 300))
+        self.assertIn("5 minutes", app._menu_label("expiration", ""))
+        self.assertIn("Enter saves", app._menu_label("expiration", ""))
+        self.press(app, "enter")
+        self.assertEqual(asked, [("setExpiration", {"conversation": app.active_key, "seconds": 300})])
+        self.assertNotEqual(app.overlay, "convmenu", "Enter closes the menu")
+        self.assertEqual(app.active()["expiration"], 300)
+
+    def test_enter_on_the_timer_without_a_change_just_closes(self):
+        app, asked = self._menu()
+        app.menu_index = [a for a, _ in app.menu_items].index("expiration")
+        self.press(app, "enter")
+        self.assertEqual(asked, [])
+        self.assertNotEqual(app.overlay, "convmenu")
+
+    def test_a_timer_picked_but_left_is_not_saved(self):
+        app, asked = self._menu()
+        row = [a for a, _ in app.menu_items].index("expiration")
+        mute = [a for a, _ in app.menu_items].index("mute")
+        app.menu_index = row
+        self.press(app, "right", "right")
+        self.press(app, *(["down"] * (mute - row)))
+        self.assertEqual(app.menu_timer, 0, "leaving the row forgets the unsaved value")
+        self.press(app, "left", "right")
+        self.assertEqual(asked, [], "arrows do nothing on other rows")
+        self.assertEqual(app.overlay, "convmenu")
+
+    def test_enter_on_any_row_does_it_and_closes(self):
+        app, asked = self._menu()
+        app.menu_index = [a for a, _ in app.menu_items].index("archive")
+        self.press(app, "enter")
+        self.assertEqual(asked[0][0], "archive")
+        self.assertNotEqual(app.overlay, "convmenu")
+
+    def test_esc_changes_nothing(self):
+        app, asked = self._menu()
+        app.menu_index = [a for a, _ in app.menu_items].index("expiration")
+        self.press(app, "right")
+        asyncio.run(app.handle_key(tui.Key("escape")))
+        self.assertEqual(asked, [])
+        self.assertNotEqual(app.overlay, "convmenu")
+
+
 class EmojiPickerTests(unittest.TestCase):
     def test_picker_and_autoconvert(self):
         app = make_app()

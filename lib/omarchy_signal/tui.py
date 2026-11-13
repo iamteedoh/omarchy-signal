@@ -136,6 +136,7 @@ class App:
         self.pick_target: dict | None = None
         self.menu_items: list[tuple[str, str]] = []   # conversation menu (key, label)
         self.menu_index = 0
+        self.menu_timer = 0                    # the timer the menu's arrows have picked, saved on Enter
         self.group_members: set[str] = set()      # new-group member selection
         self.info_lines: list[str] = []           # generic info overlay content
         self.forward_payload: dict | None = None
@@ -430,11 +431,23 @@ class App:
         elif name == "removed":
             key = data.get("conversation", "")
             ts, sender = data.get("ts"), data.get("sender") or ""
+            mine = f"number:{self.status.get('account', '')}"
             rows = self.messages.get(key)
             if rows is not None:
-                self.messages[key] = [m for m in rows
-                                      if not (m.get("ts") == ts and (not sender or m.get("sender") == sender))]
-                self.dirty = True
+                # A message sent from this client is kept as sender "me"; the
+                # bridge names it by the account. Both are the same message.
+                def same(m: dict) -> bool:
+                    if m.get("ts") != ts:
+                        return False
+                    return (not sender or m.get("sender") == sender
+                            or bool(m.get("outgoing") and (data.get("outgoing") or sender == mine)))
+                self.messages[key] = [m for m in rows if not same(m)]
+            if isinstance(data.get("preview"), str):
+                # An expired message must not live on as the list's preview line.
+                for c in self.conversations:
+                    if c["key"] == key:
+                        c["preview"] = data["preview"]
+            self.dirty = True
         elif name == "conversationRemoved":
             key = data.get("conversation", "")
             self.messages.pop(key, None)
@@ -780,7 +793,7 @@ class App:
     EXPIRATIONS = [(0, "off"), (30, "30 seconds"), (300, "5 minutes"), (3600, "1 hour"), (8 * 3600, "8 hours"),
                    (86400, "1 day"), (7 * 86400, "1 week"), (28 * 86400, "4 weeks")]
 
-    def open_conversation_menu(self) -> None:
+    def open_conversation_menu(self, keep: str = "") -> None:
         conv = self.active()
         items: list[tuple[str, str]] = []
         if conv:
@@ -802,21 +815,45 @@ class App:
         items.append(("newgroup", "New group…"))
         items.append(("archived", "Show archived conversations"))
         self.menu_items = items
-        self.menu_index = 0
+        self.menu_index = next((i for i, (action, _) in enumerate(items) if action == keep), 0)
+        self.menu_timer = int(conv.get("expiration", 0) or 0) if conv else 0
         self.open_overlay("convmenu")
 
-    async def _menu_key(self, key: Key) -> None:
-        n = len(self.menu_items)
-        if key.name == "down" or (key.name == "char" and key.char == "j"):
-            self.menu_index = (self.menu_index + 1) % n
-        elif key.name == "up" or (key.name == "char" and key.char == "k"):
-            self.menu_index = (self.menu_index - 1) % n
-        elif key.name == "enter" or (key.name == "char" and key.char in (" ", "l")) or key.name == "right":
-            await self._menu_activate(self.menu_items[self.menu_index][0], 1)
-        elif key.name == "left" or (key.name == "char" and key.char == "h"):
-            await self._menu_activate(self.menu_items[self.menu_index][0], -1)
+    def _menu_saved_timer(self) -> int:
+        conv = self.active()
+        return int(conv.get("expiration", 0) or 0) if conv else 0
 
-    async def _menu_activate(self, action: str, delta: int) -> None:
+    def _menu_label(self, action: str, label: str) -> str:
+        """The row as drawn: the timer row shows the value the arrows picked."""
+        if action != "expiration":
+            return label
+        name = next((lbl for secs, lbl in self.EXPIRATIONS if secs == self.menu_timer), f"{self.menu_timer}s")
+        changed = self.menu_timer != self._menu_saved_timer()
+        return f"Disappearing messages:  ◀ {name} ▶" + ("   Enter saves" if changed else "")
+
+    async def _menu_key(self, key: Key) -> None:
+        """Up and down pick a row, left and right change the timer row's value,
+        Enter does what the highlighted row says (saving the timer picked with
+        the arrows) and closes the menu. Esc closes it and changes nothing."""
+        n = len(self.menu_items)
+        if not n:
+            return
+        action = self.menu_items[self.menu_index][0]
+        vertical = {"down": 1, "up": -1}.get(key.name) or ({"j": 1, "k": -1}.get(key.char) if key.name == "char" else None)
+        sideways = {"right": 1, "left": -1}.get(key.name) or ({"l": 1, "h": -1}.get(key.char) if key.name == "char" else None)
+        if vertical:
+            # Leaving the timer row forgets a value picked but not saved.
+            self.menu_timer = self._menu_saved_timer()
+            self.menu_index = (self.menu_index + vertical) % n
+        elif sideways:
+            if action == "expiration":
+                secs = [x for x, _ in self.EXPIRATIONS]
+                idx = secs.index(self.menu_timer) if self.menu_timer in secs else 0
+                self.menu_timer = secs[(idx + sideways) % len(secs)]
+        elif key.name == "enter":
+            await self._menu_activate(action)
+
+    async def _menu_activate(self, action: str) -> None:
         conv = self.active()
         if not self.client:
             return
@@ -825,18 +862,16 @@ class App:
                 self._open_in_window(conv["key"])
                 self.close_overlay()
             elif action == "expiration" and conv:
-                current = int(conv.get("expiration", 0) or 0)
-                secs = [x for x, _ in self.EXPIRATIONS]
-                idx = secs.index(current) if current in secs else 0
-                new = secs[(idx + delta) % len(secs)]
-                await self.client.request("setExpiration", conversation=conv["key"], seconds=new)
-                conv["expiration"] = new
-                self.open_conversation_menu()
-                self.menu_index = 0
+                new = self.menu_timer
+                if new != int(conv.get("expiration", 0) or 0):
+                    await self.client.request("setExpiration", conversation=conv["key"], seconds=new)
+                    conv["expiration"] = new
+                    label = next((lbl for secs, lbl in self.EXPIRATIONS if secs == new), f"{new}s")
+                    self.show_toast("disappearing messages off" if new == 0 else f"messages now disappear after {label}")
+                self.close_overlay()
             elif action == "mute" and conv:
                 await self._toggle_mute()
-                self.open_conversation_menu()
-                self.menu_index = 1
+                self.close_overlay()
             elif action == "archive" and conv:
                 new = not conv.get("archived")
                 await self.client.request("archive", conversation=conv["key"], archived=new)
@@ -2647,11 +2682,14 @@ class App:
             hints = "r react · q quote · e edit · d delete for everyone · D delete for me · f forward · c copy · o open · i info · Esc"
             out.append(T.move(top + h - 2, body_left) + bg + T.fg(th.dim) + truncate(hints, body_w) + T.RESET)
         elif name == "convmenu":
-            for i, (_, label) in enumerate(self.menu_items):
+            for i, (action, label) in enumerate(self.menu_items):
                 selected = i == self.menu_index
                 style = T.bg(th.selection) + T.fg(th.bright_foreground) if selected else bg + T.fg(th.foreground)
-                out.append(T.move(top + 1 + i, body_left) + style + ("▶ " if selected else "  ") + pad(truncate(label, body_w - 2), body_w - 2) + T.RESET)
-            out.append(T.move(top + h - 2, body_left) + bg + T.fg(th.dim) + truncate("Enter/→ choose or next value · ← previous · Esc", body_w) + T.RESET)
+                shown = self._menu_label(action, label)
+                out.append(T.move(top + 1 + i, body_left) + style + ("▶ " if selected else "  ") + pad(truncate(shown, body_w - 2), body_w - 2) + T.RESET)
+            on_timer = self.menu_items and self.menu_items[self.menu_index][0] == "expiration"
+            hint = "←/→ change · Enter saves and closes · Esc cancels" if on_timer else "↑/↓ move · Enter chooses and closes · Esc cancels"
+            out.append(T.move(top + h - 2, body_left) + bg + T.fg(th.dim) + truncate(hint, body_w) + T.RESET)
         elif name == "info":
             for i, line in enumerate(self.info_lines[:h - 3]):
                 out.append(T.move(top + 1 + i, body_left) + bg + T.fg(th.foreground if i else th.bright_foreground) + truncate(clean_text(line, single_line=True), body_w) + T.RESET)

@@ -147,25 +147,35 @@ def cmd_ls_files(args) -> int:
     return 0
 
 
-def cmd_paste_image(args) -> int:
-    """For the window's Ctrl+V: what the clipboard holds besides text. Files
-    copied in a file manager are attached as they are; a picture (a screenshot,
-    "Copy image" in a browser) is saved where the bridge may read it. Prints
-    ``{"paths": [...], "path": first}``. With plain text on the clipboard it
-    does nothing (the text field pastes that itself)."""
+def cmd_paste(args) -> int:
+    """For a paste in the shell's text fields: what the clipboard (or, with
+    --primary, the selection) holds, read through wl-paste with a size and time
+    limit. The shell never reads a clipboard offer itself: Qt reads one whole,
+    however big, on the GUI thread.
+
+    Prints ``{"paths": [...]}`` for files copied in a file manager or a picture
+    (saved where the bridge may read it), ``{"text": "..."}`` for text, and
+    ``{}`` when there is nothing usable or it did not arrive in time."""
     from . import clipboard
+    out: dict = {}
     try:
-        offered = clipboard.types()
-        paths = clipboard.copied_files(offered)
-        if not paths:
-            mime = clipboard.image_type(offered)
-            if not mime:
-                return 1
-            paths = [str(clipboard.paste_image(clipboard.pasted_dir(_paths().data_dir), mime))]
+        offered = clipboard.types(primary=args.primary)
+        paths: list[str] = []
+        if args.files and not args.primary:
+            paths = clipboard.copied_files(offered)
+            if not paths:
+                mime = clipboard.image_type(offered)
+                if mime:
+                    paths = [str(clipboard.paste_image(clipboard.pasted_dir(_paths().data_dir), mime))]
+        if paths:
+            out = {"paths": paths, "path": paths[0]}
+        elif clipboard.has_text(offered):
+            text = clipboard.paste_text(primary=args.primary, max_chars=args.max_chars)
+            if text:
+                out = {"text": text}
     except (clipboard.ClipboardError, OSError) as exc:
         print(f"omarchy-signal: {exc}", file=sys.stderr)
-        return 1
-    _print_json({"paths": paths, "path": paths[0]})
+    _print_json(out)
     return 0
 
 
@@ -356,7 +366,7 @@ def cmd_status(args) -> int:
         if status.get("error"):
             print(f"last error  : {clean_text(status['error'], single_line=True)}")
         if status["update"]["available"]:
-            print(f"update      : {status['update']['latest']} is available, install it with `omarchy-signal update`")
+            print(f"update      : {status['update']['latest']} is available, update with `omarchy plugin update iamteedoh.signal`")
         return 0 if status["connected"] else 1
     return _run(go)
 
@@ -642,9 +652,8 @@ def _interactive() -> bool:
 
 
 def cmd_update(args) -> int:
-    """Check for a newer release, or install it: fetch through git from the remote
-    the plugin was added from, move the plugin folder to the newest release tag,
-    then run that release's install.sh in place."""
+    """Check for a newer release, or update through Omarchy's own plugin
+    updater. The plugin never fetches or installs code itself."""
     from . import update
     paths = _paths()
     info = update.InstallInfo.detect(state_dir=paths.state_dir)
@@ -658,56 +667,31 @@ def cmd_update(args) -> int:
             result = update.check(info, current=__version__)
             update.store(paths.state_dir, result)      # what `status`, `doctor` and the shell show
         if args.json:
-            _print_json({**result.to_json(), "install": info.kind})
+            _print_json({**result.to_json(), "install": info.kind, "how": update.advice(info)})
         elif result.error:
-            print(f"omarchy-signal: could not check for updates: {result.error}", file=sys.stderr)
+            print(f"omarchy-signal: {result.error}", file=sys.stderr)
         elif result.available:
-            print(f"omarchy-signal {result.latest} is available (installed: {result.current}). Install it with: omarchy-signal update")
+            print(f"omarchy-signal {result.latest} is available (installed: {result.current}). Update with: {update.advice(info)}")
         else:
             print(f"omarchy-signal {result.current} is up to date" + ("" if result.latest else " (no releases published yet)"))
         return 1 if result.error else 0
     rc = 0
     try:
-        if info.kind == "link":
-            raise update.UpdateError(f"{info.plugin_dir} is a developer link to a checkout; update that checkout with git")
-        if info.kind == "none":
-            raise update.UpdateError("the plugin is not installed; add it with: omarchy plugin add " + update.DEFAULT_ORIGIN)
-        if info.kind == "git":
-            tag = update.plan(info.plugin_dir, current=__version__)
-        else:
-            found = update.check(info, current=__version__)
-            if found.error:
-                raise update.UpdateError(found.error)
-            tag = "v" + found.latest if found.available and found.latest else None
-        if tag is None:
-            print(f"omarchy-signal {__version__} is up to date")
-        else:
-            print(f"omarchy-signal {__version__} → {tag[1:]}   ({info.plugin_dir})")
-            if info.kind == "copy":
-                print("  This install is a plain copy. The update replaces it with a git checkout of the release")
-                print("  (the same thing `omarchy plugin add` makes), and keeps the old folder beside it as a backup.")
-            if not args.yes:
-                if not _interactive():
-                    print("omarchy-signal: not updating without a terminal to ask in; pass --yes", file=sys.stderr)
-                    return 1
-                if input("  Install it now? [Y/n] ").strip().lower() not in ("", "y", "yes"):
-                    return 0
-            if info.kind == "git":
-                update.fast_forward(info.plugin_dir, tag)
-            else:
-                backup = update.adopt(info, tag)
-                print(f"  The previous copy is at {backup}")
-            # From here on the files on disk are the new release; nothing of this
-            # (old) code is imported again, only the new installer runs.
-            rc = update.run_installer(info.plugin_dir)
-            if rc == 0:
-                with contextlib.suppress(OSError):
-                    update.cache_file(paths.state_dir).unlink()
+        if info.kind != "git":
+            raise update.UpdateError(update.advice(info))
+        argv = update.host_update_argv(yes=args.yes)
+        print("Updating through Omarchy: " + " ".join(["omarchy"] + argv[1:]))
+        # Omarchy shows the changes, asks, fast-forwards and validates. The
+        # shell then notices the new files and refreshes the service (sync).
+        rc = subprocess.run(argv, check=False).returncode
+        if rc == 0:
+            with contextlib.suppress(OSError):
+                update.cache_file(paths.state_dir).unlink()
     except update.UpdateError as exc:
         print(f"omarchy-signal: {exc}", file=sys.stderr)
         rc = 1
     if args.then_tui:
-        # Back to the client, in the freshly installed version. Nothing of this (old) code runs after this line.
+        # Back to the client, in whatever version is now installed.
         if rc != 0:
             input("  Press Enter to go back to the client… ")
         exe = str(Path.home() / ".local/bin/omarchy-signal")
@@ -767,13 +751,13 @@ def cmd_doctor(args) -> int:
         check("bridge answers", False, str(exc).split(";")[0])
     from . import update
     info = update.InstallInfo.detect(state_dir=paths.state_dir)
-    how = {"git": "git checkout: `omarchy plugin update` and `omarchy-signal update` both work",
-           "copy": "plain copy: `omarchy-signal update` turns it into a git checkout on the next release",
+    how = {"git": "git checkout: update with `omarchy plugin update iamteedoh.signal`",
+           "copy": "plain copy: Omarchy cannot update it; add it again with `omarchy plugin add`",
            "link": "developer link to a checkout", "none": "not installed"}[info.kind]
     print(f"  [..] plugin folder: {how}")
     found = update.cached(paths.state_dir)
     if found is not None and found.available:
-        print(f"  [..] update: {found.latest} is available  → omarchy-signal update")
+        print(f"  [..] update: {found.latest} is available  → omarchy plugin update iamteedoh.signal")
     from .kitty import terminal_supports_graphics
     print(f"  [..] this terminal draws images: {'yes' if terminal_supports_graphics(probe=False) else 'no'}")
     default_term = ""
@@ -865,12 +849,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("dir", nargs="?")
     s.set_defaults(fn=cmd_ls_files)
 
-    s = sub.add_parser("paste-image", help=argparse.SUPPRESS)
-    s.set_defaults(fn=cmd_paste_image)
+    s = sub.add_parser("paste", help=argparse.SUPPRESS)
+    s.add_argument("--primary", action="store_true", help="the selection (middle click) rather than the clipboard")
+    s.add_argument("--files", action="store_true", help="copied files and pictures become attachments")
+    s.add_argument("--max-chars", type=int, default=60000)
+    s.set_defaults(fn=cmd_paste)
 
-    s = sub.add_parser("update", help="install the newest release (git, fast-forward to the latest release tag, then its install.sh)")
+    s = sub.add_parser("update", help="check for a newer release, and update through `omarchy plugin update`")
     s.add_argument("--check", action="store_true", help="only say whether a newer release exists")
-    s.add_argument("--yes", "-y", action="store_true", help="do not ask before installing")
+    s.add_argument("--yes", "-y", action="store_true", help="pass --yes to omarchy plugin update")
     s.add_argument("--json", action="store_true")
     s.add_argument("--then-tui", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--if-due", action="store_true", help=argparse.SUPPRESS)

@@ -33,4 +33,4 @@ qr_style = "auto"   # auto: shell popup, else image, else text
 history_enabled = true   # Store messages on disk (owner-only SQLite); off = nothing survives a restart (restart)
 history_retain_days = 0   # 0 keeps everything
 device_name = "omarchy-signal"   # Shown in Signal's Linked devices (restart)
-update_check = true   # Asks the git remote the plugin was installed from for new release tags, once a day; nothing else is sent. Update with: omarchy-signal update
+update_check = true   # Asks the git remote the plugin was installed from for new release tags, once a day; nothing else is sent. Update with: omarchy plugin update iamteedoh.signal

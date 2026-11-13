@@ -94,7 +94,10 @@ Column {
     placeholderText: owner.showContacts ? "Search contacts and groups" : "Search conversations"
     verticalPadding: Style.space(5)
     onTextChanged: { owner.query = text; owner.cursor = 0 }
+    ContextMenu.menu: null
+    PasteGuard { id: searchPaste; target: searchField; cliPath: owner.cliPath || ""; singleLine: true }
     Keys.onPressed: function(event) {
+      if (searchPaste.handleKey(event)) return
       var ctrl = event.modifiers & Qt.ControlModifier
       if (event.key === Qt.Key_Down || (ctrl && event.key === Qt.Key_N)) { owner.moveCursor(1); event.accepted = true }
       else if (event.key === Qt.Key_Up || (ctrl && event.key === Qt.Key_P)) { owner.moveCursor(-1); event.accepted = true }

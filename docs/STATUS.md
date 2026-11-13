@@ -41,7 +41,11 @@ verified with burst screenshot captures of real sends, not by inspection.
   colours.
 - **`omarchy plugin update` does not run a plugin's installer.** The service
   notices the plugin's version changing on disk, runs `omarchy-signal sync`
-  and offers a shell restart; `omarchy-signal update` does all of it in one go.
+  and offers a shell restart. The plugin itself only checks for releases;
+  `omarchy-signal update` starts `omarchy plugin update iamteedoh.signal`.
+- **Qt 6.12.0 reads a clipboard offer whole whenever the clipboard changes**,
+  for any editable text field. Fields are read-only unless focused and on
+  screen, and paste goes through `omarchy-signal paste` (`PasteGuard.qml`).
 
 ## Not done
 

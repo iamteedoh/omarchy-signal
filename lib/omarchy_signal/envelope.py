@@ -74,6 +74,7 @@ class Event:
     quote_timestamp: int = 0
     mentions: list[str] = field(default_factory=list)
     expires_in: int = 0
+    has_timer: bool = False             # the envelope stated the conversation's timer (0 = off)
     view_once: bool = False
     # receipts
     receipt_type: str = ""              # delivery | read | viewed
@@ -272,8 +273,9 @@ def _data_message(data: dict, sender: Recipient, sender_name: str, fallback_ts: 
         if data.get("groupInfo") and isinstance(data["groupInfo"], dict) and \
                 _str(data["groupInfo"].get("type")).upper() == "UPDATE":
             text = "[group updated]"
-        elif _int(data.get("expiresInSeconds")) and data.get("isExpirationUpdate"):
-            text = "[disappearing message timer changed]"
+        elif data.get("isExpirationUpdate"):
+            text = "[disappearing message timer changed]" if _int(data.get("expiresInSeconds")) > 0 \
+                else "[disappearing messages turned off]"
         else:
             return None
 
@@ -311,5 +313,6 @@ def _data_message(data: dict, sender: Recipient, sender_name: str, fallback_ts: 
                  group_name=group_name, quote_text=quote_text, quote_author=quote_author,
                  quote_timestamp=quote_ts, mentions=mentions,
                  expires_in=max(0, _int(data.get("expiresInSeconds"))),
+                 has_timer=isinstance(data.get("expiresInSeconds"), int) and not isinstance(data.get("expiresInSeconds"), bool),
                  view_once=bool(data.get("viewOnce", False)),
                  story=isinstance(data.get("storyContext"), dict))

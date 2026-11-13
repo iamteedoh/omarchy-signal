@@ -6,10 +6,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import socket
+import struct
 from typing import Any, Awaitable, Callable
 
 from . import protocol
-from .config import Paths
+from .config import Paths, private_dir
 
 
 class BridgeError(Exception):
@@ -20,6 +23,19 @@ class BridgeError(Exception):
 
 class BridgeUnavailable(BridgeError):
     pass
+
+
+def server_is_us(writer: asyncio.StreamWriter) -> bool:
+    """Whether the process at the other end of the socket runs as this user (SO_PEERCRED)."""
+    sock = writer.get_extra_info("socket")
+    if sock is None:
+        return False
+    try:
+        creds = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+        _pid, uid, _gid = struct.unpack("3i", creds)
+    except OSError:
+        return False
+    return uid == os.getuid()
 
 
 EventHandler = Callable[[str, Any], Awaitable[None] | None]
@@ -38,6 +54,13 @@ class BridgeClient:
         self.closed = asyncio.Event()
 
     async def connect(self, *, timeout: float = 5.0) -> dict:
+        # Only talk to a socket in a private directory of ours, served by a
+        # process of ours: anything else could be another user posing as the
+        # bridge to read what is sent through it.
+        run_dir = self.paths.run_dir
+        if (run_dir.exists() or run_dir.is_symlink()) and not private_dir(run_dir):
+            raise BridgeUnavailable(
+                f"refusing to use {self.paths.run_dir}: not a private directory owned by this user", code="untrusted")
         try:
             self.reader, self.writer = await asyncio.wait_for(
                 asyncio.open_unix_connection(str(self.paths.socket), limit=protocol.MAX_EVENT_BYTES * 2), timeout)
@@ -45,6 +68,9 @@ class BridgeClient:
             raise BridgeUnavailable(
                 f"the omarchy-signal bridge is not running ({self.paths.socket}); "
                 "start it with `systemctl --user start omarchy-signal`", code="offline") from exc
+        if not server_is_us(self.writer):
+            self.writer.close()
+            raise BridgeUnavailable(f"refusing {self.paths.socket}: it is served by another user", code="untrusted")
         self._task = asyncio.create_task(self._read_loop())
         # First line is always the hello event.
         try:

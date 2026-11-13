@@ -13,6 +13,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import bounded
+
 MAX_PASTE_TEXT = 60000
 MAX_PASTE_IMAGE = 100 * 1024 * 1024
 IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
@@ -40,14 +42,25 @@ def copy(text: str, *, primary: bool = False) -> None:
         raise ClipboardError("copy failed") from exc
 
 
-def _paste(args: list[str], limit: int) -> bytes:
+PASTE_TIMEOUT = 3.0
+IMAGE_TIMEOUT = 8.0
+
+
+def _paste(args: list[str], limit: int, timeout: float | None = None) -> bytes:
+    """At most ``limit + 1`` bytes of what wl-paste prints, within ``timeout``
+    seconds in all: whoever owns the clipboard decides how big the offer is and
+    how slowly it arrives (see bounded.py). One byte more than ``limit`` means
+    there was more."""
     try:
-        res = subprocess.run([_exe("wl-paste")] + args, stdin=subprocess.DEVNULL, capture_output=True, timeout=3, check=False)
+        res = bounded.run([_exe("wl-paste")] + args, limit=limit, timeout=PASTE_TIMEOUT if timeout is None else timeout,
+                          stderr_limit=1024)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ClipboardError("paste failed") from exc
+    if res.overflow:
+        return res.stdout
     if res.returncode != 0:
-        return b""        # empty clipboard, or nothing of that type
-    return res.stdout[:limit]
+        return b""        # empty clipboard, nothing of that type, or it did not answer in time
+    return res.stdout
 
 
 def types(*, primary: bool = False) -> list[str]:
@@ -55,9 +68,15 @@ def types(*, primary: bool = False) -> list[str]:
     return [t.strip() for t in raw.decode("utf-8", "replace").splitlines() if t.strip()]
 
 
-def paste_text(*, primary: bool = False) -> str:
-    raw = _paste((["--primary"] if primary else []) + ["--no-newline", "--type", "text"], MAX_PASTE_TEXT * 4)
-    return raw.decode("utf-8", "replace")[:MAX_PASTE_TEXT]
+def paste_text(*, primary: bool = False, max_chars: int = MAX_PASTE_TEXT) -> str:
+    """The clipboard's text, cut to ``max_chars`` (a UTF-8 character is at most 4 bytes)."""
+    max_chars = max(1, min(MAX_PASTE_TEXT, max_chars))
+    raw = _paste((["--primary"] if primary else []) + ["--no-newline", "--type", "text"], max_chars * 4)
+    return raw.decode("utf-8", "replace").replace("\x00", "")[:max_chars]
+
+
+def has_text(offered: list[str]) -> bool:
+    return any(t in TEXT_TYPES for t in offered)
 
 
 def image_type(offered: list[str]) -> str:
@@ -111,7 +130,7 @@ def copied_files(offered: list[str], home: Path | None = None) -> list[str]:
 
 
 def paste_image(dest_dir: Path, mime: str) -> Path:
-    data = _paste(["--type", mime], MAX_PASTE_IMAGE + 1)
+    data = _paste(["--type", mime], MAX_PASTE_IMAGE + 1, IMAGE_TIMEOUT)
     if not data:
         raise ClipboardError("the clipboard is empty")
     if len(data) > MAX_PASTE_IMAGE:

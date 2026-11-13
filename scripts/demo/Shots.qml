@@ -37,6 +37,7 @@ ShellRoot {
     readonly property bool unlinked: false
     readonly property bool needsSetup: false
     readonly property string latestVersion: ""
+    readonly property string cliPath: shots.cliPath
     property bool showContacts: false
     property string query: ""
     property int cursor: 0
@@ -83,7 +84,8 @@ ShellRoot {
     { wait: 1800, name: "attach-picker", run: function() { chat.helpOpen = false; chat.pickAttachment() } },
     { wait: 1400, name: "group-chat", run: function() { chat.pickerOpen = false; chat.load(shots.crew, "Nebuchadnezzar crew") } },
     { wait: 1400, name: "", run: function() { chat.load(shots.trinity, "Trinity") } },
-    { wait: 700, name: "notification", run: function() { toast.visible = true } },
+    { wait: 900, name: "timer", run: function() { chat.expiration = 3600; chat.chatMenuOpen = true } },
+    { wait: 700, name: "notification", run: function() { chat.chatMenuOpen = false; chat.expiration = 0; toast.visible = true } },
     { wait: 700, name: "chat-list", run: function() { toast.visible = false; shots.listShown = true } },
     { wait: 700, name: "preview", run: function() { toast.visible = true; toast.forceHover = true } },
     { wait: 1400, name: "", run: function() {

@@ -109,24 +109,56 @@ client's. A parameter cannot replace a request's `id` or `op`, and message text
 cannot start a second request, because a newline inside a JSON string is
 escaped. The few programs the plugin still starts (the terminal client, the
 file listing for the attachment picker, reading the clipboard, window
-placement, the updater) go through `execArgv` or a `Process` with an argv
-array, and `Model.tuiArgv` validates the conversation key against
+placement, the update check) go through `execArgv` or `BoundedProcess.qml`
+with an argv array, and `Model.tuiArgv` validates the conversation key against
 `^(number|uuid|group|username):[A-Za-z0-9+/=_.-]+$` first.
+
+### Output from other programs
+
+What a helper prints is read with a ceiling and one deadline for the whole
+run, counted as it arrives, and the helper is killed past either. In the shell,
+`BoundedProcess.qml` does this for every process the plugin starts, reports
+exactly once (also when a process cannot start), and drops a result whose
+question has changed in the meantime. In Python, `bounded.py` does it for the
+programs whose output comes from somewhere else: `wl-paste` (the clipboard's
+owner), `git ls-remote` (the remote), and ImageMagick (a picture somebody
+sent). Each runs in a session of its own and its whole process group is
+killed.
+
+### Clipboard
+
+Qt reads a clipboard offer whole, on the GUI thread, with no size or time
+limit, and an editable text field does it by itself whenever the clipboard
+changes (to update `canPaste`). Every native text field in the plugin is
+therefore read-only unless it has keyboard focus and is on screen
+(`PasteGuard.qml`), which also means its window is the active one. It has no
+context menu. `Ctrl+V`, `Shift+Insert`, `Ctrl+Shift+V`, the Paste key, the
+right click and the middle click paste through `omarchy-signal paste`, which
+reads through `wl-paste` with the limits above (60 000 characters of text,
+3 s; 100 MiB for a picture, 8 s). A paste that arrives after the field was
+edited, lost focus or was hidden is dropped. Checked in a nested Hyprland with
+a 20 MB text offer delivered to the shell: an unguarded field made one
+`wl_data_offer.receive` and grew the shell by 26 MB; with the guard, none.
+
+While a field has focus, Qt still reads the offer when the clipboard
+changes: that is inside Qt and needs a Qt with the formats-only `canPaste`
+fix to go away.
 
 ### Installing and updating
 
 `install.sh` installs packages only through Omarchy's `omarchy-pkg-add` and
 `omarchy-pkg-aur-add`, after asking. It never calls `sudo` or a package manager
-itself. `omarchy-signal update` trusts what adding the plugin trusted and
-nothing new: it fetches from the plugin folder's own git remote, considers
-release tags (`vX.Y.Z`) only, moves by fast-forward only, refuses a folder
-with local changes or on another branch, requires the release to pass
-`omarchy plugin validate` and to still be this plugin, and puts the folder back
-if it does not. Tag names and remotes are pattern-checked before git sees them.
-The daily check requests the tag listing from that remote and sends nothing
-else; `update_check = false` turns it off. After `omarchy plugin update`, the
-plugin refreshes its own unit, hook and keybinding block and restarts a bridge
-that is running; it never starts, enables or unmasks one that is not.
+itself.
+
+The plugin never downloads, checks out or runs new code by itself. Once a day
+at most it lists the release tags on the git remote it was added from (and
+sends nothing else; `update_check = false` turns it off), and when there is a
+newer one it says so. Installing it is Omarchy's own `omarchy plugin update
+iamteedoh.signal`, which shows the changes and asks first; `omarchy-signal
+update` and the popup's Update button only start that command. Afterwards the
+plugin refreshes its own unit, hook and keybinding block from the files Omarchy
+put in place, and restarts a bridge that is running; it never starts, enables
+or unmasks one that is not.
 
 Recipients are allow-listed (`classify_recipient`): E.164, UUID, base64
 group id, or Signal username. Nothing starting with `-` can reach
@@ -145,7 +177,14 @@ stores attachments under their opaque id.
 
 The socket lives in `$XDG_RUNTIME_DIR/omarchy-signal/` (mode 0700) as
 `bridge.sock` (mode 0600). Each connection is checked with `SO_PEERCRED` and
-dropped if the peer uid differs. Requests are newline JSON with a 1 MiB
+dropped if the peer uid differs. It works the other way too: the CLI and the
+terminal client only connect when the directory is a real directory owned by
+this user that nobody else can enter, and drop the connection unless the
+process serving the socket runs as this user (`SO_PEERCRED` again), before
+anything is sent. With `XDG_RUNTIME_DIR` unset (some cron and ssh sessions) the
+directory is `/run/user/<uid>` when that is private, and otherwise
+`~/.local/state/omarchy-signal/run`; never a shared path like `/tmp`, where
+another local user could create it first. Requests are newline JSON with a 1 MiB
 limit; each op has a parameter schema (`protocol.OPS`) and unknown ops or
 wrong types are rejected before any handler runs. A second bridge refuses to
 start on a live socket.
@@ -156,6 +195,13 @@ start on a live socket.
   0600 in a 0700 directory. Plaintext, like `signal-cli`'s own key store next
   to it. Disable with `history_enabled = false` or bound it with
   `history_retain_days`.
+- Disappearing messages are deleted when their timer runs out, as in Signal:
+  the timer starts when a message is sent, or when it is read. It is hidden
+  from every query the moment it expires; the bridge then deletes the row, the
+  picture or file `signal-cli` downloaded for it, and its text in the
+  conversation list's preview, and tells the clients to take it off screen.
+  Messages stored before this was enforced (0.5.0 and older) start their timer
+  when the bridge is upgraded.
 - Attachments: `~/.local/share/signal-cli/attachments/`, chmod 0600/0700 by
   the bridge when it locates them.
 - Logs: the bridge's own log lines never contain message bodies, names,
