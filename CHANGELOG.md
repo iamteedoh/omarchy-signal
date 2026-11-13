@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/iamteedoh/omarchy-signal/compare/v0.5.0...v0.5.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* enforce disappearing messages and harden the socket, clipboard and updater ([#29](https://github.com/iamteedoh/omarchy-signal/issues/29)) ([7627d64](https://github.com/iamteedoh/omarchy-signal/commit/7627d64eb240e06a7fa31da1c00bf249a662e345))
+
 ## [0.5.0](https://github.com/iamteedoh/omarchy-signal/compare/v0.4.4...v0.5.0) (2026-11-13)
 
 
