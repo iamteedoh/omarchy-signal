@@ -43,7 +43,7 @@ above; Catppuccin Latte and Gruvbox below.
 | ![A message selected: Reply, React with quick emojis, Copy, Delete](docs/media/message-actions.png) | ![The attachment picker with thumbnails](docs/media/attach-picker.png) |
 | ![A group chat with sender names](docs/media/group-chat.png) | ![Every shortcut, behind the ? button](docs/media/shortcuts.png) |
 | ![A popup, at rest](docs/media/notification.png) | ![The reply dialog on Lumon](docs/media/reply-dialog.png) |
-| ![The bar panel: every conversation, unread counts, search](docs/media/chat-list.png) | |
+| ![The bar panel: every conversation, unread counts, search](docs/media/chat-list.png) | ![The conversation menu: one click sets the disappearing messages timer](docs/media/timer.png) |
 
 The terminal client, in Ghostty with the same theme:
 
@@ -133,10 +133,16 @@ this computer, or install an update.
   SQLite database, and serves clients on a private Unix socket in
   `$XDG_RUNTIME_DIR`. Every string from the network is sanitised before it is
   stored or forwarded; every request from a client is schema-validated.
+  Disappearing messages are deleted when their timer runs out.
+- The clients only talk to a socket in a private directory, served by a
+  process running as you.
 - The **terminal client**, the **CLI** and the **Quickshell plugin** are thin
   clients of the bridge, all speaking the same newline-delimited JSON on its
   socket. The plugin never builds a shell string; the few programs it starts
-  (file listing, clipboard, window placement) get argv arrays.
+  (file listing, clipboard, window placement) get argv arrays, a deadline and
+  a ceiling on what they may print. Text fields never read the clipboard
+  themselves: a paste goes through `omarchy-signal paste`, which reads it with
+  a size and time limit.
 
 ## Install
 
@@ -167,32 +173,29 @@ deletes history).
 ### Updating
 
 ```bash
-omarchy-signal update
-```
-
-It fetches from the remote the plugin was added from, moves the plugin folder
-to the newest release tag (fast-forward only, never a branch tip), checks it
-with `omarchy plugin validate`, and runs that release's `install.sh` so the
-service, keybindings and shell all pick up the new code. `--check` only
-reports. Once a day the plugin looks for a new release tag and offers it in a
-popup and in the bar panel (`update_check = false` turns that off; nothing but
-the tag listing is requested).
-
-Omarchy's own command works too:
-
-```bash
 omarchy plugin update iamteedoh.signal
 ```
 
-The plugin notices its files changed, refreshes the service unit, keybindings
-and hook, restarts the bridge if it was running, and asks you to restart the
+That is Omarchy's own updater: it shows what changed and asks first. The
+plugin notices its files changed, refreshes the service unit, keybindings and
+hook, restarts the bridge if it was running, and asks you to restart the
 shell. It never starts a bridge you had stopped or disabled.
 
-An install made before 0.5 by `./install.sh` from a separate checkout is a
-plain copy with no git history, which `omarchy plugin update` cannot see.
-`omarchy-signal update` replaces it with a git checkout of the release and
-keeps the old folder beside it as a hidden backup, so from then on both
-commands work.
+Once a day the plugin looks for a new release tag on the remote it was added
+from and says so in a popup and in the bar panel; their Update button, and
+`omarchy-signal update`, run the command above. `omarchy-signal update --check`
+only reports. `update_check = false` turns the daily check off; nothing but the
+tag listing is requested. The plugin never downloads or installs code itself.
+
+An install made by `./install.sh` from a separate checkout is a plain copy
+with no git history, which Omarchy cannot update. Update the checkout
+(`git pull`) and run `./install.sh` there again, or switch to the plugin
+manager: `omarchy plugin remove iamteedoh.signal`, then
+`omarchy plugin add https://github.com/iamteedoh/omarchy-signal --enable`.
+Your account and history stay where they are either way.
+
+The daily check asks over https first, so it works without an ssh key even
+when the plugin was cloned over ssh.
 
 ### Developing
 
@@ -267,12 +270,13 @@ bindings or menu files; it appends clearly marked blocks that
 | middle-click a message | reply to it |
 | click a picture | open it larger |
 | `Enter` / `Shift+Enter` or `Alt+Enter` | send / new line; the message box grows to 10 lines, then scrolls (shortcodes and emoticons convert after the space) |
-| `Ctrl+V` / `SUPER+V`, right-click the message field, middle-click | paste (right-click shows Cut · Copy · Paste); a picture or copied files on the clipboard are attached |
+| `Ctrl+V` / `SUPER+V`, `Shift+Insert`, right-click the message field | paste; a picture or copied files on the clipboard are attached |
+| middle-click the message field | paste the primary selection |
 | `Ctrl+O` / `Ctrl+Shift+A` / 󰁦 | attachment picker: arrows move, `Enter` attaches, `Backspace` on an empty filter goes up a folder |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab`, click a tab | switch conversation tab; ✕ closes a tab |
 | `Esc` | closes one layer at a time: shortcut list → picker → menus → text selection → message actions → quote → window (`SUPER+W` closes the popup at once) |
 | `?` | every shortcut |
-| header buttons | conversation menu (delete chat) · open the terminal client · move the popup into the chat window · close |
+| header buttons | conversation menu (disappearing messages timer, delete chat) · open the terminal client · move the popup into the chat window · close |
 
 ### Bar panel
 
@@ -328,7 +332,7 @@ omarchy-signal send "Trinity" -m "on my way" [-a photo.jpg] [--quote-ts …]
 omarchy-signal react <chat> <ts> <author> 🔥
 omarchy-signal delete <chat> <ts> [--everyone]   # for me by default; nothing is sent
 omarchy-signal delete-chat <chat>          # from this computer only
-omarchy-signal update [--check] [--yes]    # install the newest release
+omarchy-signal update [--check] [--yes]    # is there a newer release? then runs omarchy plugin update
 omarchy-signal conversations | contacts [--refresh] | history <chat> -n 30
 omarchy-signal mark-read <chat>            # also clears the phone's notification
 omarchy-signal link [--force] [--qr-style …]

@@ -273,6 +273,37 @@ function versionNewer(a, b) {
   return false
 }
 
+// Disappearing-message timers, the ones Signal's own clients offer (seconds).
+var TIMERS = [
+  { seconds: 0, label: "Off" }, { seconds: 30, label: "30s" }, { seconds: 300, label: "5m" },
+  { seconds: 3600, label: "1h" }, { seconds: 8 * 3600, label: "8h" }, { seconds: 86400, label: "1d" },
+  { seconds: 7 * 86400, label: "1w" }, { seconds: 28 * 86400, label: "4w" }
+]
+
+// "30s", "5m", "2h", "1d", "4w" for a timer in seconds; "" when it is off or not a sane number.
+function timerLabel(seconds) {
+  var n = Number(seconds)
+  if (!isFinite(n) || n <= 0 || n > 366 * 86400) return ""
+  n = Math.floor(n)
+  var units = [["w", 604800], ["d", 86400], ["h", 3600], ["m", 60]]
+  for (var i = 0; i < units.length; i++) {
+    if (n >= units[i][1] && n % units[i][1] === 0) return (n / units[i][1]) + units[i][0]
+  }
+  return n + "s"
+}
+
+// The timer of one conversation, out of the bridge's "conversations" answer.
+function timerOf(conversations, key) {
+  var list = Array.isArray(conversations) ? conversations : []
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && list[i].key === key) {
+      var n = Number(list[i].expiration)
+      return isFinite(n) && n > 0 ? Math.floor(n) : 0
+    }
+  }
+  return 0
+}
+
 // Rows for the message list of a conversation window, oldest first. Every
 // field is a string, number or boolean: the rows go into a ListModel.
 function threadRows(rows, limit) {
@@ -350,6 +381,9 @@ if (typeof module !== "undefined") {
     clockTime: clockTime,
     reactionSummary: reactionSummary,
     versionNewer: versionNewer,
+    TIMERS: TIMERS,
+    timerLabel: timerLabel,
+    timerOf: timerOf,
     threadRows: threadRows
   }
 }

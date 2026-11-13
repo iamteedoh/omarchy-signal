@@ -46,6 +46,8 @@ log = logging.getLogger("omarchy_signal.bridge")
 
 TYPING_TTL_MS = 6000
 CONTACT_REFRESH_S = 600
+EXPIRE_IDLE_S = 5          # longest a disappearing message outlives its timer in the database (queries hide it at once)
+EXPIRE_MIN_S = 0.5
 RESTART_BACKOFF = (1, 2, 5, 10, 30, 60)
 
 
@@ -219,11 +221,12 @@ class Bridge:
         sup_task = asyncio.create_task(self.supervisor.run(), name="signal-cli")
         boot_task = asyncio.create_task(self._bootstrap_loop(), name="bootstrap")
         prune_task = asyncio.create_task(self._prune_loop(), name="prune")
+        expire_task = asyncio.create_task(self._expire_loop(), name="expire")
         try:
             await self._shutdown.wait()
         finally:
             log.info("shutting down")
-            for t in (boot_task, prune_task):
+            for t in (boot_task, prune_task, expire_task):
                 t.cancel()
             await self.supervisor.stop()
             sup_task.cancel()
@@ -272,6 +275,48 @@ class Bridge:
                 if n:
                     log.info("pruned %d old messages", n)
             await asyncio.sleep(3600)
+
+    async def _expire_loop(self) -> None:
+        """Disappearing messages: delete each one when its timer runs out (the
+        timer starts when it is sent, or read), with any picture or file it
+        brought, and tell the clients to take it off screen."""
+        while True:
+            try:
+                await self.expire_now()
+            except Exception:                    # never let one bad row stop expiry for good
+                log.exception("expiring messages failed")
+            due = self.store.next_expiry()
+            wait = EXPIRE_IDLE_S if not due else (due - int(time.time() * 1000)) / 1000
+            await asyncio.sleep(min(EXPIRE_IDLE_S, max(EXPIRE_MIN_S, wait)))
+
+    async def expire_now(self) -> int:
+        gone = self.store.expire()
+        for m in gone:
+            if not m.outgoing:
+                self._remove_received_files(m.attachments)
+            conv = self.store.conversation(m.conversation)
+            await self._broadcast("removed", {"conversation": m.conversation, "ts": m.ts, "sender": m.sender,
+                                              "outgoing": m.outgoing, "expired": True,
+                                              "preview": conv.last_preview if conv else ""})
+        if gone:
+            log.info("%d disappearing message(s) expired", len(gone))
+            await self._broadcast("unread", {"total": self.store.total_unread()})
+        return len(gone)
+
+    def _remove_received_files(self, attachments: list[Attachment]) -> None:
+        """Delete files signal-cli downloaded for a received message, and only
+        those: a path outside its attachments folder is left alone."""
+        base = (self.paths.signal_cli_data / "attachments").resolve()
+        for att in attachments:
+            if not att.path:
+                continue
+            try:
+                real = Path(att.path).resolve(strict=True)
+            except OSError:
+                continue
+            if base in real.parents and real.is_file():
+                with contextlib.suppress(OSError):
+                    real.unlink()
 
     async def _discover_accounts(self) -> None:
         result = await self.supervisor.call("listAccounts", timeout=30)
@@ -336,6 +381,12 @@ class Bridge:
             is_new = self.store.add_event_message(ev, count_unread=True)
             if not is_new:
                 return
+            # Every message states its conversation's disappearing timer. Follow
+            # it, so a timer set on the phone or by the other person also governs
+            # what is sent from here (signal-cli already sends with it).
+            if ev.has_timer and (muted is None or muted.expiration != ev.expires_in):
+                self.store.set_expiration(conv.key, ev.expires_in)
+                await self._broadcast("conversation", {"conversation": conv.key, "expiration": ev.expires_in})
             if ev.attachments and self.cfg.download_attachments:
                 self._locate_attachments(conv.key, ev.timestamp, ev.attachments)
             if not ev.outgoing:
@@ -664,9 +715,11 @@ class Bridge:
             atts.append(Attachment(id="", content_type=_guess_mime(pth), filename=pth.name,
                                    size=pth.stat().st_size, path=str(pth)))
         status = "failed" if failures and len(failures) >= max(1, len(result.get("results", [1]))) else "sent"
+        conv = self.store.conversation(rec.key)
         self.store.add_outgoing(rec, ts, f"number:{account}", text, atts, status=status,
                                 quote_text=params.get("quoteMessage", ""), quote_author=p.get("quoteAuthor", ""),
-                                quote_ts=quote_ts if "quoteTimestamp" in params else 0)
+                                quote_ts=quote_ts if "quoteTimestamp" in params else 0,
+                                expires_in=conv.expiration if conv else 0)
         self.store.mark_read(rec.key)
         self._cancel_typing(rec.key)
         await self._broadcast("sent", {"conversation": rec.key, "ts": ts, "status": status,

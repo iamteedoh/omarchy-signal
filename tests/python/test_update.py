@@ -149,6 +149,44 @@ class UpdateTests(unittest.TestCase):
         self.assertFalse(update.check(self.info, current="0.2.0").available)
         self.assertFalse(update.check(self.info, current="0.3.0").available)      # never offers a downgrade
 
+    def test_an_ssh_remote_is_asked_over_https_first_so_no_key_is_needed(self):
+        cases = {"git@github.com:iamteedoh/omarchy-signal.git": "https://github.com/iamteedoh/omarchy-signal.git",
+                 "git@github.com:iamteedoh/omarchy-signal": "https://github.com/iamteedoh/omarchy-signal.git",
+                 "ssh://git@codeberg.org/someone/fork.git": "https://codeberg.org/someone/fork.git",
+                 "ssh://git@host.example:2222/someone/fork.git": "",       # a port: no https twin to guess
+                 "https://github.com/iamteedoh/omarchy-signal.git": "", "/srv/git/x.git": "", "": "",
+                 "git@github.com:--upload-pack=id": "", "git@github.com:a/b c": ""}
+        for url, want in cases.items():
+            self.assertEqual(update.anonymous_url(url), want, url)
+
+        asked = []
+
+        def run(argv, **kw):
+            asked.append(argv)
+            if "https://github.com/iamteedoh/omarchy-signal.git" in argv:
+                return subprocess.CompletedProcess(argv, 0, "abc\trefs/tags/v0.9.0\n", "")
+            return subprocess.CompletedProcess(argv, 128, "", "fatal: no key\n")
+        info = update.InstallInfo(self.plugin, "copy", "git@github.com:iamteedoh/omarchy-signal.git")
+        result = update.check(info, current="0.1.0", run=run)
+        self.assertEqual((result.available, result.latest, result.error), (True, "0.9.0", ""))
+        self.assertEqual(len(asked), 1, "the ssh remote is not tried when https answers")
+        self.assertIn("credential.helper=", asked[0], "and no stored credential is offered")
+
+    def test_a_private_remote_falls_back_to_ssh_and_a_failure_says_what_failed(self):
+        asked = []
+        advice = ("fatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\n"
+                  "and the repository exists.\n")
+
+        def run(argv, **kw):
+            asked.append(argv[-1])
+            return subprocess.CompletedProcess(argv, 128, "", advice)
+        origin = "git@github.com:someone/private.git"
+        result = update.check(update.InstallInfo(self.plugin, "copy", origin), current="0.1.0", run=run)
+        self.assertEqual(asked, ["https://github.com/someone/private.git", origin])
+        self.assertEqual(result.error, f"could not list the releases at {origin}: Could not read from remote repository.")
+        self.assertEqual(update.git_error("warning: x\nerror: bad thing\nhint: y\n"), "bad thing")
+        self.assertEqual(update.git_error(""), "git failed")
+
     def test_check_before_any_release_exists(self):
         empty = self.root / "empty.git"
         git(self.root, "init", "-q", "--bare", str(empty))
@@ -189,122 +227,6 @@ class UpdateTests(unittest.TestCase):
         update.cache_file(self.state).write_text("not json")
         self.assertIsNone(update.cached(self.state))
 
-    # -- a git-managed plugin folder --------------------------------------------------------------
-
-    def test_plan_picks_the_newest_release_not_the_branch_tip(self):
-        self.release("0.2.0")
-        self.release("0.3.0")
-        self.release("0.4.0-unreleased-work", tag=False)                          # on main, but not a release
-        git(self.work, "push", "-q", "origin", "main", "--tags")
-        self.assertEqual(update.plan(self.plugin, current="0.1.0"), "v0.3.0")
-        self.assertIsNone(update.plan(self.plugin, current="0.3.0"))
-        self.assertEqual(self.version_on_disk(), "0.1.0")                          # planning fetches; it does not move anything
-
-    def test_a_plugin_folder_with_local_changes_is_left_alone(self):
-        self.release("0.2.0", push=True)
-        (self.plugin / "manifest.json").write_text("hacked\n")
-        with self.assertRaisesRegex(update.UpdateError, "local changes"):
-            update.plan(self.plugin, current="0.1.0")
-        self.assertEqual((self.plugin / "manifest.json").read_text(), "hacked\n")
-
-    def test_a_plugin_folder_on_another_branch_is_left_alone(self):
-        self.release("0.2.0", push=True)
-        git(self.plugin, "checkout", "-q", "-b", "my-feature")
-        with self.assertRaisesRegex(update.UpdateError, "my-feature"):
-            update.plan(self.plugin, current="0.1.0")
-
-    def test_a_release_that_rewrites_history_is_refused(self):
-        git(self.work, "checkout", "-q", "--orphan", "rewritten")
-        self.release("0.2.0")
-        git(self.work, "push", "-q", "origin", "--tags")
-        with self.assertRaisesRegex(update.UpdateError, "does not continue"):
-            update.plan(self.plugin, current="0.1.0")
-        self.assertEqual(self.installed(), [])
-
-    def test_fast_forward_moves_to_the_release_and_stays_on_its_branch(self):
-        self.release("0.2.0", push=True)
-        tag = update.plan(self.plugin, current="0.1.0")
-        update.fast_forward(self.plugin, tag)
-        self.assertEqual(self.version_on_disk(), "0.2.0")
-        self.assertEqual(git(self.plugin, "rev-parse", "--abbrev-ref", "HEAD"), "main")   # not detached: `omarchy plugin update` keeps working
-        self.assertIsNone(update.plan(self.plugin, current="0.2.0"))
-        self.assertEqual(update.run_installer(self.plugin), 0)
-        self.assertEqual(self.installed(), ["0.2.0 --update"])                   # the NEW install.sh ran, in update mode
-
-    def test_a_release_that_fails_validation_is_rolled_back(self):
-        self.release("0.2.0", push=True)
-        tag = update.plan(self.plugin, current="0.1.0")
-        self.validator(1)
-        with self.assertRaisesRegex(update.UpdateError, "manifest says no"):
-            update.fast_forward(self.plugin, tag)
-        self.assertEqual(self.version_on_disk(), "0.1.0")                          # back where it was, still working
-        self.assertEqual(git(self.plugin, "status", "--porcelain"), "")
-
-    def test_a_release_that_is_another_plugin_is_refused(self):
-        self.release("0.2.0", push=True, plugin_id="somebody.else")
-        tag = update.plan(self.plugin, current="0.1.0")
-        with self.assertRaisesRegex(update.UpdateError, "not this plugin"):
-            update.fast_forward(self.plugin, tag)
-        self.assertEqual(self.version_on_disk(), "0.1.0")
-
-    def test_nothing_but_a_release_tag_is_ever_checked_out(self):
-        for bad in ("main", "v1.0.0; id", "--force", "v1.0", "refs/heads/main"):
-            with self.assertRaises(update.UpdateError):
-                update.fast_forward(self.plugin, bad)
-            with self.assertRaises(update.UpdateError):
-                update.adopt(self.info, bad)
-        self.assertEqual(self.version_on_disk(), "0.1.0")
-
-    def test_a_failing_installer_is_reported(self):
-        with mock.patch.dict(os.environ, {"FAKE_INSTALL_RC": "7"}):
-            self.assertEqual(update.run_installer(self.plugin), 7)
-
-    # -- a plain copy becomes a git checkout ----------------------------------------------------
-
-    def test_a_plain_copy_is_replaced_by_a_checkout_of_the_release_and_backed_up(self):
-        info = self.make_copy()
-        (self.plugin / "note.txt").write_text("something the user left here\n")
-        self.release("0.2.0")
-        self.release("0.3.0-unreleased-work", tag=False)
-        git(self.work, "push", "-q", "origin", "main", "--tags")
-
-        backup = update.adopt(info, "v0.2.0", now=0)
-        self.assertEqual(backup.name, f".{update.PLUGIN_ID}.bak.19700101000000")
-        self.assertEqual(self.version_on_disk(backup), "0.1.0")
-        self.assertEqual((backup / "note.txt").read_text(), "something the user left here\n")   # nothing of theirs is lost
-        self.assertEqual(self.version_on_disk(), "0.2.0")                          # the release, not the branch tip
-        self.assertTrue((self.plugin / ".git").is_dir())
-        self.assertEqual(update.InstallInfo.detect(self.plugin).kind, "git")       # `omarchy plugin update` can see it now
-        self.assertEqual(git(self.plugin, "rev-parse", "--abbrev-ref", "HEAD"), "main")
-        self.assertEqual(sorted(p.name for p in self.plugins.iterdir()), [backup.name, update.PLUGIN_ID])   # no staging folder left
-
-        # A second backup made in the same second does not overwrite the first.
-        shutil.rmtree(self.plugin / ".git")
-        again = update.adopt(update.InstallInfo(self.plugin, "copy", str(self.origin)), "v0.2.0", now=0)
-        self.assertNotEqual(again, backup)
-        self.assertTrue(backup.is_dir())
-
-    def test_a_copy_is_left_as_it_is_when_the_release_cannot_be_used(self):
-        info = self.make_copy()
-        self.release("0.2.0", push=True, plugin_id="somebody.else")
-        with self.assertRaisesRegex(update.UpdateError, "not this plugin"):
-            update.adopt(info, "v0.2.0")
-        self.assertEqual(self.version_on_disk(), "0.1.0")
-        self.assertEqual([p.name for p in self.plugins.iterdir()], [update.PLUGIN_ID])   # no backup, no staging folder
-
-        self.release("0.3.0", push=True)
-        self.validator(1)
-        with self.assertRaisesRegex(update.UpdateError, "manifest says no"):
-            update.adopt(info, "v0.3.0")
-        self.assertEqual(self.version_on_disk(), "0.1.0")
-
-        gone = update.InstallInfo(self.plugin, "copy", str(self.root / "gone.git"))
-        with self.assertRaises(update.UpdateError):
-            update.adopt(gone, "v0.3.0")
-        with self.assertRaises(update.UpdateError):
-            update.adopt(info, "v9.9.9")                                           # a tag the remote does not have
-        self.assertEqual([p.name for p in self.plugins.iterdir()], [update.PLUGIN_ID])
-
     # -- the command ---------------------------------------------------------------------------------
 
     def run_update(self, info, **flags):
@@ -319,52 +241,72 @@ class UpdateTests(unittest.TestCase):
             rc = cli.cmd_update(args)
         return rc, out.getvalue(), err.getvalue()
 
-    def test_update_on_a_git_managed_plugin(self):
-        rc, out, _ = self.run_update(self.info)
-        self.assertEqual(rc, 0)
-        self.assertIn("up to date", out)
-        self.assertEqual(self.installed(), [])                                     # nothing newer: the installer is not run
+    def host(self, rc=0):
+        calls = []
 
+        def fake_run(argv, **kw):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, rc)
+        return calls, mock.patch.object(cli.subprocess, "run", side_effect=fake_run), \
+            mock.patch.object(update.shutil, "which", side_effect=lambda n: "/usr/bin/" + n)
+
+    def test_the_plugin_has_no_way_to_install_code_itself(self):
+        for name in ("plan", "fast_forward", "adopt", "run_installer", "validate"):
+            self.assertFalse(hasattr(update, name), name)
+
+    def test_update_hands_off_to_omarchys_plugin_updater(self):
         self.release("0.2.0", push=True)
         update.store(self.state, update.CheckResult("0.1.0", "0.2.0", True, time.time()))
-        rc, out, _ = self.run_update(self.info)
+        calls, run, which = self.host(0)
+        with run, which:
+            rc, out, _ = self.run_update(self.info)
         self.assertEqual(rc, 0)
-        self.assertIn("0.1.0 → 0.2.0", out)
-        self.assertEqual(self.version_on_disk(), "0.2.0")
-        self.assertEqual(self.installed(), ["0.2.0 --update"])
-        self.assertFalse(update.cache_file(self.state).exists())                   # the "update available" note is gone with it
+        self.assertEqual(calls, [["/usr/bin/omarchy", "plugin", "update", update.PLUGIN_ID, "--yes"]])
+        self.assertIn("omarchy plugin update", out)
+        self.assertEqual(self.version_on_disk(), "0.1.0", "the plugin never moves its own folder")
+        self.assertEqual(self.installed(), [], "and never runs an installer")
+        self.assertFalse(update.cache_file(self.state).exists())                   # the "update available" note goes
 
-    def test_update_on_a_plain_copy_says_what_it_is_about_to_do(self):
-        info = self.make_copy()
-        self.release("0.2.0", push=True)
-        rc, out, _ = self.run_update(info)
-        self.assertEqual(rc, 0)
-        self.assertIn("plain copy", out)
-        self.assertIn("backup", out)
-        self.assertEqual(self.version_on_disk(), "0.2.0")
-        self.assertTrue((self.plugin / ".git").is_dir())
-        self.assertEqual(self.installed(), ["0.2.0 --update"])
+    def test_without_a_yes_omarchy_asks(self):
+        calls, run, which = self.host(0)
+        with run, which:
+            self.run_update(self.info, yes=False)
+        self.assertEqual(calls, [["/usr/bin/omarchy", "plugin", "update", update.PLUGIN_ID]])
 
-    def test_update_never_installs_without_a_yes(self):
-        self.release("0.2.0", push=True)
-        with mock.patch.object(cli, "_interactive", return_value=False):
-            rc, _, err = self.run_update(self.info, yes=False)
+    def test_a_failed_host_update_is_reported_and_keeps_the_note(self):
+        update.store(self.state, update.CheckResult("0.1.0", "0.2.0", True, time.time()))
+        calls, run, which = self.host(1)
+        with run, which:
+            rc, _, _ = self.run_update(self.info)
         self.assertEqual(rc, 1)
-        self.assertIn("--yes", err)
-        with mock.patch.object(cli, "_interactive", return_value=True), mock.patch("builtins.input", return_value="n"):
-            rc, _, _ = self.run_update(self.info, yes=False)
-        self.assertEqual(rc, 0)
-        self.assertEqual(self.version_on_disk(), "0.1.0")
-        self.assertEqual(self.installed(), [])
+        self.assertTrue(update.cache_file(self.state).exists())
 
-    def test_update_refuses_a_developer_link_and_a_missing_install(self):
-        self.release("0.2.0", push=True)
-        rc, _, err = self.run_update(update.InstallInfo(self.plugin, "link", ""))
-        self.assertEqual(rc, 1)
-        self.assertIn("developer link", err)
-        rc, _, err = self.run_update(update.InstallInfo(self.plugin, "none", ""))
-        self.assertEqual(rc, 1)
-        self.assertIn("omarchy plugin add", err)
+    def test_a_copy_made_from_a_checkout_points_back_at_that_checkout(self):
+        self.make_copy()
+        self.state.mkdir(parents=True, exist_ok=True)
+        (self.state / "install.json").write_text(json.dumps({"origin": str(self.origin), "source": str(self.work)}))
+        (self.work / "install.sh").touch()
+        info = update.InstallInfo.detect(self.plugin, self.state)
+        self.assertEqual((info.kind, info.source), ("copy", str(self.work)))
+        self.assertIn(f"copied from {self.work}", update.advice(info))
+        self.assertIn("./install.sh", update.advice(info))
+        # A checkout that is gone, or a record that is not a path, is not mentioned.
+        for bad in (str(self.root / "gone"), "relative/path", 7, "/tmp\nrm -rf ~"):
+            (self.state / "install.json").write_text(json.dumps({"origin": str(self.origin), "source": bad}))
+            info = update.InstallInfo.detect(self.plugin, self.state)
+            self.assertEqual(info.source, "")
+            self.assertIn("omarchy plugin remove", update.advice(info))
+
+    def test_other_installs_get_advice_and_nothing_runs(self):
+        cases = [(self.make_copy(), "omarchy plugin add"), (update.InstallInfo(self.plugin, "link", ""), "developer link"),
+                 (update.InstallInfo(self.plugin, "none", ""), "omarchy plugin add")]
+        for info, says in cases:
+            calls, run, which = self.host(0)
+            with self.subTest(kind=info.kind), run, which:
+                rc, _, err = self.run_update(info)
+                self.assertEqual(rc, 1)
+                self.assertIn(says, err)
+                self.assertEqual(calls, [])
         self.assertEqual(self.installed(), [])
 
     def test_check_only_reports_and_records_what_it_found(self):
@@ -373,6 +315,7 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         found = json.loads(out)
         self.assertEqual((found["available"], found["latest"], found["install"]), (True, "0.2.0", "git"))
+        self.assertEqual(found["how"], "omarchy plugin update " + update.PLUGIN_ID)
         self.assertEqual(self.version_on_disk(), "0.1.0")
         self.assertTrue(update.cached(self.state, current="0.1.0").available)      # what `status` and the shell show later
 

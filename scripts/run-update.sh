@@ -3,7 +3,7 @@
 ## Author: Tito Valentin
 ## Name of Program: omarchy-signal update runner
 ## Date Created: 2026-11-12
-## Description: Runs `omarchy-signal update` in a terminal and keeps the window open until the result has been read.
+## Description: Runs `omarchy-signal update` (which hands off to `omarchy plugin update`) in a terminal and keeps the window open until the result has been read.
 # The shell's "update available" popup and the bar panel launch this.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

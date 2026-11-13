@@ -227,7 +227,7 @@ echo "the shell starts no process to talk to the bridge"
 # Opening a conversation used to start five or six Python interpreters. The
 # plugin's requests go over the bridge's socket (Bridge.qml); only these CLI
 # commands may still be run from QML, each on an explicit user action or once.
-allowed='"(ls-files|paste-image|raise-window|float-window|sync|update|demo)"'
+allowed='"(ls-files|paste|raise-window|float-window|sync|update|demo)"'
 spawned=$(grep -nE 'cliPath, *"[a-z-]+"' "${PLUGIN_QML[@]}" | grep -vE "cliPath, *$allowed" || true)
 if [[ -n $spawned ]]; then echo "$spawned"; echo "  FAIL QML runs the CLI for something the socket should carry"; fail=1
 else echo "  ok   only the file picker, clipboard, window placement and update helpers run the CLI"; fi

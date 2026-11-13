@@ -184,18 +184,19 @@ Item {
   }
 
   function maybeSync() {
-    if (root.diskVersion === "" || root.syncedFor === root.diskVersion || syncProc.running) return
+    if (root.diskVersion === "" || root.syncedFor === root.diskVersion || syncProc.busy) return
     var filesMoved = root.diskVersion !== root.loadedVersion
     var bridgeBehind = root.bridgeVersion !== "" && root.bridgeVersion !== root.diskVersion
     if (!filesMoved && !bridgeBehind) return
     root.syncedFor = root.diskVersion
-    syncProc.running = true
+    syncProc.run([root.cliPath, "sync", "--json"])
   }
 
-  Process {
+  BoundedProcess {
     id: syncProc
-    command: [root.cliPath, "sync", "--json"]
-    onExited: {
+    maxChars: 64 * 1024
+    timeoutMs: 60000
+    onFinished: function(ok, text) {
       if (root.diskVersion === root.loadedVersion) return
       root.pushToast({ key: "setup:updated", kind: "updated", sticky: true, attachments: 0, convName: "",
                        title: "Signal updated to " + root.diskVersion,
@@ -214,32 +215,31 @@ Item {
     interval: 120000
     running: root.updateCheck && root.connected
     repeat: false
-    onTriggered: if (!checkProc.running) checkProc.running = true
+    onTriggered: if (!checkProc.busy) checkProc.run([root.cliPath, "update", "--check", "--if-due", "--json"])
   }
   Timer {
     interval: 6 * 3600 * 1000
     running: root.updateCheck
     repeat: true
-    onTriggered: if (!checkProc.running) checkProc.running = true
+    onTriggered: if (!checkProc.busy) checkProc.run([root.cliPath, "update", "--check", "--if-due", "--json"])
   }
-  Process {
+  BoundedProcess {
     id: checkProc
-    command: [root.cliPath, "update", "--check", "--if-due", "--json"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var found = null
-        try { found = JSON.parse(text) } catch (e) { found = null }
-        if (!found || found.available !== true) { root.latestVersion = ""; return }
-        var latest = Model.singleLine(found.latest || "", 20)
-        if (!Model.versionNewer(latest, root.diskVersion || root.loadedVersion)) { root.latestVersion = ""; return }
-        root.latestVersion = latest
-        if (root.announcedVersion === latest) return
-        root.announcedVersion = latest
-        root.pushToast({ key: "setup:update", kind: "update", sticky: false, attachments: 0, convName: "",
-                         title: "Signal " + latest + " is available",
-                         body: "You have " + (root.diskVersion || root.loadedVersion) + ". Updating takes a minute and keeps your account and history." })
-      }
+    maxChars: 16 * 1024
+    timeoutMs: 60000
+    onFinished: function(ok, text) {
+      if (!ok) { root.latestVersion = ""; return }
+      var found = null
+      try { found = JSON.parse(text) } catch (e) { found = null }
+      if (!found || found.available !== true) { root.latestVersion = ""; return }
+      var latest = Model.singleLine(found.latest || "", 20)
+      if (!Model.versionNewer(latest, root.diskVersion || root.loadedVersion)) { root.latestVersion = ""; return }
+      root.latestVersion = latest
+      if (root.announcedVersion === latest) return
+      root.announcedVersion = latest
+      root.pushToast({ key: "setup:update", kind: "update", sticky: false, attachments: 0, convName: "",
+                       title: "Signal " + latest + " is available",
+                       body: "You have " + (root.diskVersion || root.loadedVersion) + ". Updating takes a minute and keeps your account and history." })
     }
   }
 
@@ -634,7 +634,7 @@ Item {
   // holding every detached conversation as a tab. Hyprland can float, tile or
   // park it in the scratchpad like any app, and there is only ever one of it.
 
-  Process { id: floatProc }
+  BoundedProcess { id: floatProc; maxChars: 16 * 1024; timeoutMs: 15000 }
 
   Loader {
     id: chatLoader
@@ -645,8 +645,7 @@ Item {
       if (root.activeTab) item.view.load(root.activeTab, root.tabNames[root.activeTab] || "")
       Qt.callLater(function() {
         if (!chatLoader.item) return
-        floatProc.command = [root.cliPath, "float-window", "--", chatLoader.item.title]
-        floatProc.running = true
+        floatProc.run([root.cliPath, "float-window", "--", chatLoader.item.title])
       })
       root.refreshNames()
     }

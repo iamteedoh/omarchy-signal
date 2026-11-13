@@ -20,16 +20,33 @@ def xdg(var: str, default: str) -> Path:
 
 
 def runtime_dir() -> Path:
-    """Per-user tmpfs directory. Falls back to a private dir under /tmp when
-    XDG_RUNTIME_DIR is unset (e.g. some cron/ssh sessions).
+    """Per-user tmpfs directory that holds the bridge's socket.
 
     OMARCHY_SIGNAL_RUNTIME_DIR moves the bridge's socket for a demo or a test
     without also moving the Wayland and Hyprland sockets, which live in
-    XDG_RUNTIME_DIR. Bridge.qml reads the same variable."""
+    XDG_RUNTIME_DIR. Bridge.qml reads the same variable.
+
+    With neither set (some cron and ssh sessions) it is systemd's
+    ``/run/user/<uid>`` when that is a private directory of ours, and otherwise
+    a directory under the state dir in the home folder. Never a shared path
+    such as ``/tmp``: another local user could create that first and pose as
+    the bridge."""
     value = os.environ.get("OMARCHY_SIGNAL_RUNTIME_DIR") or os.environ.get("XDG_RUNTIME_DIR")
     if value:
         return Path(value)
-    return Path(f"/tmp/omarchy-signal-{os.getuid()}")
+    systemd = Path(f"/run/user/{os.getuid()}")
+    if private_dir(systemd):
+        return systemd
+    return xdg("XDG_STATE_HOME", ".local/state") / "omarchy-signal" / "run"
+
+
+def private_dir(path: Path) -> bool:
+    """A real directory (not a symlink) owned by this user that nobody else can use."""
+    try:
+        st = path.lstat()
+    except OSError:
+        return False
+    return stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and not (st.st_mode & 0o077)
 
 
 @dataclass
@@ -73,11 +90,9 @@ class Paths:
                 os.chmod(d, 0o700)
             except OSError:
                 pass
-        # The runtime dir holds the socket. With XDG_RUNTIME_DIR unset it falls
-        # back to a path under /tmp that another local user could have created
-        # first, so insist that it is a private directory of ours (no symlink).
-        st = self.run_dir.lstat()
-        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or (st.st_mode & 0o077):
+        # The runtime dir holds the socket: insist that it is a private
+        # directory of ours (no symlink), wherever it came from.
+        if not private_dir(self.run_dir):
             raise PermissionError(f"refusing to use {self.run_dir}: not a private directory owned by this user")
 
 
@@ -230,7 +245,7 @@ SETTINGS: list[dict] = [
     {"section": "Data", "key": "device_name", "label": "Device name", "type": "text", "restart": True,
      "help": "Shown in Signal's Linked devices"},
     {"section": "Data", "key": "update_check", "label": "Check for updates daily", "type": "bool",
-     "help": "Asks the git remote the plugin was installed from for new release tags, once a day; nothing else is sent. Update with: omarchy-signal update"},
+     "help": "Asks the git remote the plugin was installed from for new release tags, once a day; nothing else is sent. Update with: omarchy plugin update iamteedoh.signal"},
 ]
 
 RESTART_REQUIRED = {s["key"] for s in SETTINGS if s.get("restart")} | {"account", "signal_cli", "log_level"}

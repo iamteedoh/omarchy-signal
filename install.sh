@@ -11,9 +11,9 @@
 #                           # user plugins in the shell; see docs/STATUS.md before using it)
 #   ./install.sh --no-bind  # skip the SUPER+SHIFT+G keybinding
 #   ./install.sh --no-menu  # skip the Omarchy menu entry
-#   ./install.sh --update   # what `omarchy-signal update` runs: the same steps, without the questions at the end
+#   ./install.sh --update   # the same steps, without the questions at the end
 #
-# Everything it touches is under $HOME. Re-running is safe. Update later with: omarchy-signal update
+# Everything it touches is under $HOME. Re-running is safe. Update later with: omarchy plugin update iamteedoh.signal
 
 set -euo pipefail
 
@@ -197,11 +197,12 @@ else
         "$HERE/install.sh" "$HERE/uninstall.sh" "$HERE/README.md" "$HERE/SECURITY.md" "$HERE/LICENSE" "$PLUGIN_DIR/"
   find "$PLUGIN_DIR" -name __pycache__ -type d -prune -exec rm -rf {} +
   say "Installed plugin to $PLUGIN_DIR"
-  # A copy has no .git, so remember where it came from: `omarchy-signal update`
-  # then fetches releases from the same remote (a fork stays on the fork).
+  # A copy has no .git, so remember where it came from: the daily check lists
+  # release tags on the same remote (a fork stays on the fork), and
+  # `omarchy-signal update` says which checkout to update.
   origin=$(git -C "$HERE" remote get-url origin 2>/dev/null || true)
   if [[ -n $origin ]]; then
-    ORIGIN="$origin" python3 -c 'import json, os; print(json.dumps({"origin": os.environ["ORIGIN"]}))' \
+    ORIGIN="$origin" SOURCE="$HERE" python3 -c 'import json, os; print(json.dumps({"origin": os.environ["ORIGIN"], "source": os.environ["SOURCE"]}))' \
       >"$HOME/.local/state/omarchy-signal/install.json" || true
   fi
 fi
@@ -325,7 +326,7 @@ cat <<DONE
   1. Link this computer to your Signal account:   omarchy-signal link
   2. Open the client:                             omarchy-signal tui   (or SUPER+SHIFT+G)
   3. Check everything:                            omarchy-signal doctor
-  Update later with:                              omarchy-signal update
+  Update later with:                              omarchy plugin update iamteedoh.signal
 
 Config: $CONFIG_DIR/config.toml   Logs: journalctl --user -u omarchy-signal
 DONE

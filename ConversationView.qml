@@ -253,9 +253,39 @@ Item {
     view.emojiRowOpen = false
     view.pickerOpen = false
     view.reloadPending = false
+    view.expiration = 0
     view.fetch()
+    view.fetchTimer()
     view.markRead()
     Qt.callLater(function() { composer.forceActiveFocus() })
+  }
+
+  // Disappearing messages: the conversation's timer in seconds, 0 = off. It is
+  // shown in the header and set from the header's menu.
+  property int expiration: 0
+  property bool settingTimer: false
+  function fetchTimer() {
+    var key = view.conversationKey
+    if (!key || !view.bridge) return
+    view.bridge.request("conversations", { includeArchived: true }, function(ok, rows) {
+      if (ok && key === view.conversationKey) view.expiration = Model.timerOf(rows, key)
+    })
+  }
+  function setTimer(seconds) {
+    var key = view.conversationKey
+    if (!key || view.settingTimer || seconds === view.expiration) return
+    view.settingTimer = true
+    view.bridge.request("setExpiration", { conversation: key, seconds: seconds }, function(ok, result, err) {
+      view.settingTimer = false
+      if (key !== view.conversationKey) return
+      if (ok) {
+        view.expiration = result && typeof result.expiration === "number" ? result.expiration : seconds
+        view.notice = view.expiration > 0 ? "messages now disappear after " + Model.timerLabel(view.expiration) : "disappearing messages are off"
+        noticeTimer.restart()
+      } else {
+        view.error = Model.singleLine(err || "could not change the timer", 160)
+      }
+    })
   }
 
   function markRead() {
@@ -332,6 +362,11 @@ Item {
       return
     }
     if (name === "conversationRemoved") { view.requestClose(); return }
+    // The timer was changed here, in the terminal client, on the phone or by the other person.
+    if (name === "conversation") {
+      if (typeof data.expiration === "number") view.expiration = Math.max(0, Math.floor(data.expiration))
+      return
+    }
     // The message someone was typing has arrived: Signal sends no separate "stopped".
     if (name === "message" && data.outgoing !== true) view.typingName = ""
     if (name === "message" || name === "sent" || name === "edited" || name === "deleted" || name === "removed"
@@ -443,36 +478,6 @@ Item {
     return added.length
   }
 
-  // Ctrl+V. Text is the field's own business. What the field cannot paste is
-  // attached instead: files copied in a file manager, or a picture (a
-  // screenshot, "Copy image" in a browser). Returns true when the paste was
-  // taken over here, so the field does not also paste a file's URL as text.
-  property string pasteFallback: ""
-  function pasteAttachments() {
-    var text = typeof Quickshell.clipboardText === "string" ? Quickshell.clipboardText : null
-    // Ordinary text on the clipboard: nothing to attach, and no process to start.
-    if (text !== null && text.trim().length > 0 && text.trim().indexOf("file://") !== 0) return false
-    if (pasteProc.running) return true
-    view.pasteFallback = text === null ? "" : text
-    pasteProc.command = [view.cliPath, "paste-image"]
-    pasteProc.running = true
-    // Where the clipboard text cannot be read up front, the field pastes as it always did.
-    return text !== null
-  }
-  Process {
-    id: pasteProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var obj = null
-        try { obj = JSON.parse(text) } catch (e) { obj = null }
-        var paths = obj && Array.isArray(obj.paths) ? obj.paths : (obj && typeof obj.path === "string" ? [obj.path] : [])
-        if (view.addAttachments(paths) === 0 && view.pasteFallback.length > 0) composer.insert(composer.cursorPosition, view.pasteFallback)
-        view.pasteFallback = ""
-      }
-    }
-  }
-
   function quoteRow(row) {
     view.quote = { ts: row.ts, author: row.outgoing ? ("number:" + view.account) : row.sender, text: row.body, who: row.who }
     view.selectedTs = 0
@@ -513,9 +518,7 @@ Item {
 
   function listDir(dir) {
     view.pickerIndex = 0
-    lsProc.running = false
-    lsProc.command = [view.cliPath, "ls-files", "--", dir]
-    lsProc.running = true
+    lsProc.run([view.cliPath, "ls-files", "--", dir])
   }
 
   function chooseRow(row) {
@@ -531,18 +534,19 @@ Item {
     return q ? rows.filter(function(r) { return r.name.toLowerCase().indexOf(q) >= 0 }) : rows
   }
 
-  Process {
+  // At most 500 rows of JSON; a ceiling and a deadline all the same (BoundedProcess.qml).
+  BoundedProcess {
     id: lsProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var obj = null
-        try { obj = JSON.parse(text) } catch (e) { obj = null }
-        if (!obj || !Array.isArray(obj.rows)) { view.pickerRows = []; return }
-        view.pickerDir = String(obj.dir || "")
-        view.pickerParent = String(obj.parent || "")
-        view.pickerRows = obj.rows.filter(function(r) { return r && typeof r.path === "string" && r.path.charAt(0) === "/" })
-      }
+    maxChars: 2 * 1024 * 1024
+    timeoutMs: 10000
+    onFinished: function(ok, text) {
+      if (!ok) { view.pickerRows = []; return }
+      var obj = null
+      try { obj = JSON.parse(text) } catch (e) { obj = null }
+      if (!obj || !Array.isArray(obj.rows)) { view.pickerRows = []; return }
+      view.pickerDir = String(obj.dir || "")
+      view.pickerParent = String(obj.parent || "")
+      view.pickerRows = obj.rows.filter(function(r) { return r && typeof r.path === "string" && r.path.charAt(0) === "/" })
     }
   }
 
@@ -583,6 +587,7 @@ Item {
           readonly property bool alarm: !view.connected || !view.linked
           text: !view.connected ? "Bridge offline" : !view.linked ? "No account linked"
                 : view.typingName.length > 0 ? (view.isGroup ? view.typingName + " is typing…" : "typing…")
+                : view.expiration > 0 ? "End-to-end encrypted · 󰔛 messages disappear after " + Model.timerLabel(view.expiration)
                 : "End-to-end encrypted"
           textFormat: Text.PlainText
           elide: Text.ElideRight
@@ -594,7 +599,7 @@ Item {
       }
       Button {
         iconText: "󰇘"
-        tooltipText: "Conversation"
+        tooltipText: "Conversation: disappearing messages, delete chat"
         visible: view.conversationKey.length > 0
         selected: view.chatMenuOpen
         onClicked: { view.chatMenuOpen = !view.chatMenuOpen; view.confirmDeleteChat = false }
@@ -613,31 +618,73 @@ Item {
       property real reveal: shown
       Behavior on reveal { NumberAnimation { duration: view.ms(140); easing.type: Easing.OutCubic } }
       Layout.fillWidth: true
-      Layout.preferredHeight: chatMenuRow.implicitHeight * reveal
+      Layout.preferredHeight: chatMenuBody.implicitHeight * reveal
       visible: reveal > 0.01
       opacity: reveal
       clip: true
-      RowLayout {
-        id: chatMenuRow
+      ColumnLayout {
+        id: chatMenuBody
         width: parent.width
         spacing: Style.space(8)
-        Button {
-          bordered: true
-          text: "Delete chat on this computer"
-          visible: !view.confirmDeleteChat
-          onClicked: view.confirmDeleteChat = true
+        // Disappearing messages: one click on a duration sets it for everyone in the chat.
+        RowLayout {
+          Layout.fillWidth: true
+          spacing: Style.space(4)
+          Text {
+            text: "Disappearing messages"
+            textFormat: Text.PlainText
+            color: view.fg
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
+            rightPadding: Style.space(8)
+          }
+          Repeater {
+            model: Model.TIMERS
+            delegate: Button {
+              required property var modelData
+              objectName: "timer-" + modelData.seconds
+              text: modelData.label
+              bordered: true
+              selected: view.expiration === modelData.seconds
+              enabled: !view.settingTimer && view.linked
+              tooltipText: modelData.seconds === 0 ? "Keep messages" : "New messages disappear " + modelData.label + " after they are seen"
+              onClicked: view.setTimer(modelData.seconds)
+            }
+          }
+          // A timer set elsewhere to a duration that is not one of the buttons.
+          Text {
+            visible: view.expiration > 0 && !Model.TIMERS.some(function(t) { return t.seconds === view.expiration })
+            text: "now " + Model.timerLabel(view.expiration)
+            textFormat: Text.PlainText
+            color: view.dim
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            leftPadding: Style.space(6)
+          }
+          Item { Layout.fillWidth: true }
         }
-        Text {
-          visible: view.confirmDeleteChat
-          text: "Delete this chat here? It stays on your phone."
-          textFormat: Text.PlainText
-          color: view.fg
-          font.family: Style.font.family
-          font.pixelSize: Style.font.body
+        RowLayout {
+          id: chatMenuRow
+          Layout.fillWidth: true
+          spacing: Style.space(8)
+          Button {
+            bordered: true
+            text: "Delete chat on this computer"
+            visible: !view.confirmDeleteChat
+            onClicked: view.confirmDeleteChat = true
+          }
+          Text {
+            visible: view.confirmDeleteChat
+            text: "Delete this chat here? It stays on your phone."
+            textFormat: Text.PlainText
+            color: view.fg
+            font.family: Style.font.family
+            font.pixelSize: Style.font.body
+          }
+          Button { bordered: true; text: "Delete"; foreground: Commons.Color.urgent; visible: view.confirmDeleteChat; onClicked: view.deleteChat() }
+          Button { bordered: true; text: "Cancel"; visible: view.confirmDeleteChat; onClicked: { view.confirmDeleteChat = false; view.chatMenuOpen = false } }
+          Item { Layout.fillWidth: true }
         }
-        Button { bordered: true; text: "Delete"; foreground: Commons.Color.urgent; visible: view.confirmDeleteChat; onClicked: view.deleteChat() }
-        Button { bordered: true; text: "Cancel"; visible: view.confirmDeleteChat; onClicked: { view.confirmDeleteChat = false; view.chatMenuOpen = false } }
-        Item { Layout.fillWidth: true }
       }
     }
 
@@ -943,8 +990,8 @@ Item {
                     } else {
                       // Anything else is meant for the composer: go back to it and deliver the key.
                       composer.forceActiveFocus()
-                      if (event.matches(StandardKey.Paste) || (event.key === Qt.Key_Insert && (event.modifiers & Qt.ShiftModifier))) {
-                        if (!view.pasteAttachments()) composer.paste()
+                      if (composerPaste.isPasteKey(event)) {
+                        composerPaste.paste(false)
                       } else if (!ctrl && !(event.modifiers & Qt.AltModifier) && event.text.length > 0 && event.text.charCodeAt(0) >= 32) {
                         composer.insert(composer.cursorPosition, event.text)
                       }
@@ -1130,9 +1177,12 @@ Item {
             verticalPadding: Style.space(4)
             placeholderText: "Filter " + view.pickerDir.replace(view.home, "~")
             onTextChanged: { view.pickerFilter = text; view.pickerIndex = 0 }
+            QQC.ContextMenu.menu: null
+            PasteGuard { id: filterPaste; target: pickerFilterField; cliPath: view.cliPath; singleLine: true }
             Keys.onEscapePressed: function(e) { view.handleEscape(); e.accepted = true }
             Keys.onReturnPressed: view.pickerChoose()
             Keys.onPressed: function(e) {
+              if (filterPaste.handleKey(e)) return
               var perRow = view.thumbnails ? Math.max(1, Math.floor(grid.width / grid.cellWidth)) : 1
               if (e.key === Qt.Key_Down) { view.pickerMove(perRow); e.accepted = true }
               else if (e.key === Qt.Key_Up) { view.pickerMove(-perRow); e.accepted = true }
@@ -1448,6 +1498,14 @@ Item {
             cursorPosition = r.cursor
             converting = false
           }
+          QQC.ContextMenu.menu: null
+          PasteGuard {
+            id: composerPaste
+            target: composer
+            cliPath: view.cliPath
+            files: true
+            onAttached: function(paths) { view.addAttachments(paths) }
+          }
           Keys.onEscapePressed: function(event) { view.handleEscape(); event.accepted = true }
           Keys.onPressed: function(event) {
             var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
@@ -1458,8 +1516,8 @@ Item {
             } else if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && ctrl) {
               view.cycleWindow((event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab ? -1 : 1)
               event.accepted = true
-            } else if (event.matches(StandardKey.Paste) || (event.key === Qt.Key_Insert && (event.modifiers & Qt.ShiftModifier))) {
-              if (view.pasteAttachments()) event.accepted = true   // otherwise not accepted: the box pastes the text
+            } else if (composerPaste.handleKey(event)) {
+              // Ctrl+V and friends: files and pictures are attached, text is typed in (PasteGuard.qml).
             } else if ((event.key === Qt.Key_O && ctrl)
                        || (event.key === Qt.Key_A && ctrl && (event.modifiers & Qt.ShiftModifier))) {
               view.pickAttachment()
