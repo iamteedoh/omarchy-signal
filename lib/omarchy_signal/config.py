@@ -21,8 +21,12 @@ def xdg(var: str, default: str) -> Path:
 
 def runtime_dir() -> Path:
     """Per-user tmpfs directory. Falls back to a private dir under /tmp when
-    XDG_RUNTIME_DIR is unset (e.g. some cron/ssh sessions)."""
-    value = os.environ.get("XDG_RUNTIME_DIR")
+    XDG_RUNTIME_DIR is unset (e.g. some cron/ssh sessions).
+
+    OMARCHY_SIGNAL_RUNTIME_DIR moves the bridge's socket for a demo or a test
+    without also moving the Wayland and Hyprland sockets, which live in
+    XDG_RUNTIME_DIR. Bridge.qml reads the same variable."""
+    value = os.environ.get("OMARCHY_SIGNAL_RUNTIME_DIR") or os.environ.get("XDG_RUNTIME_DIR")
     if value:
         return Path(value)
     return Path(f"/tmp/omarchy-signal-{os.getuid()}")
@@ -99,10 +103,12 @@ class Config:
     attachment_thumbnails: bool = True     # picture tiles in the attachment picker (off = plain list)
     scroll_speed: int = 9                  # chat window: trackpad/wheel scroll multiplier (0 = Qt default)
     terminal: str = "auto"                 # terminal for `omarchy-signal open`: auto (system default) | ghostty | kitty | wezterm | foot | alacritty
+    window_opacity: int = 0                # how solid the popup and chat window are, in percent; 0 = what the Omarchy theme uses
     image_max_rows: int = 14
     qr_rows: int = 9                       # height of the linking QR code in terminal rows (image mode)
     qr_style: str = "auto"                 # auto (shell popup, else image, else text) | shell | image | half | quad | braille
     device_name: str = "omarchy-signal"
+    update_check: bool = True              # ask the plugin's git remote once a day whether a newer release exists
     save_dir: str = "~/Downloads"          # where "save" puts received attachments
     log_level: str = "info"
     trust_new_identities: str = "on-first-use"  # passed to signal-cli verbatim (allow-listed)
@@ -157,6 +163,8 @@ class Config:
             cfg.message_layout = "left"
         if cfg.terminal not in ("auto", "ghostty", "kitty", "wezterm", "foot", "alacritty"):
             cfg.terminal = "auto"
+        if cfg.window_opacity != 0:
+            cfg.window_opacity = max(50, min(100, cfg.window_opacity))
         if cfg.trust_new_identities not in ("always", "on-first-use", "never"):
             cfg.trust_new_identities = "on-first-use"
         cfg.image_max_rows = max(2, min(60, cfg.image_max_rows))
@@ -207,6 +215,8 @@ SETTINGS: list[dict] = [
      "min": 0, "max": 20, "step": 1, "help": "Multiplier for trackpad and mouse-wheel scrolling in the popup and chat window; 0 = Qt's default"},
     {"section": "Appearance", "key": "terminal", "label": "Terminal for the client", "type": "choice",
      "choices": ["auto", "ghostty", "kitty", "wezterm", "foot", "alacritty"], "help": "auto follows omarchy default terminal; images need ghostty, kitty or wezterm"},
+    {"section": "Appearance", "key": "window_opacity", "label": "Window opacity (%)", "type": "int",
+     "min": 0, "max": 100, "step": 2, "help": "How solid the popup conversation and the chat window are; 100 = no transparency, 0 = follow the Omarchy theme"},
     {"section": "Appearance", "key": "terminal_images", "label": "Terminal image support", "type": "choice",
      "choices": ["auto", "on", "off"], "help": "auto probes the terminal"},
     {"section": "Appearance", "key": "image_max_rows", "label": "Inline image height (rows)", "type": "int",
@@ -219,6 +229,8 @@ SETTINGS: list[dict] = [
      "min": 0, "max": 3650, "step": 7, "help": "0 keeps everything"},
     {"section": "Data", "key": "device_name", "label": "Device name", "type": "text", "restart": True,
      "help": "Shown in Signal's Linked devices"},
+    {"section": "Data", "key": "update_check", "label": "Check for updates daily", "type": "bool",
+     "help": "Asks the git remote the plugin was installed from for new release tags, once a day; nothing else is sent. Update with: omarchy-signal update"},
 ]
 
 RESTART_REQUIRED = {s["key"] for s in SETTINGS if s.get("restart")} | {"account", "signal_cli", "log_level"}

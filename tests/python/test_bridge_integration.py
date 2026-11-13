@@ -2,6 +2,7 @@
 """End-to-end: real Bridge + real Store + real socket server, fake signal-cli."""
 
 import asyncio
+import contextlib
 import json
 import os
 import shutil
@@ -10,6 +11,7 @@ import stat
 import struct
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -442,6 +444,183 @@ class BridgeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             other = Bridge(h.cfg, h.paths)
             with self.assertRaises(SystemExit):
                 await other.run()
+
+
+class DeleteTests(unittest.IsolatedAsyncioTestCase):
+    """Deleting for everyone is Signal's remote delete and leaves a tombstone;
+    deleting for me, and deleting a chat, are local and send nothing."""
+
+    async def _client(self, h, on_event=None):
+        c = BridgeClient(h.paths, on_event=on_event)
+        await c.connect()
+        return c, None
+
+    async def _incoming(self, h, c, events, ts, text="hello"):
+        h.inject(incoming(text, ts))
+        for _ in range(100):
+            if any(n == "message" and d.get("ts") == ts for n, d in events):
+                return
+            await asyncio.sleep(0.05)
+        self.fail(f"the message never arrived: {events}")
+
+    async def test_delete_for_me_removes_a_received_message_and_sends_nothing(self):
+        async with BridgeHarness() as h:
+            events = []
+            c, _ = await self._client(h, on_event=lambda n, d: events.append((n, d)))
+            await c.request("subscribe")
+            ts = 1700000000101
+            await self._incoming(h, c, events, ts)
+            key = "number:+15550002222"
+            before = len(await c.request("history", conversation=key))
+            sent_before = h.sent()
+
+            res = await c.request("deleteLocal", conversation=key, ts=ts)
+            self.assertTrue(res["removed"])
+            self.assertEqual(h.sent(), sent_before, "a local delete must not reach signal-cli")
+            after = await c.request("history", conversation=key)
+            self.assertEqual(len(after), before - 1)
+            self.assertNotIn(ts, [m["ts"] for m in after], "the message is gone, not tombstoned")
+            for _ in range(60):
+                if any(n == "removed" for n, _ in events):
+                    break
+                await asyncio.sleep(0.05)
+            removed = [d for n, d in events if n == "removed"][-1]
+            self.assertEqual((removed["conversation"], removed["ts"]), (key, ts))
+            # Deleting it again is not an error, and says nothing happened.
+            self.assertFalse((await c.request("deleteLocal", conversation=key, ts=ts))["removed"])
+            await c.close()
+
+    async def test_delete_for_everyone_still_leaves_a_tombstone(self):
+        async with BridgeHarness() as h:
+            c, _ = await self._client(h)
+            key = "number:+15550002222"
+            sent = await c.request("send", conversation=key, text="mine")
+            ts = sent["ts"]
+            await c.request("delete", conversation=key, ts=ts)
+            row = [m for m in await c.request("history", conversation=key) if m["ts"] == ts]
+            self.assertEqual(len(row), 1, "a remote delete keeps the row")
+            self.assertTrue(row[0]["deleted"])
+            self.assertEqual(row[0]["body"], "")
+            await c.close()
+
+    async def test_deleting_a_chat_takes_its_messages_and_the_thread(self):
+        async with BridgeHarness() as h:
+            events = []
+            c, _ = await self._client(h, on_event=lambda n, d: events.append((n, d)))
+            await c.request("subscribe")
+            key = "number:+15550002222"
+            await self._incoming(h, c, events, 1700000000201)
+            await self._incoming(h, c, events, 1700000000202, text="and another")
+            self.assertTrue(any(conv["key"] == key for conv in await c.request("conversations")))
+            sent_before = h.sent()
+
+            res = await c.request("deleteConversation", conversation=key)
+            self.assertTrue(res["removed"])
+            self.assertGreaterEqual(res["messages"], 2)
+            self.assertEqual(h.sent(), sent_before, "deleting a chat must not reach signal-cli")
+            self.assertEqual(await c.request("history", conversation=key), [])
+            self.assertFalse(any(conv["key"] == key for conv in await c.request("conversations")))
+            for _ in range(60):
+                if any(n == "conversationRemoved" for n, _ in events):
+                    break
+                await asyncio.sleep(0.05)
+            gone = [d for n, d in events if n == "conversationRemoved"][-1]
+            self.assertEqual(gone["conversation"], key)
+            self.assertEqual([d for n, d in events if n == "unread"][-1]["total"], 0)
+
+            # It comes back by itself when the next message arrives, as on Signal.
+            await self._incoming(h, c, events, 1700000000203, text="back again")
+            self.assertTrue(any(conv["key"] == key for conv in await c.request("conversations")))
+            self.assertEqual(len(await c.request("history", conversation=key)), 1)
+            await c.close()
+
+    async def test_delete_for_everyone_is_refused_after_a_day_and_sends_nothing(self):
+        # Past Signal's window the other phone ignores the delete while ours
+        # applies it, so it would look gone and not be. Refuse, and say why.
+        from omarchy_signal.sanitize import parse_conversation_key
+        async with BridgeHarness() as h:
+            c, _ = await self._client(h)
+            key = "number:+15550002222"
+            old = int(time.time() * 1000) - 25 * 60 * 60 * 1000
+            h.bridge.store.add_outgoing(parse_conversation_key(key), old, "number:+15550001111", "yesterday's")
+            with self.assertRaises(BridgeError) as caught:
+                await c.request("delete", conversation=key, ts=old)
+            self.assertIn("24 hours", str(caught.exception))
+            self.assertFalse([s for s in h.sent() if s["method"] == "remoteDelete"])
+            row = [m for m in await c.request("history", conversation=key) if m["ts"] == old][0]
+            self.assertEqual((row["deleted"], row["body"]), (False, "yesterday's"), "a refused delete touches nothing")
+            await c.close()
+
+    async def test_note_to_self_is_deleted_as_note_to_self_at_any_age(self):
+        from omarchy_signal.sanitize import parse_conversation_key
+        async with BridgeHarness() as h:
+            c, _ = await self._client(h)
+            key = "number:+15550001111"                    # the fake account: Note to Self
+            old = int(time.time() * 1000) - 30 * 24 * 60 * 60 * 1000
+            h.bridge.store.add_outgoing(parse_conversation_key(key), old, key, "a note from last month")
+            await c.request("delete", conversation=key, ts=old)
+            dl = [s for s in h.sent() if s["method"] == "remoteDelete"][-1]["params"]
+            self.assertTrue(dl.get("noteToSelf"), dl)
+            self.assertNotIn("recipient", dl, "Note to Self goes as --note-to-self, as send and edit do")
+            self.assertEqual(dl["targetTimestamp"], old)
+            await c.close()
+
+    async def test_a_message_already_deleted_for_everyone_is_not_deleted_twice(self):
+        async with BridgeHarness() as h:
+            c, _ = await self._client(h)
+            key = "number:+15550002222"
+            ts = (await c.request("send", conversation=key, text="once"))["ts"]
+            await c.request("delete", conversation=key, ts=ts)
+            before = len([s for s in h.sent() if s["method"] == "remoteDelete"])
+            with self.assertRaises(BridgeError) as caught:
+                await c.request("delete", conversation=key, ts=ts)
+            self.assertIn("already deleted", str(caught.exception))
+            self.assertEqual(len([s for s in h.sent() if s["method"] == "remoteDelete"]), before)
+            await c.close()
+
+    async def test_neither_delete_takes_anything_but_a_conversation_key(self):
+        async with BridgeHarness() as h:
+            c, _ = await self._client(h)
+            for op, kw in (("deleteLocal", {"ts": 1}), ("deleteConversation", {})):
+                for bad in ("", "number:+1 2", "../etc", "number:$(id)"):
+                    with self.assertRaises(BridgeError, msg=f"{op} {bad}"):
+                        await c.request(op, conversation=bad, **kw)
+            with self.assertRaises(BridgeError):
+                await c.request("deleteLocal", conversation="number:+15550002222", ts=1, sender="not a key")
+            await c.close()
+
+
+class LinkedStateTests(unittest.IsolatedAsyncioTestCase):
+    """`linked: false` must never mean "no account" while the bridge has not yet
+    asked signal-cli which accounts exist. Clients offer to link on that answer,
+    so a linked computer was being asked to link itself, and shown a QR code,
+    after every restart."""
+
+    async def test_status_never_claims_no_account_before_it_has_looked(self):
+        # Sampled from the moment the bridge starts, which is where the gap is:
+        # signal-cli reports itself ready before listAccounts has answered.
+        h = BridgeHarness()
+        task = asyncio.create_task(h.bridge.run())
+        try:
+            seen = []
+            for _ in range(400):
+                st = h.bridge.status()
+                seen.append((bool(st["connected"]), bool(st["accountsKnown"]), bool(st["linked"])))
+                if st["linked"]:
+                    break
+                await asyncio.sleep(0.01)
+            self.assertTrue(seen[-1][2], f"the fake account never came up: {seen[-3:]}")
+            for connected, known, linked in seen:
+                # What a client acts on: "there is no account". It must never be said here.
+                self.assertFalse(known and not linked, f"claimed there is no account: {seen}")
+                # And an account is never reported before it was looked for.
+                self.assertFalse(linked and not known, f"linked without having looked: {seen}")
+                self.assertFalse(known and not connected, f"knew the accounts while signal-cli was down: {seen}")
+        finally:
+            h.bridge._shutdown.set()
+            with contextlib.suppress(BaseException):
+                await asyncio.wait_for(task, 10)
+            h.tmp.cleanup()
 
 
 if __name__ == "__main__":

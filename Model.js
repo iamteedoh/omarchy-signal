@@ -118,71 +118,209 @@ function tuiArgv(conversationKey) {
   return argv
 }
 
-// argv for a reply typed into the popup. The text travels glued to its flag
-// ("--message=...") so argparse never mistakes a message that starts with "-"
-// for an option, and the key comes after "--" for the same reason.
-function sendArgv(conversationKey, text) {
-  if (!isConversationKey(conversationKey)) return null
-  var body = cleanText(text, 60000)
-  if (!body.trim()) return null
-  return ["omarchy-signal", "send", "--json", "--message=" + body, "--", conversationKey]
+// ---------------------------------------------------------------- bridge wire
+//
+// The shell talks to the bridge the way the terminal client does: newline-
+// delimited JSON on its private Unix socket (lib/omarchy_signal/protocol.py).
+// Nothing here builds a command line; a request is an object the bridge
+// validates against its own schema before any code runs on it.
+
+var OP_RE = /^[A-Za-z]{1,32}$/
+
+// One request line, or null when it could not be a valid one.
+function requestLine(id, op, params) {
+  if (typeof id !== "number" || !isFinite(id) || id <= 0) return null
+  if (typeof op !== "string" || !OP_RE.test(op)) return null
+  var msg = {}
+  if (params && typeof params === "object") for (var k in params) if (k !== "id" && k !== "op") msg[k] = params[k]
+  msg.id = id
+  msg.op = op
+  return JSON.stringify(msg) + "\n"
 }
 
-// argv for a reply with an optional quote and attachments.
-function sendArgvFull(conversationKey, text, attachments, quote) {
+// One line from the bridge: {kind: "event", name, data}, {kind: "reply", id,
+// ok, result, error, code}, or null for anything else.
+function parseBridgeLine(line) {
+  var s = String(line || "").trim()
+  if (!s || s.charAt(0) !== "{") return null
+  if (s.length > 8 * 1024 * 1024) return null
+  var obj
+  try { obj = JSON.parse(s) } catch (e) { return null }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null
+  if (typeof obj.event === "string") {
+    return { kind: "event", name: singleLine(obj.event, 40),
+             data: (obj.data && typeof obj.data === "object" && !Array.isArray(obj.data)) ? obj.data : {} }
+  }
+  if (typeof obj.id === "number" && typeof obj.ok === "boolean") {
+    return { kind: "reply", id: obj.id, ok: obj.ok, result: obj.result,
+             error: singleLine(obj.error || "", 200), code: singleLine(obj.code || "", 40) }
+  }
+  return null
+}
+
+// Parameters for "send": a reply with an optional quote and attachments.
+// Attachments must be absolute paths; the bridge checks them again.
+function sendParams(conversationKey, text, attachments, quote) {
   if (!isConversationKey(conversationKey)) return null
   var body = cleanText(text, 60000)
-  var files = Array.isArray(attachments) ? attachments.filter(function(a) { return typeof a === "string" && a.charAt(0) === "/" }) : []
+  var files = Array.isArray(attachments) ? attachments.filter(function(a) { return typeof a === "string" && a.charAt(0) === "/" && a.length < 4096 }).slice(0, 8) : []
   if (!body.trim() && files.length === 0) return null
-  var argv = ["omarchy-signal", "send", "--json", "--message=" + body]
-  for (var i = 0; i < files.length; i++) argv.push("-a", files[i])
-  if (quote && typeof quote.ts === "number" && quote.ts > 0 && isConversationKey(quote.author))
-    argv.push("--quote-ts", String(quote.ts), "--quote-author", quote.author, "--quote-text", singleLine(quote.text || "", 200))
-  argv.push("--", conversationKey)
-  return argv
+  var p = { conversation: conversationKey, text: body, attachments: files }
+  if (quote && typeof quote.ts === "number" && quote.ts > 0 && isConversationKey(quote.author)) {
+    p.quoteTs = quote.ts
+    p.quoteAuthor = quote.author
+    p.quoteText = singleLine(quote.text || "", 200)
+  }
+  return p
 }
 
-function reactArgv(conversationKey, ts, author, emojiText, remove) {
+function reactParams(conversationKey, ts, author, emojiText, remove) {
   if (!isConversationKey(conversationKey) || !isConversationKey(author)) return null
   if (typeof ts !== "number" || ts <= 0) return null
   var e = singleLine(emojiText, 16)
   if (!e) return null
-  var argv = ["omarchy-signal", "react", "--", conversationKey, String(ts), author, e]
-  if (remove) argv.splice(2, 0, "--remove")
-  return argv
+  return { conversation: conversationKey, ts: ts, author: author, emoji: e, remove: remove === true }
 }
 
-// Rows for the message list of a conversation window, oldest first.
+// {op, params} for deleting one message. "For me" (deleteLocal) is local and
+// sends nothing; "for everyone" (delete) is Signal's remote delete.
+function deleteRequest(conversationKey, ts, everyone, sender) {
+  if (!isConversationKey(conversationKey)) return null
+  if (typeof ts !== "number" || ts <= 0) return null
+  if (everyone) return { op: "delete", params: { conversation: conversationKey, ts: ts } }
+  var p = { conversation: conversationKey, ts: ts }
+  if (sender && isConversationKey(sender)) p.sender = sender
+  return { op: "deleteLocal", params: p }
+}
+
+// Why a message cannot be deleted for everyone, or "" when it can: your own,
+// not already deleted, and within Signal's one-day window unless it is in Note
+// to Self. The bridge enforces the same rule (protocol.delete_for_everyone_refusal
+// in lib/omarchy_signal/protocol.py); both are held to tests/vectors/model.json.
+var DELETE_FOR_EVERYONE_MS = 24 * 60 * 60 * 1000
+
+function deleteForEveryoneRefusal(row, nowMs, noteToSelf) {
+  if (!row || row.outgoing !== true) return "you can only delete your own messages for everyone"
+  if (row.deleted === true) return "that message is already deleted"
+  if (noteToSelf !== true && nowMs - row.ts >= DELETE_FOR_EVERYONE_MS)
+    return "Signal only allows delete for everyone within 24 hours of sending; delete it for me instead"
+  return ""
+}
+
+// ---------------------------------------------------------------- presentation
+
+// The letter drawn in a conversation's tile, the way Omarchy's notifications
+// mark a source that has no icon.
+function initial(name) {
+  var s = singleLine(name, 80).replace(/^[\s+@#~\-_.()\[\]]+/, "")
+  if (!s) return "#"
+  var first = Array.from(s)[0]
+  return first.toUpperCase()
+}
+
+function pad2(n) { return (n < 10 ? "0" : "") + n }
+
+// Local calendar day, as a sortable key: the thread draws a separator where it changes.
+function dayKey(tsMs) {
+  var ts = Number(tsMs) || 0
+  if (!ts) return ""
+  var d = new Date(ts)
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
+}
+
+var WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+function dayLabel(key, nowMs) {
+  if (!key) return ""
+  var now = new Date(Number(nowMs) || Date.now())
+  if (key === dayKey(now.getTime())) return "Today"
+  var y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+  if (key === dayKey(y.getTime())) return "Yesterday"
+  var parts = key.split("-")
+  var then = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+  var days = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - then.getTime()) / 86400000)
+  if (days > 0 && days < 7) return WEEKDAYS[then.getDay()]
+  return key
+}
+
+function clockTime(tsMs) {
+  var ts = Number(tsMs) || 0
+  if (!ts) return ""
+  var d = new Date(ts)
+  return pad2(d.getHours()) + ":" + pad2(d.getMinutes())
+}
+
+// "👍 2  ❤️" from the bridge's {sender: emoji} map.
+function reactionSummary(reactions) {
+  if (!reactions || typeof reactions !== "object") return ""
+  var order = [], count = {}
+  for (var k in reactions) {
+    var e = singleLine(reactions[k], 8)
+    if (!e) continue
+    if (!(e in count)) { count[e] = 0; order.push(e) }
+    count[e] += 1
+  }
+  return order.map(function(e) { return count[e] > 1 ? e + " " + count[e] : e }).join("  ")
+}
+
+// True when version a is a release newer than b ("0.10.0" > "0.9.3").
+function versionNewer(a, b) {
+  var pa = /^(\d{1,4})\.(\d{1,4})\.(\d{1,5})$/.exec(String(a || "")), pb = /^(\d{1,4})\.(\d{1,4})\.(\d{1,5})$/.exec(String(b || ""))
+  if (!pa || !pb) return false
+  for (var i = 1; i <= 3; i++) {
+    if (Number(pa[i]) !== Number(pb[i])) return Number(pa[i]) > Number(pb[i])
+  }
+  return false
+}
+
+// Rows for the message list of a conversation window, oldest first. Every
+// field is a string, number or boolean: the rows go into a ListModel.
 function threadRows(rows, limit) {
   var list = Array.isArray(rows) ? rows.slice(-(limit || 60)) : []
+  var prevSender = null, prevDay = ""
   return list.map(function(m) {
     var body = cleanText(m.body || "", 4000)
     var atts = Array.isArray(m.attachments) ? m.attachments : []
-    if (m.deleted) body = "(message deleted)"
+    if (m.deleted) { body = "This message was deleted"; atts = [] }
     var image = "", imageW = 0, imageH = 0
     for (var i = 0; i < atts.length; i++) {
-      if (atts[i] && typeof atts[i].path === "string" && /^image\//.test(atts[i].contentType || "")) {
+      if (atts[i] && typeof atts[i].path === "string" && atts[i].path.charAt(0) === "/" && /^image\//.test(atts[i].contentType || "")) {
         image = atts[i].path
         imageW = Number(atts[i].width) || 0
         imageH = Number(atts[i].height) || 0
         break
       }
     }
-    var filesText = atts.map(function(a) { return singleLine(a.filename || "attachment", 80) }).join(", ")
-    var reactions = []
-    if (m.reactions && typeof m.reactions === "object") for (var k in m.reactions) reactions.push(singleLine(m.reactions[k], 8))
+    var filesText = atts.map(function(a) { return singleLine((a && a.filename) || "attachment", 80) }).join(", ")
+    var ts = typeof m.ts === "number" ? m.ts : 0
+    var outgoing = m.outgoing === true
+    var sender = typeof m.sender === "string" ? m.sender : ""
+    var day = dayKey(ts)
+    // A run of messages from one person on one day shows the name once.
+    var runKey = (outgoing ? "me" : sender) + "|" + day
+    var firstOfRun = runKey !== prevSender
+    prevSender = runKey
+    var newDay = day !== prevDay
+    prevDay = day
     return {
-      ts: typeof m.ts === "number" ? m.ts : 0,
-      who: m.outgoing ? "You" : singleLine(m.senderName || "?", 80),
-      sender: typeof m.sender === "string" ? m.sender : "",
-      outgoing: m.outgoing === true,
+      ts: ts,
+      who: outgoing ? "You" : singleLine(m.senderName || "?", 80),
+      sender: sender,
+      outgoing: outgoing,
       body: body,
       filesText: filesText,
       image: image,
+      imageW: imageW,
+      imageH: imageH,
       status: singleLine(m.status || "", 20),
       edited: m.edited === true,
+      deleted: m.deleted === true,
       quote: singleLine(m.quoteText || "", 200),
-      reactions: reactions.join(" ")
+      reactions: reactionSummary(m.reactions),
+      day: day,
+      newDay: newDay,
+      firstOfRun: firstOfRun,
+      time: clockTime(ts)
     }
   })
 }
@@ -200,9 +338,18 @@ if (typeof module !== "undefined") {
     isConversationKey: isConversationKey,
     parseDnd: parseDnd,
     tuiArgv: tuiArgv,
-    sendArgv: sendArgv,
-    sendArgvFull: sendArgvFull,
-    reactArgv: reactArgv,
+    requestLine: requestLine,
+    parseBridgeLine: parseBridgeLine,
+    sendParams: sendParams,
+    reactParams: reactParams,
+    deleteRequest: deleteRequest,
+    deleteForEveryoneRefusal: deleteForEveryoneRefusal,
+    initial: initial,
+    dayKey: dayKey,
+    dayLabel: dayLabel,
+    clockTime: clockTime,
+    reactionSummary: reactionSummary,
+    versionNewer: versionNewer,
     threadRows: threadRows
   }
 }

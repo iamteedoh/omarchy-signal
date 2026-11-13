@@ -2,6 +2,7 @@
 import asyncio
 import json
 import unittest
+from pathlib import Path
 
 import _helpers  # noqa: F401
 from omarchy_signal import protocol
@@ -38,6 +39,23 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(protocol.decode(protocol.encode({"a": "ü"})), {"a": "ü"})
         self.assertRaises(protocol.ProtocolError, protocol.decode, b"{")
 
+
+class DeleteForEveryoneTests(unittest.TestCase):
+    """The bridge's rule, held to the vectors the chat window's copy
+    (deleteForEveryoneRefusal in Model.js) is also tested against."""
+
+    def test_shared_vectors(self):
+        vectors = Path(__file__).resolve().parents[1] / "vectors" / "model.json"
+        cases = json.loads(vectors.read_text())["deleteForEveryoneRefusal"]
+        self.assertGreaterEqual(len(cases), 5)
+        for c in cases:
+            with self.subTest(c["name"]):
+                got = protocol.delete_for_everyone_refusal(c["ts"], c["now"], outgoing=c["outgoing"],
+                                                           deleted=c["deleted"], note_to_self=c["noteToSelf"])
+                self.assertEqual(got, c["out"])
+
+    def test_the_window_is_a_day(self):
+        self.assertEqual(protocol.DELETE_FOR_EVERYONE_MS, 24 * 60 * 60 * 1000)
 
 class RpcTests(unittest.IsolatedAsyncioTestCase):
     async def _pair(self):

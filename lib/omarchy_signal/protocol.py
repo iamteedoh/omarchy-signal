@@ -25,6 +25,29 @@ MAX_STRING_LENGTH = 64 * 1024        # any single string parameter (message text
 MAX_EVENT_BYTES = 8 * 1024 * 1024
 PROTOCOL_VERSION = 1
 
+# Signal's apps offer "delete for everyone" for a day after sending (the
+# server-tunable global.normalDeleteMaxAgeInSeconds, one day by default).
+# Other people's phones ignore a delete that arrives much later, but your own
+# devices always apply it, so past the window a message would vanish for you
+# and stay for them. Note to Self has no limit.
+DELETE_FOR_EVERYONE_MS = 24 * 60 * 60 * 1000
+
+
+def delete_for_everyone_refusal(ts: int, now_ms: int, *, outgoing: bool, deleted: bool, note_to_self: bool) -> str:
+    """Why a message cannot be deleted for everyone, or "" when it can.
+
+    The bridge enforces this; the clients ask the same question first so they
+    can say so instead of offering something that will be refused. The chat
+    window's copy is deleteForEveryoneRefusal in Model.js, and both are
+    held to tests/vectors/model.json."""
+    if not outgoing:
+        return "you can only delete your own messages for everyone"
+    if deleted:
+        return "that message is already deleted"
+    if not note_to_self and now_ms - ts >= DELETE_FOR_EVERYONE_MS:
+        return "Signal only allows delete for everyone within 24 hours of sending; delete it for me instead"
+    return ""
+
 # op -> {param: (type, required)}
 OPS: dict[str, dict[str, tuple[type | tuple[type, ...], bool]]] = {
     "ping": {},
@@ -54,6 +77,8 @@ OPS: dict[str, dict[str, tuple[type | tuple[type, ...], bool]]] = {
     "demo": {"text": (str, False), "name": (str, False)},
     "reloadConfig": {},
     "delete": {"conversation": (str, True), "ts": (int, True)},
+    "deleteLocal": {"conversation": (str, True), "ts": (int, True), "sender": (str, False)},
+    "deleteConversation": {"conversation": (str, True)},
     "edit": {"conversation": (str, True), "ts": (int, True), "text": (str, True)},
     "setExpiration": {"conversation": (str, True), "seconds": (int, True)},
     "block": {"conversation": (str, True), "blocked": (bool, True)},

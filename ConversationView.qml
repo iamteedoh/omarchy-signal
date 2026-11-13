@@ -5,14 +5,20 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 import "Emoji.js" as Emoji
 
 // One conversation: thread, composer, attachments, quote, reactions. Used by
-// the click-to-reply popup and, unchanged, by the detached windows, so both
-// look and behave the same. Everything shown is PlainText; every action goes
-// through the CLI as an argv array.
+// the click-to-reply popup and, unchanged, by the tabs of the chat window, so
+// both look and behave the same. Everything shown is PlainText. Messages,
+// reactions and deletes go to the bridge as requests on its socket (Bridge.qml);
+// the two things that still start a program (the file listing for the
+// attachment picker and reading the clipboard) run the CLI as an argv array.
+//
+// Colours, spacing, rounding and fonts all come from Omarchy's Style and Color
+// singletons, so the view follows whatever theme is active.
 Item {
   id: view
 
@@ -26,16 +32,32 @@ Item {
     Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "bash"].concat(argv))
   }
 
+  // Animation length in ms. Omarchy 4.5 added a duration helper that returns 0
+  // while `omarchy toggle animations` has them off; older releases do not have
+  // it, so it is looked up by name rather than relied on.
+  function ms(d) {
+    var f = Style["duration"]
+    return typeof f === "function" ? f(d) : d
+  }
+
   required property string cliPath
+  required property var bridge             // Bridge.qml
   property string conversationKey: ""
   property string conversationName: ""
   property bool connected: false
   property bool linked: false
-  property bool detached: false          // true inside a FloatingWindow
+  property bool detached: false          // true inside the chat window
   property string account: ""            // our own number, for reacting to our own messages
   property bool emojiAutoconvert: true   // :smile: / :D become emoji after the space (setting)
   property bool thumbnails: true         // picture tiles in the attachment picker (setting); off = plain list
   property int scrollSpeed: 9            // trackpad/wheel multiplier (setting)
+
+  readonly property color fg: Commons.Color.popups.text
+  readonly property color dim: Util.alpha(Commons.Color.popups.text, 0.55)
+  readonly property color faint: Util.alpha(Commons.Color.popups.text, 0.38)
+  readonly property color hairline: Util.alpha(Commons.Color.popups.text, 0.12)
+  readonly property bool isGroup: view.conversationKey.indexOf("group:") === 0
+  readonly property bool noteToSelf: view.account !== "" && view.conversationKey === "number:" + view.account
 
   // Qt Quick moves a Flickable by the raw trackpad pixel delta, which on a
   // Wayland touchpad is a few pixels per event; terminals and GTK apps scale
@@ -113,11 +135,15 @@ Item {
   signal requestRaise(string key)
   signal requestCloseTab(string key)
 
-  property var siblings: []              // other detached windows: [{key, name}]
+  property var siblings: []              // every tab of the chat window: [{key, name, unread}]
 
-  // Esc peels one layer at a time: picker → text selection → message actions → quote → the window.
+  // Esc peels one layer at a time: help → picker → menus and confirmations →
+  // text selection → message actions → quote → the window.
   function handleEscape() {
+    if (view.helpOpen) { view.helpOpen = false; composer.forceActiveFocus(); return true }
     if (view.pickerOpen) { view.pickerOpen = false; composer.forceActiveFocus(); return true }
+    if (view.chatMenuOpen) { view.chatMenuOpen = false; view.confirmDeleteChat = false; composer.forceActiveFocus(); return true }
+    if (view.confirmDeleteTs) { view.confirmDeleteTs = 0; composer.forceActiveFocus(); return true }
     if (view.selectionTs) { view.selectionTs = 0; composer.forceActiveFocus(); return true }
     if (view.emojiRowOpen || view.selectedTs) { view.emojiRowOpen = false; view.selectedTs = 0; return true }
     if (view.quote) { view.quote = null; return true }
@@ -134,7 +160,27 @@ Item {
     if (next) view.requestRaise(next.key)
   }
 
-  property var thread: []                // Model.threadRows output (last applied)
+  property bool helpOpen: false
+  readonly property var legendKeys: [
+    { key: "Enter", does: "send" }, { key: "Shift+Enter", does: "new line" }, { key: "Ctrl+V", does: "paste, pictures and files too" },
+    { key: "Ctrl+O", does: "attach" }, { key: "Esc", does: "close" }
+  ]
+  readonly property var helpSections: [
+    { title: "Messages", rows: [
+      { key: "click", does: "Reply · React · Copy · Delete" }, { key: "right-click", does: "react" }, { key: "middle-click", does: "reply to it" },
+      { key: "drag", does: "select text; Ctrl+C or right-click copies" }, { key: "click picture", does: "open it larger" } ] },
+    { title: "Writing", rows: [
+      { key: "Enter", does: "send" }, { key: "Shift+Enter", does: "new line" }, { key: ":smile:  :D", does: "become emoji after a space" },
+      { key: "Ctrl+V", does: "paste text, a picture, or copied files" }, { key: "Ctrl+O", does: "attachment picker" } ] },
+    { title: "Window", rows: [
+      { key: "Ctrl+Tab", does: "next chat (Shift: previous)" }, { key: "Esc", does: "close one layer, then the chat" },
+      { key: "Super+Alt+S", does: "park the chat window in the scratchpad" }, { key: "Super+Ctrl+G", does: "new conversation" },
+      { key: "Super+Shift+G", does: "the terminal client" } ] }
+  ]
+
+  property int rowCount: 0
+  property bool threadReady: false       // the first history of this conversation has been laid out
+  property bool animateAdds: false       // new rows fade in; a whole thread loading does not
   ListModel { id: threadModel }
 
   // Sync the list in place: untouched rows keep their delegates, so a send
@@ -146,24 +192,24 @@ Item {
       var cur = threadModel.get(j)
       if (!wanted[cur.ts + ":" + (cur.outgoing ? 1 : 0)]) threadModel.remove(j)
     }
-    var inserted = 0, updated = 0, kept = 0
-    var before = threadModel.count
+    // Only a message or two arriving in a thread already on screen is animated.
+    view.animateAdds = view.threadReady && threadModel.count > 0 && rows.length - threadModel.count <= 3
     for (var k = 0; k < rows.length; k++) {
       var row = rows[k]
       if (k < threadModel.count) {
         var have = threadModel.get(k)
         if (Number(have.ts) === Number(row.ts) && !!have.outgoing === !!row.outgoing) {
           if (have.body !== row.body || have.status !== row.status || have.reactions !== row.reactions || have.edited !== row.edited
-              || have.image !== row.image || have.filesText !== row.filesText || have.quote !== row.quote) { threadModel.set(k, row); updated++ } else kept++
+              || have.deleted !== row.deleted || have.image !== row.image || have.filesText !== row.filesText || have.quote !== row.quote
+              || have.newDay !== row.newDay || have.firstOfRun !== row.firstOfRun || have.who !== row.who) threadModel.set(k, row)
           continue
         }
       }
       threadModel.insert(k, row)
-      inserted++
     }
-    var trimmed = 0
-    while (threadModel.count > rows.length) { threadModel.remove(threadModel.count - 1); trimmed++ }
-    view.thread = rows
+    while (threadModel.count > rows.length) threadModel.remove(threadModel.count - 1)
+    view.rowCount = rows.length
+    view.animateAdds = false
   }
   property var quote: null               // {ts, author, text, who}
   property var attachments: []           // absolute paths
@@ -176,24 +222,44 @@ Item {
   implicitWidth: Style.space(640)
   implicitHeight: Style.space(560)
 
+  // What was being written in each conversation, so switching tabs neither
+  // loses a half-typed reply nor carries it into another chat.
+  property var drafts: ({})
+  property alias draft: composer.text
+
   function load(key, name) {
+    if (view.conversationKey && view.conversationKey !== key) {
+      if (composer.text.length > 0) view.drafts[view.conversationKey] = composer.text
+      else delete view.drafts[view.conversationKey]
+      composer.text = view.drafts[key] || ""
+      composer.cursorPosition = composer.text.length
+    }
     view.stickToBottom = true
     view.conversationKey = key
     view.conversationName = Model.singleLine(name || key.split(":").slice(1).join(":"), 80)
+    view.threadReady = false
     threadModel.clear()
-    view.thread = []
+    view.rowCount = 0
     view.quote = null
     view.attachments = []
     view.error = ""
+    view.notice = ""
+    view.typingName = ""
     view.selectedTs = 0
+    view.selectionTs = 0
+    view.confirmDeleteTs = 0
+    view.confirmDeleteChat = false
+    view.chatMenuOpen = false
     view.emojiRowOpen = false
-    historyProc.running = false          // switching conversations: the old read is stale
+    view.pickerOpen = false
     view.reloadPending = false
-    historyProc.command = [view.cliPath, "history", "--json", "-n", "60", "--", key]
-    historyProc.running = true
-    markReadProc.command = [view.cliPath, "mark-read", "--", key]
-    markReadProc.running = true
+    view.fetch()
+    view.markRead()
     Qt.callLater(function() { composer.forceActiveFocus() })
+  }
+
+  function markRead() {
+    if (view.conversationKey) view.bridge.request("markRead", { conversation: view.conversationKey }, null)
   }
 
   property real savedY: 0
@@ -222,48 +288,131 @@ Item {
   }
   Timer { id: settle; interval: 120; onTriggered: if (view.stickToBottom && !view.userScrolling) view.scrollToEnd() }
 
+  property bool fetching: false
   property bool reloadPending: false
 
-  // Reloads coalesce: a second request while one is in flight waits for it
-  // instead of killing it (a killed reader hands back an empty result, which
-  // used to blank the thread for a few frames on every send).
-  function reload() {
+  // One history request at a time. A second one asked for while the first is
+  // out waits for it, and a burst of events (a read receipt for every message
+  // in a thread) becomes one request, not one each.
+  function fetch() {
     if (!view.conversationKey) return
-    if (historyProc.running) { view.reloadPending = true; return }
+    if (view.fetching) { view.reloadPending = true; return }
+    var key = view.conversationKey
     view.savedY = list.contentY
-    historyProc.command = [view.cliPath, "history", "--json", "-n", "60", "--", view.conversationKey]
-    historyProc.running = true
+    view.fetching = view.bridge.request("history", { conversation: key, limit: 60 }, function(ok, rows, err) {
+      view.fetching = false
+      if (key === view.conversationKey) {
+        if (ok && Array.isArray(rows)) {
+          view.applyThread(Model.threadRows(rows, 60))
+          var y = view.savedY
+          Qt.callLater(function() {
+            if (view.stickToBottom) view.pinToBottom(); else list.contentY = view.clampY(list, y)
+            view.threadReady = true
+          })
+        } else if (!ok && view.connected) {
+          view.error = Model.singleLine(err, 160)
+        }
+      }
+      if (view.reloadPending) { view.reloadPending = false; view.fetch() }
+    })
   }
+
+  function reload() { coalesce.restart() }
+  Timer { id: coalesce; interval: 40; onTriggered: view.fetch() }
+
+  // The bridge came (back) up while this conversation is on screen.
+  onConnectedChanged: if (view.connected && view.conversationKey) view.reload()
 
   // Service.qml feeds bridge events here; anything about this conversation refreshes the thread.
   function onEvent(name, data) {
     if (!data || data.conversation !== view.conversationKey) return
-    if (name === "typing") { view.typingName = data.typing ? Model.singleLine(data.senderName || "", 40) : ""; return }
-    if (name === "message" || name === "sent" || name === "edited" || name === "deleted" || name === "reaction" || name === "receipt") {
+    if (name === "typing") {
+      view.typingName = data.typing ? Model.singleLine(data.senderName || "", 40) : ""
+      if (view.typingName) typingTimeout.restart()
+      return
+    }
+    if (name === "conversationRemoved") { view.requestClose(); return }
+    // The message someone was typing has arrived: Signal sends no separate "stopped".
+    if (name === "message" && data.outgoing !== true) view.typingName = ""
+    if (name === "message" || name === "sent" || name === "edited" || name === "deleted" || name === "removed"
+        || name === "reaction" || name === "receipt") {
       view.reload()
-      if (name === "message") { markReadProc.command = [view.cliPath, "mark-read", "--", view.conversationKey]; markReadProc.running = true }
+      if (name === "message") view.markRead()
     }
   }
 
+  // Signal clients stop showing "typing" after 15 s without a refresh.
+  Timer { id: typingTimeout; interval: 15000; onTriggered: view.typingName = "" }
+
   function send() {
-    var argv = Model.sendArgvFull(view.conversationKey, composer.text, view.attachments, view.quote)
-    if (!argv || view.sending) return
-    argv[0] = view.cliPath
-    view.sending = true
+    var params = Model.sendParams(view.conversationKey, composer.text, view.attachments, view.quote)
+    if (!params || view.sending) return
     view.error = ""
-    sendProc.command = argv
-    sendProc.running = true
+    view.sending = view.bridge.request("send", params, function(ok, result, err) {
+      view.sending = false
+      if (ok && result && result.status !== "failed") {
+        composer.text = ""
+        delete view.drafts[view.conversationKey]
+        view.quote = null
+        view.attachments = []
+        view.stickToBottom = true
+        view.reload()
+      } else {
+        view.error = ok ? "Signal could not deliver that message" : Model.singleLine(err || "send failed", 160)
+        view.reload()
+      }
+    }, 120000)
+    if (!view.sending) view.error = "the Signal bridge is offline"
+  }
+
+  // Run one action against the bridge; say `done` when it worked, the bridge's reason when not.
+  function act(op, params, done) {
+    view.error = ""
+    view.bridge.request(op, params, function(ok, result, err) {
+      if (ok) { if (done) { view.notice = done; noticeTimer.restart() } }
+      else view.error = Model.singleLine(err || "that did not work", 160)
+      view.reload()
+    }, 70000)
   }
 
   function react(row, emojiText) {
     var author = row.outgoing ? ("number:" + view.account) : row.sender
-    var argv = Model.reactArgv(view.conversationKey, row.ts, author, emojiText)
-    if (!argv) { view.error = "cannot react to that message"; return }
-    argv[0] = view.cliPath
-    actionProc.command = argv
-    actionProc.running = true
+    var params = Model.reactParams(view.conversationKey, row.ts, author, emojiText)
+    if (!params) { view.error = "cannot react to that message"; return }
+    view.act("react", params, "")
     view.emojiRowOpen = false
     view.selectedTs = 0
+  }
+
+  property real confirmDeleteTs: 0       // the message whose Delete was clicked: the row asks before it does anything
+  property bool confirmDeleteChat: false // the same for the whole conversation
+  property bool chatMenuOpen: false      // the header's menu
+
+  // Deleting. "For me" is local and sends nothing: the message stays on your
+  // phone and for whoever sent it. "For everyone" is Signal's remote delete and
+  // only works on your own messages.
+  function deleteMessage(row, everyone) {
+    var req = Model.deleteRequest(view.conversationKey, row.ts, everyone === true, row.outgoing ? "" : row.sender)
+    if (!req) { view.error = "cannot delete that message"; return }
+    view.act(req.op, req.params, everyone ? "deleted for everyone" : "deleted here")
+    view.confirmDeleteTs = 0
+    view.selectedTs = 0
+  }
+
+  // Why this message cannot be deleted for everyone, or "" when it can; the
+  // bridge refuses the same cases (see deleteForEveryoneRefusal in Model.js).
+  function everyoneRefusal(row) {
+    return Model.deleteForEveryoneRefusal(row, Date.now(), view.noteToSelf)
+  }
+
+  function deleteChat() {
+    if (!Model.isConversationKey(view.conversationKey)) return
+    view.confirmDeleteChat = false
+    view.chatMenuOpen = false
+    // The bridge announces the removal as an event, which closes this view.
+    view.bridge.request("deleteConversation", { conversation: view.conversationKey }, function(ok, result, err) {
+      if (!ok) view.error = Model.singleLine(err || "could not delete the conversation", 160)
+    })
   }
 
   // ---- clipboard
@@ -278,28 +427,54 @@ Item {
   }
   Timer { id: noticeTimer; interval: 2500; onTriggered: view.notice = "" }
 
-  // Ctrl+V with a picture (and no text) on the clipboard attaches it; text is
-  // pasted by the field itself.
-  function pasteImage() {
-    if (pasteImageProc.running) return
-    pasteImageProc.command = [view.cliPath, "paste-image"]
-    pasteImageProc.running = true
+  function addAttachments(paths) {
+    var added = []
+    var list = view.attachments.slice()
+    for (var i = 0; i < paths.length; i++) {
+      var p = String(paths[i])
+      if (p.charAt(0) !== "/" || list.indexOf(p) >= 0 || list.length >= 8) continue
+      list.push(p)
+      added.push(p)
+    }
+    if (added.length === 0) return 0
+    view.attachments = list
+    view.notice = added.length === 1 ? "attached " + added[0].split("/").pop() : "attached " + added.length + " files"
+    noticeTimer.restart()
+    return added.length
+  }
+
+  // Ctrl+V. Text is the field's own business. What the field cannot paste is
+  // attached instead: files copied in a file manager, or a picture (a
+  // screenshot, "Copy image" in a browser). Returns true when the paste was
+  // taken over here, so the field does not also paste a file's URL as text.
+  property string pasteFallback: ""
+  function pasteAttachments() {
+    var text = typeof Quickshell.clipboardText === "string" ? Quickshell.clipboardText : null
+    // Ordinary text on the clipboard: nothing to attach, and no process to start.
+    if (text !== null && text.trim().length > 0 && text.trim().indexOf("file://") !== 0) return false
+    if (pasteProc.running) return true
+    view.pasteFallback = text === null ? "" : text
+    pasteProc.command = [view.cliPath, "paste-image"]
+    pasteProc.running = true
+    // Where the clipboard text cannot be read up front, the field pastes as it always did.
+    return text !== null
   }
   Process {
-    id: pasteImageProc
+    id: pasteProc
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         var obj = null
         try { obj = JSON.parse(text) } catch (e) { obj = null }
-        if (!obj || typeof obj.path !== "string" || obj.path.charAt(0) !== "/") return
-        if (view.attachments.indexOf(obj.path) < 0 && view.attachments.length < 8) view.attachments = view.attachments.concat([obj.path])
+        var paths = obj && Array.isArray(obj.paths) ? obj.paths : (obj && typeof obj.path === "string" ? [obj.path] : [])
+        if (view.addAttachments(paths) === 0 && view.pasteFallback.length > 0) composer.insert(composer.cursorPosition, view.pasteFallback)
+        view.pasteFallback = ""
       }
     }
   }
 
   function quoteRow(row) {
-    view.quote = { ts: row.ts, author: row.sender, text: row.body, who: row.who }
+    view.quote = { ts: row.ts, author: row.outgoing ? ("number:" + view.account) : row.sender, text: row.body, who: row.who }
     view.selectedTs = 0
     composer.forceActiveFocus()
   }
@@ -328,6 +503,7 @@ Item {
   readonly property var quickDirs: ["Pictures", "Screenshots", "Downloads", "Documents", "Desktop"]
 
   function pickAttachment() {
+    view.helpOpen = false
     view.pickerOpen = true
     view.pickerFilter = ""
     view.pickerIndex = 0
@@ -344,7 +520,7 @@ Item {
 
   function chooseRow(row) {
     if (row.isDir) { view.listDir(row.path); return }
-    if (view.attachments.indexOf(row.path) < 0 && view.attachments.length < 8) view.attachments = view.attachments.concat([row.path])
+    view.addAttachments([row.path])
     view.pickerOpen = false
     composer.forceActiveFocus()
   }
@@ -370,118 +546,154 @@ Item {
     }
   }
 
-  Process {
-    id: historyProc
-    property string forKey: ""
-    onStarted: forKey = view.conversationKey
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        if (historyProc.forKey !== view.conversationKey) return   // answer for a conversation we left
-        var raw = String(text || "").trim()
-        if (!raw) return                                          // killed or failed read: keep what we show
-        var rows = null
-        try { rows = JSON.parse(raw) } catch (e) { rows = null }
-        if (!Array.isArray(rows)) return
-        view.applyThread(Model.threadRows(rows, 60))
-        var y = view.savedY
-        Qt.callLater(function() { if (view.stickToBottom) view.pinToBottom(); else list.contentY = Math.min(y, Math.max(0, list.contentHeight - list.height)) })
-      }
-    }
-    onExited: if (view.reloadPending) { view.reloadPending = false; view.reload() }
-  }
-  Process { id: markReadProc }
-  Process { id: actionProc; onExited: function(code) { if (code !== 0) view.error = "action failed"; view.reload() } }
-  Process {
-    id: sendProc
-    stderr: StdioCollector { id: sendErr; waitForEnd: true }
-    onExited: function(code) {
-      view.sending = false
-      if (code === 0) { composer.text = ""; view.quote = null; view.attachments = []; view.stickToBottom = true; view.reload() }
-      else view.error = Model.singleLine(sendErr.text || ("send failed (" + code + ")"), 160)
-    }
+  function fileGlyph(kind, isDir) {
+    if (isDir) return "󰉋"
+    return kind === "image" ? "󰋩" : kind === "video" ? "󰕧" : kind === "audio" ? "󰎈" : kind === "doc" ? "󰈙" : "󰈔"
   }
 
   ColumnLayout {
     anchors.fill: parent
     spacing: Style.space(10)
 
-    // Header
+    // Header: who this is, how the channel is doing, and the window's own actions.
     RowLayout {
       Layout.fillWidth: true
-      spacing: Style.space(10)
-      Text { text: "◢"; textFormat: Text.PlainText; color: Color.accent; font.family: Style.font.family; font.pixelSize: Style.font.title }
-      Text {
-        Layout.fillWidth: true
-        text: view.conversationName
-        textFormat: Text.PlainText
-        elide: Text.ElideRight
-        color: Color.popups.text
-        font.family: Style.font.family
-        font.pixelSize: Style.font.title
-        font.bold: true
+      spacing: Style.space(12)
+
+      Avatar {
+        name: view.conversationName
+        size: Style.space(36)
+        foreground: view.fg
       }
-      Text {
-        text: view.connected ? "◉ SECURE CHANNEL" : "◌ OFFLINE"
-        textFormat: Text.PlainText
-        color: view.connected ? Color.accent : Color.urgent
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-        font.letterSpacing: 1.5
+      ColumnLayout {
+        Layout.fillWidth: true
+        spacing: Style.space(1)
+        Text {
+          Layout.fillWidth: true
+          text: view.noteToSelf ? "Note to Self" : view.conversationName
+          textFormat: Text.PlainText
+          elide: Text.ElideRight
+          color: view.fg
+          font.family: Style.font.family
+          font.pixelSize: Style.font.title
+          font.bold: true
+        }
+        Text {
+          Layout.fillWidth: true
+          readonly property bool alarm: !view.connected || !view.linked
+          text: !view.connected ? "Bridge offline" : !view.linked ? "No account linked"
+                : view.typingName.length > 0 ? (view.isGroup ? view.typingName + " is typing…" : "typing…")
+                : "End-to-end encrypted"
+          textFormat: Text.PlainText
+          elide: Text.ElideRight
+          color: alarm ? Commons.Color.urgent : view.typingName.length > 0 ? Commons.Color.accent : view.dim
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          Behavior on color { ColorAnimation { duration: view.ms(120) } }
+        }
+      }
+      Button {
+        iconText: "󰇘"
+        tooltipText: "Conversation"
+        visible: view.conversationKey.length > 0
+        selected: view.chatMenuOpen
+        onClicked: { view.chatMenuOpen = !view.chatMenuOpen; view.confirmDeleteChat = false }
+      }
+      Button { iconText: "󰆍"; tooltipText: "Open in the terminal client"; onClicked: view.requestTerminal() }
+      Button { visible: !view.detached; iconText: "󰏌"; tooltipText: "Move to the chat window"; onClicked: view.requestDetach() }
+      Button { iconText: "󰅖"; tooltipText: view.detached ? "Close this chat" : "Close"; onClicked: view.requestClose() }
+    }
+
+    Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: view.hairline }
+
+    // The conversation's own actions, behind the menu button so none of them is one stray click away.
+    Item {
+      id: chatMenu
+      readonly property real shown: view.chatMenuOpen ? 1 : 0
+      property real reveal: shown
+      Behavior on reveal { NumberAnimation { duration: view.ms(140); easing.type: Easing.OutCubic } }
+      Layout.fillWidth: true
+      Layout.preferredHeight: chatMenuRow.implicitHeight * reveal
+      visible: reveal > 0.01
+      opacity: reveal
+      clip: true
+      RowLayout {
+        id: chatMenuRow
+        width: parent.width
+        spacing: Style.space(8)
+        Button {
+          bordered: true
+          text: "Delete chat on this computer"
+          visible: !view.confirmDeleteChat
+          onClicked: view.confirmDeleteChat = true
+        }
+        Text {
+          visible: view.confirmDeleteChat
+          text: "Delete this chat here? It stays on your phone."
+          textFormat: Text.PlainText
+          color: view.fg
+          font.family: Style.font.family
+          font.pixelSize: Style.font.body
+        }
+        Button { bordered: true; text: "Delete"; foreground: Commons.Color.urgent; visible: view.confirmDeleteChat; onClicked: view.deleteChat() }
+        Button { bordered: true; text: "Cancel"; visible: view.confirmDeleteChat; onClicked: { view.confirmDeleteChat = false; view.chatMenuOpen = false } }
+        Item { Layout.fillWidth: true }
       }
     }
-    Rectangle { Layout.fillWidth: true; height: 1; color: Util.alpha(Color.popups.border, 0.6) }
 
     // Tab strip: every conversation open in this window. Click switches the
-    // content in place; ✕ closes a tab; Ctrl+Tab cycles.
+    // content in place; the close mark closes a tab; Ctrl+Tab cycles.
     Flow {
-      visible: view.detached && Array.isArray(view.siblings) && view.siblings.length > 0
+      visible: view.detached && Array.isArray(view.siblings) && view.siblings.length > 1
       Layout.fillWidth: true
-      spacing: Style.space(6)
+      spacing: Style.space(4)
       Repeater {
         model: view.detached ? view.siblings : []
         delegate: Rectangle {
+          id: tab
           required property var modelData
           readonly property bool current: modelData.key === view.conversationKey
           width: tabRow.implicitWidth + Style.space(20)
           height: tabRow.implicitHeight + Style.space(10)
-          radius: height / 2
-          color: current ? Util.alpha(Color.accent, 0.25) : Util.alpha(Color.popups.text, 0.06)
-          border.width: 1
-          border.color: current ? Color.accent : (modelData.unread ? Util.alpha(Color.accent, 0.8) : Util.alpha(Color.popups.border, 0.5))
+          radius: Style.cornerRadius
+          color: current ? Style.selectedFillFor(view.fg, Commons.Color.accent) : (tabHover.containsMouse ? Style.hoverFillFor(view.fg, Commons.Color.accent) : "transparent")
+          Behavior on color { ColorAnimation { duration: view.ms(120) } }
+          MouseArea { id: tabHover; anchors.fill: parent; hoverEnabled: true; onClicked: if (!tab.current) view.requestRaise(tab.modelData.key) }
           Row {
             id: tabRow
             anchors.centerIn: parent
-            spacing: Style.space(6)
-            Text {
-              text: (modelData.unread ? "● " : "") + Model.singleLine(modelData.name || modelData.key, 28)
-              textFormat: Text.PlainText
-              color: current ? Color.popups.text : (modelData.unread ? Color.accent : Util.alpha(Color.popups.text, 0.8))
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
-              font.bold: modelData.unread === true
-              MouseArea { anchors.fill: parent; onClicked: if (!current) view.requestRaise(modelData.key) }
+            spacing: Style.space(8)
+            Rectangle {
+              visible: tab.modelData.unread === true
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(6); height: width; radius: width / 2
+              color: Commons.Color.accent
             }
             Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: Model.singleLine(tab.modelData.name || tab.modelData.key, 28)
+              textFormat: Text.PlainText
+              color: tab.current ? view.fg : (tab.modelData.unread ? view.fg : view.dim)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+              font.bold: tab.modelData.unread === true
+            }
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
               text: "✕"
               textFormat: Text.PlainText
-              color: Util.alpha(Color.popups.text, 0.5)
+              color: tabClose.containsMouse ? view.fg : view.faint
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
-              MouseArea { anchors.fill: parent; anchors.margins: -Style.space(4); onClicked: view.requestCloseTab(modelData.key) }
+              MouseArea {
+                id: tabClose
+                anchors.fill: parent; anchors.margins: -Style.space(5)
+                hoverEnabled: true
+                onClicked: view.requestCloseTab(tab.modelData.key)
+              }
             }
           }
         }
-      }
-      Text {
-        visible: Array.isArray(view.siblings) && view.siblings.length > 1
-        text: "  Ctrl+Tab cycles"
-        textFormat: Text.PlainText
-        color: Util.alpha(Color.popups.text, 0.4)
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-        height: Style.font.caption + Style.space(10)
-        verticalAlignment: Text.AlignVCenter
       }
     }
 
@@ -491,10 +703,14 @@ Item {
       Layout.fillWidth: true
       Layout.fillHeight: true
       clip: true
-      spacing: Style.space(6)
+      spacing: Style.space(3)
       model: threadModel
       boundsBehavior: Flickable.StopAtBounds
-      cacheBuffer: Style.space(3000)     // keep delegates alive well beyond the viewport
+      cacheBuffer: Style.space(1600)     // keep delegates alive beyond the viewport, so measuring never moves the pin
+      // A conversation fades in once its history is laid out, instead of
+      // flashing the rows into place as they are measured.
+      opacity: view.threadReady ? 1 : 0
+      Behavior on opacity { NumberAnimation { duration: view.ms(140); easing.type: Easing.OutCubic } }
       // Follow the conversation only while the user is at the bottom. The
       // pin is derived from the actual scroll position on every change, so
       // any way of scrolling up (wheel, trackpad, drag, scrollbar) releases
@@ -505,8 +721,15 @@ Item {
       onContentYChanged: if (view.userScrolling && !view.pinning) view.stickToBottom = (contentY >= originY + contentHeight - height - 4)
       onContentHeightChanged: if (view.stickToBottom && !view.userScrolling) view.pinToBottom()
       onCountChanged: if (view.stickToBottom) view.pinToBottom()
+      // The picker and the shortcut list take room from the thread: keep the newest message in view.
+      onHeightChanged: if (view.stickToBottom && !view.userScrolling) view.pinToBottom()
       onDragStarted: view.markUserScrolling()
       onMovementStarted: view.markUserScrolling()
+
+      add: Transition {
+        enabled: view.animateAdds
+        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: view.ms(180); easing.type: Easing.OutCubic }
+      }
 
       // A transparent layer above the delegates owns wheel events, so the
       // Flickable's own wheel animation never fights the position we set.
@@ -516,202 +739,368 @@ Item {
         acceptedButtons: Qt.NoButton      // wheel only; clicks fall through to the messages
         onWheel: function(ev) { view.scrollBy(list, ev) }
       }
+
       delegate: Item {
         id: row
-        required property var modelData
+        required property real ts
+        required property string who
+        required property string sender
+        required property bool outgoing
+        required property string body
+        required property string filesText
+        required property string image
+        required property real imageW
+        required property real imageH
+        required property string status
+        required property bool edited
+        required property bool deleted
+        required property string quote
+        required property string reactions
+        required property string day
+        required property bool newDay
+        required property bool firstOfRun
+        required property string time
+        // What the view's functions take: a plain copy of this row.
+        readonly property var message: ({ ts: row.ts, who: row.who, sender: row.sender, outgoing: row.outgoing,
+                                          body: row.body, deleted: row.deleted })
+        readonly property bool selected: view.selectedTs === row.ts
+
         width: list.width
-        implicitHeight: bubble.implicitHeight + (actions.visible ? actions.implicitHeight + Style.space(4) : 0)
+        implicitHeight: column.implicitHeight
 
-        Rectangle {
-          id: bubble
-          anchors.left: modelData.outgoing ? undefined : parent.left
-          anchors.right: modelData.outgoing ? parent.right : undefined
-          width: Math.min(parent.width * 0.85, Math.max(content.implicitWidth + Style.space(24), Style.space(120)))
-          implicitHeight: content.implicitHeight + Style.space(16)
-          radius: Style.cornerRadius
-          color: modelData.outgoing ? Util.alpha(Color.accent, 0.18) : Util.alpha(Color.popups.text, 0.08)
-          border.width: view.selectedTs === modelData.ts ? 2 : 1
-          border.color: view.selectedTs === modelData.ts ? Color.accent : (modelData.outgoing ? Util.alpha(Color.accent, 0.45) : Util.alpha(Color.popups.border, 0.5))
+        Column {
+          id: column
+          width: parent.width
+          spacing: 0
 
-          MouseArea {
-            anchors.fill: parent
-            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
-            onClicked: function(mouse) {
-              if (mouse.button === Qt.MiddleButton) { view.quoteRow(row.modelData); return }
-              if (mouse.button === Qt.RightButton) {
-                // Right-click on selected text copies it; anywhere else it opens the reaction row.
-                if (bodyText.selectedText.length > 0) { view.copyText(bodyText.selectedText); return }
-                view.selectedTs = row.modelData.ts
-                view.emojiRowOpen = true
-                return
-              }
-              view.emojiRowOpen = false
-              view.selectedTs = view.selectedTs === row.modelData.ts ? 0 : row.modelData.ts
-            }
-          }
-
-          ColumnLayout {
-            id: content
-            anchors.fill: parent
-            anchors.margins: Style.space(8)
-            anchors.leftMargin: Style.space(12)
-            spacing: Style.space(4)
+          // Day separator, drawn above the first message of each day.
+          Item {
+            visible: row.newDay
+            width: parent.width
+            height: visible ? dayText.implicitHeight + Style.space(18) : 0
+            Rectangle { anchors.left: parent.left; anchors.right: dayText.left; anchors.rightMargin: Style.space(10); anchors.verticalCenter: parent.verticalCenter; height: 1; color: view.hairline }
+            Rectangle { anchors.right: parent.right; anchors.left: dayText.right; anchors.leftMargin: Style.space(10); anchors.verticalCenter: parent.verticalCenter; height: 1; color: view.hairline }
             Text {
-              visible: !row.modelData.outgoing
-              text: row.modelData.who
+              id: dayText
+              anchors.centerIn: parent
+              text: Model.dayLabel(row.day)
               textFormat: Text.PlainText
-              color: Color.accent
+              color: view.dim
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
               font.bold: true
             }
-            Text {
-              visible: row.modelData.quote.length > 0
-              Layout.fillWidth: true
-              text: "↩ " + row.modelData.quote
-              textFormat: Text.PlainText
-              elide: Text.ElideRight
-              color: Util.alpha(Color.popups.text, 0.6)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
-              font.italic: true
-            }
-            // Photos are decoded once at thumbnail size and cached, and their
-            // box is sized from Signal's metadata before the decode finishes,
-            // so scrolling never re-decodes or re-lays out the thread.
-            Item {
-              visible: row.modelData.image.length > 0
-              readonly property real boxW: Math.min(Style.space(360), list.width * 0.7)
-              readonly property real ratio: (row.modelData.imageW > 0 && row.modelData.imageH > 0) ? row.modelData.imageH / row.modelData.imageW : 0.66
-              Layout.preferredWidth: boxW
-              Layout.preferredHeight: visible ? Math.min(Style.space(300), boxW * ratio) : 0
-              Image {
-                anchors.fill: parent
-                source: row.modelData.image ? "file://" + row.modelData.image : ""
-                asynchronous: true
-                cache: true
-                smooth: true
-                fillMode: Image.PreserveAspectFit
-                sourceSize.width: 480
-                MouseArea { anchors.fill: parent; onClicked: view.execArgv(["xdg-open", row.modelData.image]) }
-              }
-            }
-            // Selectable: drag to select, Ctrl+C (or Super+C, or a right-click) copies.
-            TextEdit {
-              id: bodyText
-              visible: row.modelData.body.length > 0
-              Layout.fillWidth: true
-              text: row.modelData.body
-              textFormat: TextEdit.PlainText
-              wrapMode: TextEdit.Wrap
-              readOnly: true
-              selectByMouse: true
-              selectByKeyboard: true
-              persistentSelection: true      // survives clicking Copy or moving to the composer
-              color: Color.popups.text
-              selectionColor: Util.alpha(Color.accent, 0.45)
-              selectedTextColor: Color.popups.text
-              font.family: Style.font.family
-              font.pixelSize: Style.font.body
-              readonly property bool ownsSelection: view.selectionTs === row.modelData.ts
-              onOwnsSelectionChanged: if (!ownsSelection) deselect()
-              onSelectedTextChanged: {
-                if (selectedText.length > 0) view.selectionTs = row.modelData.ts
-                else if (ownsSelection) view.selectionTs = 0
-              }
-              // A plain click still opens the message actions; a drag does not.
-              TapHandler {
-                acceptedButtons: Qt.LeftButton
-                onTapped: {
-                  view.emojiRowOpen = false
-                  view.selectedTs = view.selectedTs === row.modelData.ts ? 0 : row.modelData.ts
-                }
-              }
-              Keys.onPressed: function(event) {
-                var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
-                if (event.matches(StandardKey.Copy) || (ctrl && event.key === Qt.Key_Insert)) {
-                  view.copyText(selectedText.length > 0 ? selectedText : row.modelData.body)
-                  event.accepted = true
-                } else if (event.key === Qt.Key_Escape) {
-                  view.handleEscape()
-                  event.accepted = true
-                } else if (event.matches(StandardKey.SelectAll) || event.key === Qt.Key_Shift || event.key === Qt.Key_Control
-                           || event.key === Qt.Key_Alt || event.key === Qt.Key_Meta || event.key === Qt.Key_Super_L) {
-                  // selection keys and lone modifiers stay here
-                } else {
-                  // Anything else is meant for the composer: go back to it and deliver the key.
-                  composer.forceActiveFocus()
-                  if (event.matches(StandardKey.Paste) || (event.key === Qt.Key_Insert && (event.modifiers & Qt.ShiftModifier))) {
-                    composer.paste()
-                    view.pasteImage()
-                  } else if (!ctrl && !(event.modifiers & Qt.AltModifier) && event.text.length > 0 && event.text.charCodeAt(0) >= 32) {
-                    composer.insert(composer.cursorPosition, event.text)
-                  }
-                  event.accepted = true
-                }
-              }
-            }
-            Text {
-              visible: row.modelData.filesText.length > 0 && !row.modelData.image
-              text: "󰁦 " + row.modelData.filesText
-              textFormat: Text.PlainText
-              elide: Text.ElideRight
-              Layout.fillWidth: true
-              color: Util.alpha(Color.popups.text, 0.7)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
-            }
-            RowLayout {
-              Layout.fillWidth: true
-              spacing: Style.space(8)
-              Text {
-                visible: row.modelData.reactions.length > 0
-                text: row.modelData.reactions
-                textFormat: Text.PlainText
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-              }
-              Item { Layout.fillWidth: true }
-              Text {
-                text: Model.relativeTime(row.modelData.ts) + (row.modelData.edited ? " · edited" : "")
-                      + (row.modelData.outgoing ? (row.modelData.status === "read" ? " ✓✓" : row.modelData.status === "delivered" ? " ✓✓" : row.modelData.status === "failed" ? " ✗" : " ✓") : "")
-                textFormat: Text.PlainText
-                color: row.modelData.status === "read" ? Color.accent : Util.alpha(Color.popups.text, 0.5)
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-              }
-            }
           }
-        }
 
-        // Action row under the selected message: reply, react, copy.
-        RowLayout {
-          id: actions
-          visible: view.selectedTs === row.modelData.ts
-          anchors.top: bubble.bottom
-          anchors.topMargin: Style.space(4)
-          anchors.left: row.modelData.outgoing ? undefined : parent.left
-          anchors.right: row.modelData.outgoing ? parent.right : undefined
-          spacing: Style.space(6)
-          Button { text: "↩ Reply"; onClicked: view.quoteRow(row.modelData) }
-          Button { text: "☺ React"; onClicked: view.emojiRowOpen = !view.emojiRowOpen }
-          Repeater {
-            model: view.emojiRowOpen ? view.quickEmojis : []
-            delegate: Button { required property string modelData; text: modelData; onClicked: view.react(row.modelData, modelData) }
+          // A little air between one person's run of messages and the next.
+          Item { width: 1; height: row.firstOfRun && !row.newDay ? Style.space(8) : 0 }
+
+          Item {
+            width: parent.width
+            height: bubble.height
+
+            Rectangle {
+              id: bubble
+              anchors.left: row.outgoing ? undefined : parent.left
+              anchors.right: row.outgoing ? parent.right : undefined
+              width: Math.min(parent.width * 0.8, Math.max(content.implicitWidth + Style.space(24), Style.space(96)))
+              height: content.implicitHeight + Style.space(14)
+              radius: Style.cornerRadius
+              color: row.outgoing ? Util.alpha(Commons.Color.accent, row.selected ? 0.26 : 0.16)
+                                  : Util.alpha(Commons.Color.popups.text, row.selected ? 0.13 : 0.07)
+              border.width: row.selected ? 1 : 0
+              border.color: Util.alpha(Commons.Color.accent, 0.8)
+              Behavior on color { ColorAnimation { duration: view.ms(120) } }
+
+              MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+                onClicked: function(mouse) {
+                  if (mouse.button === Qt.MiddleButton) { view.quoteRow(row.message); return }
+                  if (mouse.button === Qt.RightButton) {
+                    // Right-click on selected text copies it; anywhere else it opens the reaction row.
+                    if (bodyText.selectedText.length > 0) { view.copyText(bodyText.selectedText); return }
+                    view.confirmDeleteTs = 0
+                    view.selectedTs = row.ts
+                    view.emojiRowOpen = true
+                    return
+                  }
+                  view.emojiRowOpen = false
+                  view.confirmDeleteTs = 0
+                  view.selectedTs = row.selected ? 0 : row.ts
+                }
+              }
+
+              ColumnLayout {
+                id: content
+                anchors.fill: parent
+                anchors.topMargin: Style.space(7)
+                anchors.bottomMargin: Style.space(7)
+                anchors.leftMargin: Style.space(12)
+                anchors.rightMargin: Style.space(12)
+                spacing: Style.space(4)
+
+                // In a group, the name once per run; in a 1:1 chat the header already says who.
+                Text {
+                  visible: view.isGroup && !row.outgoing && row.firstOfRun
+                  text: row.who
+                  textFormat: Text.PlainText
+                  color: Commons.Color.accent
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+                // The message this one answers.
+                RowLayout {
+                  visible: row.quote.length > 0
+                  Layout.fillWidth: true
+                  Layout.fillHeight: false
+                  Layout.maximumHeight: implicitHeight
+                  spacing: Style.space(8)
+                  Rectangle { Layout.fillHeight: true; implicitWidth: Math.max(2, Style.space(2)); radius: 1; color: Util.alpha(Commons.Color.accent, 0.7) }
+                  Text {
+                    Layout.fillWidth: true
+                    text: row.quote
+                    textFormat: Text.PlainText
+                    elide: Text.ElideRight
+                    maximumLineCount: 2
+                    wrapMode: Text.Wrap
+                    color: view.dim
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+                // Photos are decoded once at thumbnail size and cached, and their
+                // box is sized from Signal's metadata before the decode finishes,
+                // so scrolling never re-decodes or re-lays out the thread.
+                Item {
+                  visible: row.image.length > 0
+                  readonly property real boxW: Math.min(Style.space(360), list.width * 0.66)
+                  readonly property real ratio: (row.imageW > 0 && row.imageH > 0) ? row.imageH / row.imageW : 0.66
+                  Layout.preferredWidth: boxW
+                  Layout.preferredHeight: visible ? Math.min(Style.space(300), boxW * ratio) : 0
+                  Loader {
+                    anchors.fill: parent
+                    active: row.image.length > 0
+                    sourceComponent: Image {
+                      source: "file://" + row.image
+                      asynchronous: true
+                      cache: true
+                      smooth: true
+                      fillMode: Image.PreserveAspectFit
+                      horizontalAlignment: row.outgoing ? Image.AlignRight : Image.AlignLeft
+                      sourceSize.width: 480
+                      opacity: status === Image.Ready ? 1 : 0
+                      Behavior on opacity { NumberAnimation { duration: view.ms(160) } }
+                      MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: view.execArgv(["xdg-open", row.image]) }
+                    }
+                  }
+                }
+                // Selectable: drag to select, Ctrl+C (or Super+C, or a right-click) copies.
+                TextEdit {
+                  id: bodyText
+                  visible: row.body.length > 0
+                  Layout.fillWidth: true
+                  text: row.body
+                  textFormat: TextEdit.PlainText
+                  wrapMode: TextEdit.Wrap
+                  readOnly: true
+                  selectByMouse: true
+                  selectByKeyboard: true
+                  persistentSelection: true      // survives clicking Copy or moving to the composer
+                  color: row.deleted ? view.dim : view.fg
+                  selectionColor: Style.selectionFillFor(Commons.Color.popups.text, Commons.Color.accent)
+                  selectedTextColor: view.fg
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.body
+                  font.italic: row.deleted
+                  readonly property bool ownsSelection: view.selectionTs === row.ts
+                  onOwnsSelectionChanged: if (!ownsSelection) deselect()
+                  onSelectedTextChanged: {
+                    if (selectedText.length > 0) view.selectionTs = row.ts
+                    else if (ownsSelection) view.selectionTs = 0
+                  }
+                  // A plain click still opens the message actions; a drag does not.
+                  TapHandler {
+                    acceptedButtons: Qt.LeftButton
+                    onTapped: {
+                      view.emojiRowOpen = false
+                      view.confirmDeleteTs = 0
+                      view.selectedTs = row.selected ? 0 : row.ts
+                    }
+                  }
+                  Keys.onPressed: function(event) {
+                    var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
+                    if (event.matches(StandardKey.Copy) || (ctrl && event.key === Qt.Key_Insert)) {
+                      view.copyText(selectedText.length > 0 ? selectedText : row.body)
+                      event.accepted = true
+                    } else if (event.key === Qt.Key_Escape) {
+                      view.handleEscape()
+                      event.accepted = true
+                    } else if (event.matches(StandardKey.SelectAll) || event.key === Qt.Key_Shift || event.key === Qt.Key_Control
+                               || event.key === Qt.Key_Alt || event.key === Qt.Key_Meta || event.key === Qt.Key_Super_L) {
+                      // selection keys and lone modifiers stay here
+                    } else {
+                      // Anything else is meant for the composer: go back to it and deliver the key.
+                      composer.forceActiveFocus()
+                      if (event.matches(StandardKey.Paste) || (event.key === Qt.Key_Insert && (event.modifiers & Qt.ShiftModifier))) {
+                        if (!view.pasteAttachments()) composer.paste()
+                      } else if (!ctrl && !(event.modifiers & Qt.AltModifier) && event.text.length > 0 && event.text.charCodeAt(0) >= 32) {
+                        composer.insert(composer.cursorPosition, event.text)
+                      }
+                      event.accepted = true
+                    }
+                  }
+                }
+                Text {
+                  visible: row.filesText.length > 0 && row.image.length === 0
+                  text: "󰁦 " + row.filesText
+                  textFormat: Text.PlainText
+                  elide: Text.ElideRight
+                  Layout.fillWidth: true
+                  color: view.dim
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                }
+                RowLayout {
+                  Layout.fillWidth: true
+                  spacing: Style.space(8)
+                  Rectangle {
+                    visible: row.reactions.length > 0
+                    implicitWidth: reactionText.implicitWidth + Style.space(12)
+                    implicitHeight: reactionText.implicitHeight + Style.space(4)
+                    radius: Math.min(Style.cornerRadius, height / 2)
+                    color: Util.alpha(Commons.Color.popups.text, 0.08)
+                    Text {
+                      id: reactionText
+                      anchors.centerIn: parent
+                      text: row.reactions
+                      textFormat: Text.PlainText
+                      color: view.fg
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.caption
+                    }
+                  }
+                  Item { Layout.fillWidth: true }
+                  Text {
+                    text: row.time + (row.edited ? " · edited" : "")
+                          + (row.outgoing && !row.deleted ? (row.status === "read" || row.status === "delivered" ? "  ✓✓" : row.status === "failed" ? "  ✗" : "  ✓") : "")
+                    textFormat: Text.PlainText
+                    color: !row.outgoing ? view.faint : row.status === "failed" ? Commons.Color.urgent : row.status === "read" ? Commons.Color.accent : view.faint
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.caption
+                  }
+                }
+              }
+            }
           }
-          Button { text: "Copy"; onClicked: view.copyText(bodyText.selectedText.length > 0 ? bodyText.selectedText : row.modelData.body) }
+
+          // Action row under the selected message: reply, react, copy, delete.
+          // Built only for the selected message, so a thread of sixty rows is
+          // not also sixty rows of buttons.
+          Loader {
+            active: row.selected
+            visible: active
+            anchors.left: row.outgoing ? undefined : parent.left
+            anchors.right: row.outgoing ? parent.right : undefined
+            sourceComponent: Item {
+              id: actionsRoot
+              implicitWidth: actions.implicitWidth
+              implicitHeight: actions.implicitHeight + Style.space(8)
+              opacity: 0
+              Component.onCompleted: opacity = 1
+              Behavior on opacity { NumberAnimation { duration: view.ms(120) } }
+              readonly property bool confirming: view.confirmDeleteTs === row.ts
+              RowLayout {
+                id: actions
+                y: Style.space(4)
+                spacing: Style.space(4)
+                Button { bordered: true; visible: !actionsRoot.confirming; iconText: "󰑚"; text: "Reply"; onClicked: view.quoteRow(row.message) }
+                Button { bordered: true; visible: !actionsRoot.confirming && !row.deleted; text: "React"; selected: view.emojiRowOpen; onClicked: view.emojiRowOpen = !view.emojiRowOpen }
+                Repeater {
+                  model: view.emojiRowOpen && !actionsRoot.confirming ? view.quickEmojis : []
+                  delegate: Button { required property string modelData; text: modelData; onClicked: view.react(row.message, modelData) }
+                }
+                Button {
+                  bordered: true
+                  visible: !actionsRoot.confirming && !row.deleted
+                  iconText: "󰆏"; text: "Copy"
+                  onClicked: view.copyText(bodyText.selectedText.length > 0 ? bodyText.selectedText : row.body)
+                }
+                Button {
+                  bordered: true
+                  visible: !actionsRoot.confirming
+                  iconText: "󰆴"; text: "Delete"
+                  onClicked: { view.confirmDeleteTs = row.ts; view.emojiRowOpen = false }
+                }
+                // Asked before anything is deleted, and says which of the two it is.
+                Text {
+                  visible: actionsRoot.confirming
+                  text: "Delete"
+                  textFormat: Text.PlainText
+                  color: view.dim
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.body
+                }
+                Button { bordered: true; visible: actionsRoot.confirming; text: "for me"; onClicked: view.deleteMessage(row.message, false) }
+                Button {
+                  // Your own messages only; past Signal's one-day window it says so
+                  // rather than disappearing, so "for me" is not the only thing left.
+                  readonly property string refusal: actionsRoot.confirming ? view.everyoneRefusal(row.message) : ""
+                  bordered: true
+                  text: refusal === "" ? "for everyone" : "for everyone: only within 24 h"
+                  enabled: refusal === ""
+                  opacity: enabled ? 1 : 0.5
+                  visible: actionsRoot.confirming && row.outgoing && !row.deleted
+                  onClicked: view.deleteMessage(row.message, true)
+                }
+                Button { bordered: true; visible: actionsRoot.confirming; text: "cancel"; onClicked: view.confirmDeleteTs = 0 }
+              }
+            }
+          }
         }
+      }
+
+      // Nothing here yet.
+      Text {
+        anchors.centerIn: parent
+        visible: view.threadReady && view.rowCount === 0 && view.conversationKey.length > 0
+        text: view.linked ? "No messages here yet" : "Link this computer to see your messages"
+        textFormat: Text.PlainText
+        color: view.dim
+        font.family: Style.font.family
+        font.pixelSize: Style.font.body
+      }
+
+      // Back to the newest message, offered only while scrolled away from it.
+      Button {
+        z: 11
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: Style.space(8)
+        bordered: true
+        background: Util.alpha(Commons.Color.popups.background, 0.96)
+        text: "↓ Latest"
+        opacity: view.stickToBottom || view.rowCount === 0 ? 0 : 1
+        visible: opacity > 0.01
+        Behavior on opacity { NumberAnimation { duration: view.ms(140) } }
+        onClicked: view.pinToBottom()
       }
     }
 
-    // Thumbnail picker, drawn over the thread while open.
+    // Thumbnail picker, taking room from the thread while open.
     Rectangle {
       id: picker
-      visible: view.pickerOpen
+      readonly property real wanted: Math.min(Style.space(420), Math.max(Style.space(220), (view.thumbnails ? grid.contentHeight : plainList.contentHeight) + pickerHead.implicitHeight + Style.space(40)))
+      property real reveal: view.pickerOpen ? 1 : 0
+      Behavior on reveal { NumberAnimation { duration: view.ms(160); easing.type: Easing.OutCubic } }
+      visible: reveal > 0.01
+      opacity: reveal
       Layout.fillWidth: true
-      Layout.preferredHeight: visible ? Math.min(Style.space(420), Math.max(Style.space(220), (view.thumbnails ? grid.contentHeight : plainList.contentHeight) + pickerHead.implicitHeight + Style.space(40))) : 0
-      color: Util.alpha(Color.popups.background, 1.0)
-      border.color: Util.alpha(Color.accent, 0.5)
+      Layout.preferredHeight: wanted * reveal
+      clip: true
+      color: Style.normalFillFor(Commons.Color.popups.text, Commons.Color.accent)
+      border.color: Style.normalBorderFor(Commons.Color.popups.text, Commons.Color.accent)
       border.width: 1
       radius: Style.cornerRadius
 
@@ -723,20 +1112,23 @@ Item {
         RowLayout {
           id: pickerHead
           Layout.fillWidth: true
-          spacing: Style.space(6)
-          Button { text: "↑"; onClicked: if (view.pickerParent) view.listDir(view.pickerParent) }
+          spacing: Style.space(4)
+          Button { bordered: true; iconText: "󰁝"; tooltipText: "Up one folder"; onClicked: if (view.pickerParent) view.listDir(view.pickerParent) }
           Repeater {
             model: view.quickDirs
             delegate: Button {
               required property string modelData
               text: modelData
+              selected: view.pickerDir === view.home + "/" + modelData
               onClicked: view.listDir(view.home + "/" + modelData)
             }
           }
           TextField {
             id: pickerFilterField
             Layout.fillWidth: true
-            placeholderText: "filter " + view.pickerDir.replace(view.home, "~") + "   (arrows move · Enter attaches · Backspace on empty goes up)"
+            foreground: view.fg
+            verticalPadding: Style.space(4)
+            placeholderText: "Filter " + view.pickerDir.replace(view.home, "~")
             onTextChanged: { view.pickerFilter = text; view.pickerIndex = 0 }
             Keys.onEscapePressed: function(e) { view.handleEscape(); e.accepted = true }
             Keys.onReturnPressed: view.pickerChoose()
@@ -751,7 +1143,7 @@ Item {
               else if (e.key === Qt.Key_Backspace && text.length === 0 && view.pickerParent) { view.listDir(view.pickerParent); e.accepted = true }
             }
           }
-          Button { text: "✕"; onClicked: { view.pickerOpen = false; composer.forceActiveFocus() } }
+          Button { iconText: "󰅖"; tooltipText: "Close"; onClicked: { view.pickerOpen = false; composer.forceActiveFocus() } }
         }
 
         // Plain list (setting "Thumbnails when attaching" off)
@@ -770,16 +1162,17 @@ Item {
             required property int index
             width: plainList.width
             implicitHeight: rowText.implicitHeight + Style.space(10)
-            radius: Style.cornerRadius / 2
-            color: (rowHover.containsMouse || index === view.pickerIndex) ? Util.alpha(Color.accent, 0.18) : "transparent"
+            radius: Style.cornerRadius
+            color: index === view.pickerIndex ? Style.selectedFillFor(Commons.Color.popups.text, Commons.Color.accent)
+                   : rowHover.containsMouse ? Style.hoverFillFor(Commons.Color.popups.text, Commons.Color.accent) : "transparent"
             RowLayout {
               anchors.fill: parent
               anchors.margins: Style.space(6)
               spacing: Style.space(8)
               Text {
-                text: modelData.isDir ? "" : (modelData.kind === "image" ? "󰋩" : modelData.kind === "video" ? "󰕧" : modelData.kind === "audio" ? "󰎈" : modelData.kind === "doc" ? "󰈙" : "󰈔")
+                text: view.fileGlyph(modelData.kind, modelData.isDir)
                 textFormat: Text.PlainText
-                color: modelData.isDir ? Color.accent : Util.alpha(Color.popups.text, 0.8)
+                color: modelData.isDir ? Commons.Color.accent : view.dim
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
               }
@@ -789,21 +1182,21 @@ Item {
                 text: modelData.name + (modelData.isDir ? "/" : "")
                 textFormat: Text.PlainText
                 elide: Text.ElideMiddle
-                color: Color.popups.text
+                color: view.fg
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
               }
               Text {
                 text: modelData.isDir ? "" : (modelData.size >= 1048576 ? (modelData.size / 1048576).toFixed(1) + " MB" : modelData.size >= 1024 ? Math.round(modelData.size / 1024) + " KB" : modelData.size + " B")
                 textFormat: Text.PlainText
-                color: Util.alpha(Color.popups.text, 0.5)
+                color: view.dim
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
               }
               Text {
                 text: modelData.mtime ? new Date(modelData.mtime * 1000).toISOString().substring(0, 10) : ""
                 textFormat: Text.PlainText
-                color: Util.alpha(Color.popups.text, 0.5)
+                color: view.dim
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
               }
@@ -820,7 +1213,7 @@ Item {
           clip: true
           cellWidth: Style.space(132)
           cellHeight: Style.space(132)
-          model: view.thumbnails ? view.pickerVisible : []
+          model: view.thumbnails && view.pickerOpen ? view.pickerVisible : []
           boundsBehavior: Flickable.StopAtBounds
           MouseArea { anchors.fill: parent; z: 10; acceptedButtons: Qt.NoButton; onWheel: function(ev) { view.scrollBy(grid, ev) } }
           delegate: Item {
@@ -833,10 +1226,11 @@ Item {
               id: tile
               anchors.fill: parent
               anchors.margins: Style.space(4)
-              radius: Style.cornerRadius / 2
-              color: (tileHover.containsMouse || keyed) ? Util.alpha(Color.accent, 0.18) : Util.alpha(Color.popups.text, 0.05)
-              border.color: (tileHover.containsMouse || keyed) ? Color.accent : Util.alpha(Color.popups.border, 0.4)
-              border.width: keyed ? 2 : 1
+              radius: Style.cornerRadius
+              color: keyed ? Style.selectedFillFor(Commons.Color.popups.text, Commons.Color.accent)
+                     : tileHover.containsMouse ? Style.hoverFillFor(Commons.Color.popups.text, Commons.Color.accent) : "transparent"
+              border.color: Util.alpha(Commons.Color.accent, 0.8)
+              border.width: keyed ? 1 : 0
               ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: Style.space(6)
@@ -857,9 +1251,9 @@ Item {
                   Text {
                     anchors.centerIn: parent
                     visible: modelData.kind !== "image"
-                    text: modelData.isDir ? "" : (modelData.kind === "video" ? "󰕧" : modelData.kind === "audio" ? "󰎈" : modelData.kind === "doc" ? "󰈙" : "󰈔")
+                    text: view.fileGlyph(modelData.kind, modelData.isDir)
                     textFormat: Text.PlainText
-                    color: modelData.isDir ? Color.accent : Util.alpha(Color.popups.text, 0.8)
+                    color: modelData.isDir ? Commons.Color.accent : view.dim
                     font.family: Style.font.family
                     font.pixelSize: Style.font.displayLarge
                   }
@@ -870,7 +1264,7 @@ Item {
                   textFormat: Text.PlainText
                   elide: Text.ElideMiddle
                   horizontalAlignment: Text.AlignHCenter
-                  color: Color.popups.text
+                  color: view.fg
                   font.family: Style.font.family
                   font.pixelSize: Style.font.caption
                 }
@@ -882,31 +1276,96 @@ Item {
       }
     }
 
-    Text {
-      visible: view.typingName.length > 0
-      text: view.typingName + " is typing…"
-      textFormat: Text.PlainText
-      color: Color.accent
-      font.family: Style.font.family
-      font.pixelSize: Style.font.caption
+    // Every shortcut, in three short columns. "?" or Esc closes it.
+    Rectangle {
+      property real reveal: view.helpOpen ? 1 : 0
+      Behavior on reveal { NumberAnimation { duration: view.ms(160); easing.type: Easing.OutCubic } }
+      visible: reveal > 0.01
+      opacity: reveal
+      Layout.fillWidth: true
+      Layout.preferredHeight: (helpGrid.implicitHeight + Style.space(28)) * reveal
+      clip: true
+      color: Style.normalFillFor(Commons.Color.popups.text, Commons.Color.accent)
+      border.color: Style.normalBorderFor(Commons.Color.popups.text, Commons.Color.accent)
+      border.width: 1
+      radius: Style.cornerRadius
+      GridLayout {
+        id: helpGrid
+        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+        anchors.margins: Style.space(14)
+        columns: width > Style.space(560) ? 3 : 1
+        columnSpacing: Style.space(24)
+        rowSpacing: Style.space(14)
+        Repeater {
+          model: view.helpSections
+          delegate: ColumnLayout {
+            required property var modelData
+            Layout.alignment: Qt.AlignTop
+            Layout.fillWidth: true
+            spacing: Style.space(6)
+            Text {
+              text: modelData.title
+              textFormat: Text.PlainText
+              color: view.dim
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+            Repeater {
+              model: modelData.rows
+              delegate: RowLayout {
+                required property var modelData
+                Layout.fillWidth: true
+                spacing: Style.space(8)
+                KeyCap { label: modelData.key; foreground: view.fg }
+                Text {
+                  Layout.fillWidth: true
+                  text: modelData.does
+                  textFormat: Text.PlainText
+                  wrapMode: Text.WordWrap
+                  color: Util.alpha(Commons.Color.popups.text, 0.75)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                }
+              }
+            }
+          }
+        }
+      }
     }
 
     // Quote preview
     RowLayout {
       visible: view.quote !== null
       Layout.fillWidth: true
+      // The bar beside the quote stretches to the row's height; without this
+      // the row itself asks for all the height the thread has.
+      Layout.fillHeight: false
+      Layout.maximumHeight: implicitHeight
       spacing: Style.space(8)
-      Text {
+      Rectangle { Layout.fillHeight: true; implicitWidth: Math.max(2, Style.space(2)); radius: 1; color: Commons.Color.accent }
+      ColumnLayout {
         Layout.fillWidth: true
-        text: view.quote ? "↩ " + view.quote.who + ": " + Model.singleLine(view.quote.text, 120) : ""
-        textFormat: Text.PlainText
-        elide: Text.ElideRight
-        color: Util.alpha(Color.popups.text, 0.7)
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-        font.italic: true
+        spacing: Style.space(1)
+        Text {
+          text: view.quote ? "Replying to " + view.quote.who : ""
+          textFormat: Text.PlainText
+          color: Commons.Color.accent
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+        Text {
+          Layout.fillWidth: true
+          text: view.quote ? Model.singleLine(view.quote.text, 160) : ""
+          textFormat: Text.PlainText
+          elide: Text.ElideRight
+          color: view.dim
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+        }
       }
-      Button { text: "✕"; onClicked: view.quote = null }
+      Button { iconText: "󰅖"; tooltipText: "Do not quote"; onClicked: view.quote = null }
     }
 
     // Attachment chips
@@ -919,41 +1378,42 @@ Item {
         delegate: Rectangle {
           required property string modelData
           required property int index
-          width: chip.implicitWidth + Style.space(16)
+          width: chip.implicitWidth + Style.space(18)
           height: chip.implicitHeight + Style.space(8)
-          radius: height / 2
-          color: Util.alpha(Color.accent, 0.15)
-          border.color: Util.alpha(Color.accent, 0.5)
+          radius: Style.cornerRadius
+          color: chipHover.containsMouse ? Style.hoverFillFor(Commons.Color.popups.text, Commons.Color.accent) : Style.normalFillFor(Commons.Color.popups.text, Commons.Color.accent)
+          border.width: 1
+          border.color: Style.normalBorderFor(Commons.Color.popups.text, Commons.Color.accent)
           Text {
             id: chip
             anchors.centerIn: parent
-            text: "󰁦 " + modelData.split("/").pop() + "  ✕"
+            text: "󰁦 " + Model.singleLine(modelData.split("/").pop(), 40) + "  ✕"
             textFormat: Text.PlainText
-            color: Color.popups.text
+            color: view.fg
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
           }
-          MouseArea { anchors.fill: parent; onClicked: { var a = view.attachments.slice(); a.splice(index, 1); view.attachments = a } }
+          MouseArea { id: chipHover; anchors.fill: parent; hoverEnabled: true; onClicked: { var a = view.attachments.slice(); a.splice(index, 1); view.attachments = a } }
         }
       }
     }
 
-    // Composer: a multi-line box that grows with the message (3 to 10 lines,
+    // Composer: a multi-line box that grows with the message (2 to 10 lines,
     // then scrolls), so a long reply can be read over before it is sent.
     // Enter sends; Shift+Enter or Alt+Enter starts a new line.
     RowLayout {
       Layout.fillWidth: true
-      spacing: Style.space(8)
-      Button { Layout.alignment: Qt.AlignBottom; text: "󰁦"; onClicked: view.pickAttachment() }
+      spacing: Style.space(6)
+      Button { Layout.alignment: Qt.AlignBottom; bordered: true; iconText: "󰁦"; tooltipText: "Attach a file (Ctrl+O)"; onClicked: view.pickerOpen ? (view.pickerOpen = false) : view.pickAttachment() }
       QQC.ScrollView {
         id: composerScroll
         Layout.fillWidth: true
         readonly property real chrome: composer.topPadding + composer.bottomPadding
-        Layout.preferredHeight: Math.min(composerMetrics.lineSpacing * 10, Math.max(composerMetrics.lineSpacing * 3, composer.contentHeight)) + chrome
+        Layout.preferredHeight: Math.min(composerMetrics.lineSpacing * 10, Math.max(composerMetrics.lineSpacing * 2, composer.contentHeight)) + chrome
         QQC.ScrollBar.horizontal.policy: QQC.ScrollBar.AlwaysOff
-        readonly property var borderSpec: Border.controlSpec(composer.activeFocus ? "focus" : (composer.hovered ? "hover-cursor" : "normal"), Color.foreground, Color.accent)
+        readonly property var borderSpec: Border.controlSpec(composer.activeFocus ? "focus" : (composer.hovered ? "hover-cursor" : "normal"), Commons.Color.foreground, Commons.Color.accent)
         background: BorderSurface {
-          color: Style.controlFill(composer.activeFocus, composer.hovered, Color.foreground, Color.accent)
+          color: Style.controlFill(composer.activeFocus, composer.hovered, Commons.Color.foreground, Commons.Color.accent)
           borderSpec: composerScroll.borderSpec
           radius: Style.cornerRadius
         }
@@ -961,18 +1421,19 @@ Item {
 
         QQC.TextArea {
           id: composer
+          objectName: "composer"
           property bool converting: false
           wrapMode: TextEdit.Wrap
           textFormat: TextEdit.PlainText
-          placeholderText: view.linked ? "Message…  (Enter sends · Shift+Enter new line · :smile: works)" : "No account linked: omarchy-signal link"
+          placeholderText: view.linked ? "Message" : "No account linked: omarchy-signal link"
           enabled: !view.sending && view.linked
           background: null
           font.family: Style.font.family
           font.pixelSize: Style.font.body
-          color: Color.foreground
-          selectionColor: Style.selectionFillFor(Color.foreground, Color.accent)
-          selectedTextColor: Color.foreground
-          placeholderTextColor: Qt.darker(Color.foreground, 1.6)
+          color: Commons.Color.foreground
+          selectionColor: Style.selectionFillFor(Commons.Color.foreground, Commons.Color.accent)
+          selectedTextColor: Commons.Color.foreground
+          placeholderTextColor: Qt.darker(Commons.Color.foreground, 1.6)
           leftPadding: Style.spacing.controlPaddingX + Border.left(composerScroll.borderSpec)
           rightPadding: Style.spacing.controlPaddingX + Border.right(composerScroll.borderSpec)
           topPadding: Style.spacing.inputPaddingY + Border.top(composerScroll.borderSpec)
@@ -998,7 +1459,7 @@ Item {
               view.cycleWindow((event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab ? -1 : 1)
               event.accepted = true
             } else if (event.matches(StandardKey.Paste) || (event.key === Qt.Key_Insert && (event.modifiers & Qt.ShiftModifier))) {
-              view.pasteImage()               // not accepted: the box still pastes any text
+              if (view.pasteAttachments()) event.accepted = true   // otherwise not accepted: the box pastes the text
             } else if ((event.key === Qt.Key_O && ctrl)
                        || (event.key === Qt.Key_A && ctrl && (event.modifiers & Qt.ShiftModifier))) {
               view.pickAttachment()
@@ -1007,37 +1468,75 @@ Item {
           }
         }
       }
-      Button { Layout.alignment: Qt.AlignBottom; text: "Send"; enabled: !view.sending && view.linked; onClicked: view.send() }
+      Button {
+        Layout.alignment: Qt.AlignBottom
+        bordered: true
+        iconText: "󰒊"
+        text: "Send"
+        readonly property bool ready: !view.sending && view.linked && (composer.text.trim().length > 0 || view.attachments.length > 0)
+        enabled: ready
+        opacity: ready ? 1 : 0.5
+        foreground: ready ? Commons.Color.accent : Commons.Color.foreground
+        Behavior on opacity { NumberAnimation { duration: view.ms(120) } }
+        onClicked: view.send()
+      }
     }
 
+    // Footer. One quiet line: a status when there is something to say (an error,
+    // "Encrypting…", "copied"), otherwise the handful of keys worth remembering,
+    // drawn as keycaps. Everything else lives behind "?".
     RowLayout {
       Layout.fillWidth: true
       spacing: Style.space(8)
+      readonly property bool hasStatus: view.error.length > 0 || view.sending || view.notice.length > 0
       Text {
-        objectName: "legendText"
-        // The legend used to elide on one line, so the only way to read the end
-        // of it was to widen the window. It wraps instead.
-        //
-        // preferredWidth 0 is what makes that work inside a RowLayout: an
-        // unwrapped Text reports its full single-line width as implicitWidth,
-        // the layout honours that as the preferred size, and the row then never
-        // asks the text to be narrower than one line -- so it elides again. With
-        // a preferred width of zero and fillWidth, the buttons take what they
-        // need and the legend wraps into whatever is left.
+        objectName: "statusText"
+        visible: parent.hasStatus
         Layout.fillWidth: true
         Layout.preferredWidth: 0
-        Layout.alignment: Qt.AlignBottom
-        text: view.error ? view.error : (view.sending ? "Encrypting…" : view.notice ? view.notice
-              : "click a message: Reply · React · Copy  ·  select text, Ctrl+C or right-click copies  ·  right-click: react  ·  middle-click: reply  ·  Shift+Enter new line  ·  Ctrl+V pastes (pictures too)  ·  Ctrl+O attach  ·  Esc closes")
+        Layout.alignment: Qt.AlignVCenter
+        text: view.error ? view.error : (view.sending ? "Encrypting…" : view.notice)
         textFormat: Text.PlainText
         wrapMode: Text.WordWrap
-        color: view.error ? Color.urgent : Util.alpha(Color.popups.text, 0.5)
+        color: view.error ? Commons.Color.urgent : Commons.Color.accent
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
       }
-      // Bottom-aligned so they stay on the legend's last line as it grows.
-      Button { Layout.alignment: Qt.AlignBottom; visible: !view.detached; text: "Detach ⧉"; onClicked: view.requestDetach() }
-      Button { Layout.alignment: Qt.AlignBottom; text: "Terminal"; onClicked: view.requestTerminal() }
+      // The legend wraps instead of eliding, so its end can be read without
+      // widening the window. preferredWidth 0 is what makes that work inside a
+      // RowLayout: the row then never reserves the legend's full single-line
+      // width, the button takes what it needs and the keycaps wrap into the rest.
+      Flow {
+        objectName: "legendFlow"
+        visible: !parent.hasStatus
+        Layout.fillWidth: true
+        Layout.preferredWidth: 0
+        Layout.alignment: Qt.AlignVCenter
+        spacing: Style.space(12)
+        Repeater {
+          model: view.legendKeys
+          delegate: Row {
+            required property var modelData
+            spacing: Style.space(6)
+            KeyCap { label: modelData.key; foreground: view.fg }
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: modelData.does
+              textFormat: Text.PlainText
+              color: view.dim
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+          }
+        }
+      }
+      Button {
+        Layout.alignment: Qt.AlignBottom
+        text: "?"
+        tooltipText: "Every shortcut"
+        selected: view.helpOpen
+        onClicked: { view.helpOpen = !view.helpOpen; view.pickerOpen = false }
+      }
     }
   }
 }

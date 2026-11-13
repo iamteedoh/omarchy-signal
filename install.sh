@@ -1,14 +1,19 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Install omarchy-signal on this machine.
+# Set up omarchy-signal on this machine.
 #
-#   ./install.sh            # copy the plugin into ~/.config/omarchy/plugins, link the CLI, enable the service
+# The usual way in is Omarchy's own:  omarchy plugin add https://github.com/iamteedoh/omarchy-signal --enable
+# The shell then offers to run this script from the plugin folder, where it
+# finishes the job in place: the command, the bridge service, the keybindings.
+#
+#   ./install.sh            # from the plugin folder: set up in place. From another checkout: copy it in first
 #   ./install.sh --link     # developer mode: symlink the plugin dir to this checkout (every save reloads ALL
 #                           # user plugins in the shell; see docs/STATUS.md before using it)
 #   ./install.sh --no-bind  # skip the SUPER+SHIFT+G keybinding
 #   ./install.sh --no-menu  # skip the Omarchy menu entry
+#   ./install.sh --update   # what `omarchy-signal update` runs: the same steps, without the questions at the end
 #
-# Everything it touches is under $HOME. Re-running is safe.
+# Everything it touches is under $HOME. Re-running is safe. Update later with: omarchy-signal update
 
 set -euo pipefail
 
@@ -27,13 +32,14 @@ CONFIG_DIR="$HOME/.config/omarchy-signal"
 # step by hand. See lib/omarchy_signal/confedit.py.
 confedit() { PYTHONPATH="$HERE/lib" python3 -m omarchy_signal.confedit "$@"; }
 
-LINK_MODE=0; DO_BIND=1; DO_MENU=1
+LINK_MODE=0; DO_BIND=1; DO_MENU=1; UPDATE_MODE=0
 for arg in "$@"; do
   case "$arg" in
     --link) LINK_MODE=1 ;;
     --no-bind) DO_BIND=0 ;;
     --no-menu) DO_MENU=0 ;;
-    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    --update) UPDATE_MODE=1 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -107,8 +113,17 @@ command -v magick >/dev/null || command -v convert >/dev/null || missing+=(image
 command -v wl-copy >/dev/null && command -v wl-paste >/dev/null || missing+=(wl-clipboard)
 if ((${#missing[@]})); then
   # Not behind the spinner: the package manager may ask for a password.
+  # Only through Omarchy's own package command. This script never calls sudo
+  # or a package manager itself: without that command it says what is missing
+  # and stops, rather than reach for root on a system it does not recognise.
+  if ! command -v omarchy-pkg-add >/dev/null; then
+    warn "Missing packages: ${missing[*]}"
+    echo "  Install them, then run this script again:"
+    echo "    omarchy pkg add ${missing[*]}"
+    exit 1
+  fi
   note "Installing packages: ${missing[*]} (the package manager shows its own progress)"
-  if command -v omarchy-pkg-add >/dev/null; then omarchy-pkg-add "${missing[@]}"; else sudo pacman -S --needed --noconfirm "${missing[@]}"; fi
+  omarchy-pkg-add "${missing[@]}"
   say "Packages installed: ${missing[*]}"
 else
   say "python3, qrencode, ImageMagick and wl-clipboard are present"
@@ -121,18 +136,10 @@ else
   echo "    omarchy pkg aur add signal-cli-native-bin   # prebuilt native binary, fastest to install"
   echo "    omarchy pkg aur add signal-cli              # Java build (needs a JRE)"
   echo "  The native build is a ~340 MB download and usually takes a few minutes."
-  install_signal_cli() {
-    # omarchy-pkg-aur-add wraps `yay -S --noconfirm --needed` and re-checks with
-    # pacman afterwards, because yay can exit 0 having installed nothing. Going
-    # through it also spares the user yay's cleanBuild / diff / PGP-import /
-    # proceed prompts, which have nothing to do with this plugin.
-    if command -v omarchy-pkg-aur-add >/dev/null; then
-      omarchy-pkg-aur-add signal-cli-native-bin
-    else
-      yay -S --noconfirm --needed signal-cli-native-bin
-    fi
-  }
-  if [[ -t 0 && -t 1 ]] && { command -v omarchy-pkg-aur-add >/dev/null || command -v yay >/dev/null; }; then
+  # Through Omarchy's AUR command only, and only after a yes: it re-checks with
+  # pacman afterwards, because an AUR helper can exit 0 having installed nothing.
+  install_signal_cli() { omarchy-pkg-aur-add signal-cli-native-bin; }
+  if [[ -t 0 && -t 1 ]] && command -v omarchy-pkg-aur-add >/dev/null; then
     read -r -p "  Install signal-cli-native-bin now? [y/N] " ans
     if [[ ${ans,,} == y ]]; then
       install_signal_cli || warn "The package manager reported a failure."
@@ -152,7 +159,7 @@ else
   else
     # No TTY (or no AUR helper): say so plainly instead of continuing as though
     # the requirement were met.
-    warn "Cannot install it here (no terminal to ask in, or no AUR helper)."
+    warn "Cannot install it here (no terminal to ask in, or no omarchy-pkg-aur-add)."
     echo "  Install it, then run this script again:"
     echo "    omarchy pkg aur add signal-cli-native-bin"
     exit 1
@@ -186,10 +193,17 @@ else
   mkdir -p "$PLUGIN_DIR"
   # Everything the shell, the CLI and a later ./install.sh or ./uninstall.sh from
   # inside the plugin folder need; no tests, no .git.
-  cp -a "$HERE"/manifest.json "$HERE"/*.qml "$HERE"/*.js "$HERE/bin" "$HERE/lib" "$HERE/scripts" "$HERE/systemd" "$HERE/docs" \
+  cp -a "$HERE"/manifest.json "$HERE"/*.qml "$HERE"/*.js "$HERE/bin" "$HERE/lib" "$HERE/scripts" "$HERE/systemd" "$HERE/config" "$HERE/docs" \
         "$HERE/install.sh" "$HERE/uninstall.sh" "$HERE/README.md" "$HERE/SECURITY.md" "$HERE/LICENSE" "$PLUGIN_DIR/"
   find "$PLUGIN_DIR" -name __pycache__ -type d -prune -exec rm -rf {} +
   say "Installed plugin to $PLUGIN_DIR"
+  # A copy has no .git, so remember where it came from: `omarchy-signal update`
+  # then fetches releases from the same remote (a fork stays on the fork).
+  origin=$(git -C "$HERE" remote get-url origin 2>/dev/null || true)
+  if [[ -n $origin ]]; then
+    ORIGIN="$origin" python3 -c 'import json, os; print(json.dumps({"origin": os.environ["ORIGIN"]}))' \
+      >"$HOME/.local/state/omarchy-signal/install.json" || true
+  fi
 fi
 if command -v omarchy-plugin-validate >/dev/null; then
   run "Validating the plugin manifest" omarchy-plugin-validate "$HERE" || { warn "plugin validation failed"; exit 1; }
@@ -231,38 +245,8 @@ step "Keybindings"
 if (( DO_BIND )); then
   # The block is rewritten on every install, so an update also updates the
   # bindings. Everything between the markers belongs to this plugin.
-  body=$(cat <<'LUA'
--- SUPER+SHIFT+G is Omarchy's Signal key; point it at the terminal client.
-hl.unbind("SUPER + SHIFT + G")
-o.bind("SUPER + SHIFT + G", "Signal", "omarchy-signal open")
--- New conversation from anywhere: the bar widget's searchable contact list.
-o.bind("SUPER + CTRL + G", "Signal: new conversation", "omarchy-shell iamteedoh.signal.bar toggle")
--- Detached conversation windows float themselves (720x640, centred) when they
--- open; SUPER+ALT+S moves one to the scratchpad, SUPER+S brings it back.
--- The popup conversation and the linking QR code are layer surfaces, not
--- windows, so SUPER+W closes them itself while one is on screen, and closes
--- the active window as usual otherwise.
-local signal_layers = { ["omarchy-signal-reply"] = { open = 0, ipc = "close" }, ["omarchy-signal-qr"] = { open = 0, ipc = "hideQr" } }
-hl.on("layer.opened", function(layer)
-  local l = signal_layers[layer.namespace]
-  if l then l.open = l.open + 1 end
-end)
-hl.on("layer.closed", function(layer)
-  local l = signal_layers[layer.namespace]
-  if l and l.open > 0 then l.open = l.open - 1 end
-end)
-hl.unbind("SUPER + W")
-o.bind("SUPER + W", "Close window", function()
-  for _, l in pairs(signal_layers) do
-    if l.open > 0 then
-      hl.dispatch(hl.dsp.exec_cmd("omarchy-shell iamteedoh.signal " .. l.ipc))
-      return
-    end
-  end
-  hl.dispatch(hl.dsp.window.close())
-end)
-LUA
-)
+  # The file's own header ends at its first blank line; the rest is the block.
+  body=$(sed '1,/^$/d' "$HERE/config/bindings.lua")
   mkdir -p "$(dirname "$BINDINGS")"
   touch "$BINDINGS"
   # An unbalanced marker pair means the file is in a shape this plugin did not
@@ -341,25 +325,52 @@ cat <<DONE
   1. Link this computer to your Signal account:   omarchy-signal link
   2. Open the client:                             omarchy-signal tui   (or SUPER+SHIFT+G)
   3. Check everything:                            omarchy-signal doctor
+  Update later with:                              omarchy-signal update
 
 Config: $CONFIG_DIR/config.toml   Logs: journalctl --user -u omarchy-signal
 DONE
 
 # Offer the remaining step here rather than leaving it as homework: the QR code
 # appears in this same window, which is already open and already trusted.
-if [[ -t 0 && -t 1 ]] && command -v omarchy-signal >/dev/null; then
-  # Anchored and case-sensitive on purpose: the unlinked line reads
-  # "account     : NOT LINKED, run `omarchy-signal link`", which a loose
-  # match for "linked" would read as success.
-  if omarchy-signal status 2>/dev/null | grep -qE '^account[[:space:]]*:[[:space:]]*linked[[:space:]]*$'; then
-    say "This computer is already linked"
-  else
-    printf '\n'
-    read -r -p "  Link this computer to your Signal account now? [Y/n] " link_ans
-    if [[ -z $link_ans || ${link_ans,,} == y ]]; then
-      omarchy-signal link || warn "Linking did not complete; run it again with: omarchy-signal link"
-    else
-      note "Link later with: omarchy-signal link"
+#
+# The service was restarted a moment ago, and for the first second or so the
+# bridge answers "not linked" simply because signal-cli has not connected and
+# read the account yet. Asking then would offer to link a computer that is
+# already linked, so the answer is only believed once signal-cli is up: linked,
+# unlinked, or (if it never comes up) neither, and then nothing is offered.
+link_state() {          # linked | unlinked | unknown
+  local deadline=$((SECONDS + 20)) json
+  while (( SECONDS < deadline )); do
+    json=$("$BIN_DIR/omarchy-signal" status --json 2>/dev/null) || json=""
+    if [[ -n $json ]]; then
+      case "$(printf '%s' "$json" | python3 -c 'import json,sys
+try:
+    s = json.load(sys.stdin)
+except ValueError:
+    print("unknown"); raise SystemExit
+print("linked" if s.get("linked") else ("unlinked" if s.get("accountsKnown") else "unknown"))' 2>/dev/null)" in
+        linked) echo linked; return ;;
+        unlinked) echo unlinked; return ;;
+      esac
     fi
-  fi
+    sleep 1
+  done
+  echo unknown
+}
+if (( ! UPDATE_MODE )) && [[ -t 0 && -t 1 ]] && [[ -x $BIN_DIR/omarchy-signal ]] \
+   && systemctl --user is-active --quiet omarchy-signal.service; then
+  case "$(link_state)" in
+    linked)
+      say "This computer is already linked" ;;
+    unlinked)
+      printf '\n'
+      read -r -p "  Link this computer to your Signal account now? [Y/n] " link_ans
+      if [[ -z $link_ans || ${link_ans,,} == y ]]; then
+        "$BIN_DIR/omarchy-signal" link || warn "Linking did not complete; run it again with: omarchy-signal link"
+      else
+        note "Link later with: omarchy-signal link"
+      fi ;;
+    *)
+      note "signal-cli has not said which accounts exist yet, so whether this computer is linked is unknown; check with: omarchy-signal doctor" ;;
+  esac
 fi

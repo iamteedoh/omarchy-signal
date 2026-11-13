@@ -426,8 +426,16 @@ class Terminal:
     def fg(rgb) -> str:
         return f"{CSI}38;2;{rgb[0]};{rgb[1]};{rgb[2]}m"
 
+    # The colour that means "the terminal's own background". It is never painted:
+    # a terminal with background opacity (or a background image) draws its default
+    # background differently from the same colour set explicitly, so painting it
+    # leaves patches. None = unknown, paint everything (the behaviour before 0.5).
+    base_bg = None
+
     @staticmethod
     def bg(rgb) -> str:
+        if Terminal.base_bg is not None and tuple(rgb) == tuple(Terminal.base_bg):
+            return f"{CSI}49m"
         return f"{CSI}48;2;{rgb[0]};{rgb[1]};{rgb[2]}m"
 
     RESET = CSI + "0m"
@@ -449,3 +457,50 @@ class Terminal:
     @staticmethod
     def on_resize(callback) -> None:
         signal.signal(signal.SIGWINCH, lambda *_: callback())
+
+
+def parse_osc_color(reply: bytes) -> tuple[int, int, int] | None:
+    """``ESC ] 11 ; rgb:RRRR/GGGG/BBBB`` (1 to 4 hex digits per channel) -> 8-bit RGB."""
+    import re
+    m = re.search(rb"\x1b\]11;rgba?:([0-9a-fA-F]{1,4})/([0-9a-fA-F]{1,4})/([0-9a-fA-F]{1,4})", reply)
+    if not m:
+        return None
+    return tuple(int(int(h, 16) * 255 / (16 ** len(h) - 1) + 0.5) for h in (g.decode() for g in m.groups()))  # type: ignore[return-value]
+
+
+def query_background(timeout: float = 0.3) -> tuple[int, int, int] | None:
+    """Ask the terminal for its background colour (OSC 11). The query is followed
+    by a DA1 request, which every terminal answers, so a terminal that ignores
+    OSC 11 costs one round trip instead of the whole timeout. Call before raw
+    mode is entered; returns None when there is no tty or no answer."""
+    import select
+    import sys
+    import termios
+    import time
+    if os.environ.get("OMARCHY_SIGNAL_TERM_BG") == "off" or not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return None
+    fd = sys.stdin.fileno()
+    try:
+        old = termios.tcgetattr(fd)
+    except termios.error:
+        return None
+    new = termios.tcgetattr(fd)
+    new[3] &= ~(termios.ECHO | termios.ICANON)
+    buf = b""
+    try:
+        termios.tcsetattr(fd, termios.TCSANOW, new)
+        sys.stdout.write("\x1b]11;?\x1b\\\x1b[c")
+        sys.stdout.flush()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline and len(buf) < 4096:
+            ready, _, _ = select.select([fd], [], [], max(0.0, deadline - time.monotonic()))
+            if not ready:
+                break
+            buf += os.read(fd, 4096)
+            if b"\x1b[?" in buf and buf.endswith(b"c"):
+                break
+    except OSError:
+        return None
+    finally:
+        termios.tcsetattr(fd, termios.TCSANOW, old)
+    return parse_osc_color(buf)

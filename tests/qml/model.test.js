@@ -71,15 +71,96 @@ test("relativeTime", () => {
   assert.equal(M.relativeTime(0, now), "")
 })
 
-test("argv builders never produce shell strings and validate keys", () => {
+test("tuiArgv never produces a shell string and validates keys", () => {
   assert.deepEqual(M.tuiArgv("number:+15550002222"), ["omarchy-signal", "open", "number:+15550002222"])
   assert.deepEqual(M.tuiArgv("number:+1; rm -rf ~"), ["omarchy-signal", "open"])
   assert.deepEqual(M.tuiArgv("$(evil)"), M.tuiArgv(""))
-  assert.deepEqual(M.sendArgv("group:Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYg==", "-m looks like a flag"),
-    ["omarchy-signal", "send", "--json", "--message=-m looks like a flag", "--", "group:Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYg=="])
-  assert.equal(M.sendArgv("number:+1", "   "), null)
-  assert.equal(M.sendArgv("bad key", "hi"), null)
-  assert.equal(M.sendArgv("number:+1", "hi\x00there")[3], "--message=hithere")
+})
+
+test("requestLine writes one JSON line and cannot be steered by its parameters", () => {
+  assert.equal(M.requestLine(7, "history", { conversation: "number:+1", limit: 60 }),
+    '{"conversation":"number:+1","limit":60,"id":7,"op":"history"}\n')
+  // A parameter may not replace the id or the op, whatever a caller passes in.
+  assert.deepEqual(JSON.parse(M.requestLine(7, "markRead", { id: 99, op: "shutdown", conversation: "number:+1" })),
+    { conversation: "number:+1", id: 7, op: "markRead" })
+  // Text with newlines stays one line: the bridge reads a request per line.
+  const line = M.requestLine(1, "send", { text: "a\nb\r\n{\"op\":\"shutdown\"}" })
+  assert.equal(line.split("\n").length, 2)
+  assert.equal(line.endsWith("\n"), true)
+  for (const op of ["", "shut down", "a;b", "x".repeat(40), null, 5]) assert.equal(M.requestLine(1, op, {}), null)
+  for (const id of [0, -1, NaN, "1", null]) assert.equal(M.requestLine(id, "status", {}), null)
+  assert.equal(M.requestLine(1, "status"), '{"id":1,"op":"status"}\n')
+})
+
+test("parseBridgeLine tells events from replies and rejects the rest", () => {
+  assert.deepEqual(M.parseBridgeLine('{"event":"unread","data":{"total":3}}'), { kind: "event", name: "unread", data: { total: 3 } })
+  assert.deepEqual(M.parseBridgeLine('{"event":"x","data":[1]}'), { kind: "event", name: "x", data: {} })
+  assert.deepEqual(M.parseBridgeLine('{"event":"x"}'), { kind: "event", name: "x", data: {} })
+  assert.deepEqual(M.parseBridgeLine('{"id":4,"ok":true,"result":[1,2]}'),
+    { kind: "reply", id: 4, ok: true, result: [1, 2], error: "", code: "" })
+  assert.deepEqual(M.parseBridgeLine('{"id":4,"ok":false,"error":"no\\u001b[31m such\\nmessage","code":"invalid"}'),
+    { kind: "reply", id: 4, ok: false, result: undefined, error: "no[31m such message", code: "invalid" })
+  for (const junk of ["", "not json", "[1]", "42", '"str"', "null", '{"id":"4","ok":true}', '{"id":4}', '{"ok":true}', '{"event":5}'])
+    assert.equal(M.parseBridgeLine(junk), null, junk)
+})
+
+test("sendParams carries attachments and quotes safely", () => {
+  assert.deepEqual(M.sendParams("number:+1", "hi", ["/home/u/a.png", "relative.png", 5], { ts: 12, author: "number:+2", text: "q\nx" }),
+    { conversation: "number:+1", text: "hi", attachments: ["/home/u/a.png"], quoteTs: 12, quoteAuthor: "number:+2", quoteText: "q x" })
+  assert.equal(M.sendParams("number:+1", "  ", []), null)
+  assert.deepEqual(M.sendParams("number:+1", "", ["/x/y.jpg"]), { conversation: "number:+1", text: "", attachments: ["/x/y.jpg"] })
+  assert.equal(M.sendParams("bad key", "hi", []), null)
+  assert.equal(M.sendParams("number:+1", "hi\x00there", []).text, "hithere")
+  assert.equal("quoteTs" in M.sendParams("number:+1", "hi", [], { ts: 0, author: "number:+2" }), false)
+  assert.equal("quoteTs" in M.sendParams("number:+1", "hi", [], { ts: 5, author: "not a key" }), false)
+  assert.equal(M.sendParams("number:+1", "", Array.from({ length: 20 }, (_, i) => "/f/" + i)).attachments.length, 8)
+})
+
+test("reactParams and deleteRequest validate what they are given", () => {
+  assert.deepEqual(M.reactParams("number:+1", 5, "number:+2", "🔥"),
+    { conversation: "number:+1", ts: 5, author: "number:+2", emoji: "🔥", remove: false })
+  assert.equal(M.reactParams("number:+1", 5, "number:+2", "🔥", true).remove, true)
+  assert.equal(M.reactParams("number:+1", 0, "number:+2", "🔥"), null)
+  assert.equal(M.reactParams("number:+1", 5, "x", "🔥"), null)
+  assert.equal(M.reactParams("number:+1", 5, "number:+2", "\x1b"), null)
+
+  assert.deepEqual(M.deleteRequest("number:+1", 5, false, "number:+2"),
+    { op: "deleteLocal", params: { conversation: "number:+1", ts: 5, sender: "number:+2" } })
+  assert.deepEqual(M.deleteRequest("number:+1", 5, false, ""), { op: "deleteLocal", params: { conversation: "number:+1", ts: 5 } })
+  assert.deepEqual(M.deleteRequest("number:+1", 5, false, "$(id)"), { op: "deleteLocal", params: { conversation: "number:+1", ts: 5 } })
+  assert.deepEqual(M.deleteRequest("number:+1", 5, true, "number:+2"), { op: "delete", params: { conversation: "number:+1", ts: 5 } })
+  assert.equal(M.deleteRequest("bad key", 5, false), null)
+  assert.equal(M.deleteRequest("number:+1", 0, true), null)
+  assert.equal(M.deleteRequest("number:+1", "5", true), null)
+})
+
+test("what the views draw: initials, days, clock time, reactions, versions", () => {
+  assert.equal(M.initial("trinity"), "T")
+  assert.equal(M.initial("  +15550002222"), "1")
+  assert.equal(M.initial("🐇 Rabbit"), "🐇")
+  assert.equal(M.initial(""), "#")
+  assert.equal(M.initial("\x1b\u202e"), "#")
+
+  const noon = new Date(2026, 10, 12, 12, 0, 0).getTime()
+  assert.equal(M.dayKey(noon), "2026-11-12")
+  assert.equal(M.dayKey(0), "")
+  assert.equal(M.dayLabel("2026-11-12", noon), "Today")
+  assert.equal(M.dayLabel("2026-11-11", noon), "Yesterday")
+  assert.equal(M.dayLabel("2026-11-09", noon), "Monday")
+  assert.equal(M.dayLabel("2026-11-05", noon), "2026-11-05")       // a week or more: the date
+  assert.equal(M.dayLabel("2026-11-20", noon), "2026-11-20")       // a clock set wrong: never "in the future" words
+  assert.equal(M.dayLabel("", noon), "")
+  assert.equal(M.clockTime(new Date(2026, 10, 12, 9, 5).getTime()), "09:05")
+  assert.equal(M.clockTime(0), "")
+
+  assert.equal(M.reactionSummary({ a: "👍", b: "👍", c: "❤️" }), "👍 2  ❤️")
+  assert.equal(M.reactionSummary({ a: "\x1b" }), "")
+  assert.equal(M.reactionSummary(null), "")
+
+  assert.equal(M.versionNewer("0.10.0", "0.9.9"), true)
+  assert.equal(M.versionNewer("0.5.0", "0.5.0"), false)
+  assert.equal(M.versionNewer("0.4.9", "0.5.0"), false)
+  for (const junk of ["", "1.2", "v1.2.3", "1.2.3; rm", null]) assert.equal(M.versionNewer(junk, "0.0.1"), false)
 })
 
 test("parseDnd reads Omarchy's state file", () => {
@@ -90,32 +171,27 @@ test("parseDnd reads Omarchy's state file", () => {
   assert.equal(M.parseDnd('{"dnd":"true"}'), false)
 })
 
-test("sendArgvFull carries attachments and quotes safely", () => {
-  const a = M.sendArgvFull("number:+1", "hi", ["/home/u/a.png", "relative.png", 5], { ts: 12, author: "number:+2", text: "q\nx" })
-  assert.deepEqual(a, ["omarchy-signal", "send", "--json", "--message=hi", "-a", "/home/u/a.png",
-    "--quote-ts", "12", "--quote-author", "number:+2", "--quote-text", "q x", "--", "number:+1"])
-  assert.equal(M.sendArgvFull("number:+1", "  ", []), null)
-  assert.deepEqual(M.sendArgvFull("number:+1", "", ["/x/y.jpg"]).slice(3, 6), ["--message=", "-a", "/x/y.jpg"])
-  assert.equal(M.sendArgvFull("bad", "hi", []), null)
-  assert.deepEqual(M.sendArgvFull("number:+1", "hi", [], { ts: 0, author: "number:+2" }).length, 6)
-})
-
-test("reactArgv", () => {
-  assert.deepEqual(M.reactArgv("number:+1", 5, "number:+2", "🔥"), ["omarchy-signal", "react", "--", "number:+1", "5", "number:+2", "🔥"])
-  assert.deepEqual(M.reactArgv("number:+1", 5, "number:+2", "🔥", true)[2], "--remove")
-  assert.equal(M.reactArgv("number:+1", 0, "number:+2", "🔥"), null)
-  assert.equal(M.reactArgv("number:+1", 5, "x", "🔥"), null)
-  assert.equal(M.reactArgv("number:+1", 5, "number:+2", "\x1b"), null)
-})
-
 test("threadRows normalises history rows", () => {
+  const day1 = new Date(2026, 10, 11, 23, 50).getTime(), day2 = new Date(2026, 10, 12, 0, 10).getTime()
   const rows = M.threadRows([
-    { ts: 1, senderName: "Trin\x1bity", sender: "number:+2", body: "hi", attachments: [{ filename: "a.png", contentType: "image/png", path: "/p/a.png" }], reactions: { "number:+1": "👍" } },
-    { ts: 2, outgoing: true, body: "x", deleted: true, status: "read", edited: true, quoteText: "hi" },
+    { ts: day1, senderName: "Trin\x1bity", sender: "number:+2", body: "hi", attachments: [{ filename: "a.png", contentType: "image/png", path: "/p/a.png", width: 640, height: 400 }], reactions: { "number:+1": "👍" } },
+    { ts: day1 + 1000, senderName: "Trinity", sender: "number:+2", body: "again" },
+    { ts: day2, senderName: "Trinity", sender: "number:+2", body: "next day", attachments: [{ filename: "x.png", contentType: "image/png", path: "relative.png" }] },
+    { ts: day2 + 1000, outgoing: true, body: "x", deleted: true, status: "read", edited: true, quoteText: "hi", attachments: [{ filename: "gone.png", contentType: "image/png", path: "/p/gone.png" }] },
     "junk"
   ].filter(x => typeof x === "object"), 10)
   assert.equal(rows[0].who, "Trinity"); assert.equal(rows[0].image, "/p/a.png"); assert.equal(rows[0].reactions, "👍"); assert.equal(rows[0].filesText, "a.png")
-  assert.equal(rows[1].body, "(message deleted)"); assert.equal(rows[1].who, "You"); assert.equal(rows[1].edited, true)
+  assert.deepEqual([rows[0].imageW, rows[0].imageH], [640, 400])       // the bubble is sized before the picture decodes
+  assert.equal(rows[2].image, "")                                      // only an absolute path is ever loaded
+  assert.equal(rows[3].body, "This message was deleted"); assert.equal(rows[3].who, "You"); assert.equal(rows[3].edited, true)
+  assert.equal(rows[3].deleted, true); assert.equal(rows[0].deleted, false)
+  assert.equal(rows[3].image, ""); assert.equal(rows[3].filesText, "") // a deleted message shows nothing it carried
+  // Day separators and sender runs.
+  assert.deepEqual(rows.map(r => r.newDay), [true, false, true, false])
+  assert.deepEqual(rows.map(r => r.firstOfRun), [true, false, true, true])
+  assert.equal(rows[0].day, "2026-11-11"); assert.equal(rows[2].day, "2026-11-12"); assert.equal(rows[0].time, "23:50")
+  // Every field must be a flat value: the rows are stored in a ListModel.
+  for (const r of rows) for (const k in r) assert.ok(["string", "number", "boolean"].includes(typeof r[k]), k)
   assert.deepEqual(M.threadRows(null), [])
 })
 
@@ -127,4 +203,20 @@ test("Emoji.js converts after a space", () => {
   assert.equal(E.convertBeforeCursor("see http://x/ ", 14), null)
   assert.equal(E.convertBeforeCursor("a :nope: ", 9), null)
   assert.equal(E.lookup("SMILE"), "😄")
+})
+
+// The same cases the bridge's Python rule is tested against (tests/python/test_protocol_rpc.py),
+// and the ones the sigdesk ports share.
+test("shared vectors (tests/vectors/model.json) hold", () => {
+  const V = require(path.join(__dirname, "..", "vectors", "model.json"))
+  for (const c of V.cleanText) assert.equal(M.cleanText(c.in, c.max || undefined), c.out, JSON.stringify(c))
+  for (const c of V.singleLine) assert.equal(M.singleLine(c.in, c.max || undefined), c.out, JSON.stringify(c))
+  for (const c of V.isConversationKey) assert.equal(M.isConversationKey(c.in), c.out, JSON.stringify(c))
+  for (const c of V.unreadLabel) assert.equal(M.unreadLabel(c.in), c.out, JSON.stringify(c))
+  for (const c of V.relativeTime) assert.equal(M.relativeTime(c.ts, c.now), c.out, JSON.stringify(c))
+  assert.deepEqual(M.sortConversations(V.sortConversations.in).map(c => c.key), V.sortConversations.out)
+  assert.ok(V.deleteForEveryoneRefusal.length >= 5)
+  for (const c of V.deleteForEveryoneRefusal)
+    assert.equal(M.deleteForEveryoneRefusal({ ts: c.ts, outgoing: c.outgoing, deleted: c.deleted }, c.now, c.noteToSelf), c.out, c.name)
+  for (const c of V.filterRows.cases) assert.deepEqual(M.filterRows(V.filterRows.rows, c.query).map(r => r.key), c.out, c.query)
 })

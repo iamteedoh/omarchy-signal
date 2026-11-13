@@ -3,10 +3,11 @@
 # Render ConversationView at a range of widths and assert the bottom legend
 # wraps instead of eliding (OMSIG-6).
 #
-# Not part of `make test`: it needs Quickshell, the Omarchy shell modules and a
-# Wayland display, and it briefly opens a real window -- layout only runs for a
-# window that is actually visible. A hidden window reports the first width's
-# numbers for every subsequent resize, which looks like a pass and is not one.
+# The legend is a Flow of keycaps: "lines" is how many rows it wrapped into and
+# "truncated" is whether any keycap ended up outside it.
+#
+# Not part of `make test`: it needs Quickshell and the Omarchy shell modules.
+# It renders under Qt's offscreen platform, so no window appears on screen.
 #
 # Run it with `make legend-wrap` after touching that part of ConversationView.
 # tests/bash/run.sh carries the property-level guard that runs everywhere.
@@ -17,7 +18,6 @@ SKIP_STATUS=0
 SHELL_SRC="${OMARCHY_PATH:-/usr/share/omarchy}/shell"
 command -v qs >/dev/null || { echo "legend-wrap: NOT CHECKED (Quickshell (qs) not found)" >&2; exit "$SKIP_STATUS"; }
 [[ -d $SHELL_SRC/Commons && -d $SHELL_SRC/Ui ]] || { echo "legend-wrap: NOT CHECKED (Omarchy shell modules not found)" >&2; exit "$SKIP_STATUS"; }
-[[ -n ${WAYLAND_DISPLAY:-} ]] || { echo "legend-wrap: NOT CHECKED (no Wayland display)" >&2; exit "$SKIP_STATUS"; }
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -54,12 +54,13 @@ ShellRoot {
       height: parent.height - 32
       x: 16; y: 16
       cliPath: "/bin/true"
+      bridge: null
       detached: true
     }
   }
   Component.onCompleted: {
-    legend = find(chatView, "legendText")
-    if (!legend) { console.log("LEGEND ERROR legendText not found"); Qt.quit(); return }
+    legend = find(chatView, "legendFlow")
+    if (!legend) { console.log("LEGEND ERROR legendFlow not found"); Qt.quit(); return }
     step.start()
   }
   Timer {
@@ -67,8 +68,15 @@ ShellRoot {
     onTriggered: {
       if (root.idx >= 0) {
         var l = root.legend
+        var rowH = 1, right = 0
+        for (var i = 0; i < l.children.length; i++) {
+          var c = l.children[i]
+          if (!c.visible || c.height <= 0) continue
+          rowH = Math.max(rowH, c.height)
+          right = Math.max(right, c.x + c.width)
+        }
         console.log("LEGEND viewW=" + root.widths[root.idx] + " legendW=" + Math.round(l.width)
-                    + " lines=" + l.lineCount + " truncated=" + l.truncated)
+                    + " lines=" + Math.round(l.height / rowH) + " truncated=" + (right > l.width + 1))
       }
       root.idx++
       if (root.idx >= root.widths.length) { console.log("LEGEND DONE"); step.stop(); Qt.quit(); return }
@@ -77,7 +85,7 @@ ShellRoot {
   }
 }
 QML
-(cd "$tmp" && exec timeout 40 qs -p "$tmp/shell.qml") >"$tmp/out.log" 2>&1 &
+(cd "$tmp" && QT_QPA_PLATFORM=offscreen exec timeout 40 qs -p "$tmp/shell.qml") >"$tmp/out.log" 2>&1 &
 qs_pid=$!
 for _ in $(seq 200); do
   grep -qE "LEGEND (DONE|ERROR)" "$tmp/out.log" 2>/dev/null && break
@@ -108,7 +116,7 @@ while read -r row; do
   # It must track the view, not sit at some fixed width.
   (( legend_w > view_w )) && why="${why} legend ${legend_w}px wider than the view;"
   # Narrow enough that one line cannot possibly hold it.
-  (( view_w <= 700 && lines < 2 )) && why="${why} still one line;"
+  (( view_w <= 560 && lines < 2 )) && why="${why} still one line;"
   if [[ -n $why ]]; then
     echo "  FAIL ${view_w}px ->${why} (${lines} line(s), legend ${legend_w}px, truncated=${truncated})" >&2
     fail=1

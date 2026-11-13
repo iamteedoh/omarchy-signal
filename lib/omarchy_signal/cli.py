@@ -91,6 +91,39 @@ def cmd_react(args) -> int:
     return _run(go)
 
 
+def cmd_delete(args) -> int:
+    """Delete one message. For me by default, which is local and sends nothing;
+    --everyone is Signal's remote delete and works on your own messages only."""
+    async def go(client, hello):
+        res = await client.request("resolve", query=args.conversation)
+        if "key" not in res:
+            raise BridgeError("ambiguous conversation", "invalid")
+        if args.everyone:
+            await client.request("delete", conversation=res["key"], ts=args.ts)
+        else:
+            await client.request("deleteLocal", conversation=res["key"], ts=args.ts, sender=args.sender or "")
+        if args.json:
+            _print_json({"ok": True})
+        return 0
+    return _run(go)
+
+
+def cmd_delete_chat(args) -> int:
+    """Delete a conversation from this computer. Nothing is sent: it stays on
+    your phone, and the chat comes back if another message arrives in it."""
+    async def go(client, hello):
+        res = await client.request("resolve", query=args.conversation)
+        if "key" not in res:
+            raise BridgeError("ambiguous conversation", "invalid")
+        out = await client.request("deleteConversation", conversation=res["key"])
+        if args.json:
+            _print_json({"ok": True, "messages": out.get("messages", 0)})
+        else:
+            print(f"deleted {out.get('messages', 0)} message(s) from this computer")
+        return 0
+    return _run(go)
+
+
 def cmd_ls_files(args) -> int:
     """JSON listing of one directory for the window's attachment picker:
     folders first, then files newest first; hidden entries skipped."""
@@ -115,19 +148,24 @@ def cmd_ls_files(args) -> int:
 
 
 def cmd_paste_image(args) -> int:
-    """For the window's Ctrl+V: when the clipboard holds a picture and no
-    text, save it where the bridge may read it and print the path. With text
-    on the clipboard it does nothing (the text field pastes that itself)."""
+    """For the window's Ctrl+V: what the clipboard holds besides text. Files
+    copied in a file manager are attached as they are; a picture (a screenshot,
+    "Copy image" in a browser) is saved where the bridge may read it. Prints
+    ``{"paths": [...], "path": first}``. With plain text on the clipboard it
+    does nothing (the text field pastes that itself)."""
     from . import clipboard
     try:
-        mime = clipboard.image_type(clipboard.types())
-        if not mime:
-            return 1
-        path = clipboard.paste_image(clipboard.pasted_dir(_paths().data_dir), mime)
+        offered = clipboard.types()
+        paths = clipboard.copied_files(offered)
+        if not paths:
+            mime = clipboard.image_type(offered)
+            if not mime:
+                return 1
+            paths = [str(clipboard.paste_image(clipboard.pasted_dir(_paths().data_dir), mime))]
     except (clipboard.ClipboardError, OSError) as exc:
         print(f"omarchy-signal: {exc}", file=sys.stderr)
         return 1
-    _print_json({"path": str(path)})
+    _print_json({"paths": paths, "path": paths[0]})
     return 0
 
 
@@ -296,17 +334,29 @@ def cmd_history(args) -> int:
 def cmd_status(args) -> int:
     async def go(client, hello):
         status = await client.request("status")
+        # Only what an earlier check found: `status` never goes to the network itself.
+        from . import update
+        found = update.cached(_paths().state_dir)
+        status["update"] = found.to_json() if found else {"current": __version__, "latest": None, "available": False, "checkedAt": 0, "error": ""}
         if args.json:
             _print_json(status)
             return 0
         print(f"bridge      : running (v{status['version']}, up {status['uptime']}s)")
         print(f"signal-cli  : {'connected' if status['connected'] else 'not running'}")
-        print(f"account     : {'linked' if status['linked'] else 'NOT LINKED, run `omarchy-signal link`'}")
+        if status["linked"]:
+            print("account     : linked")
+        elif status.get("accountsKnown", True):
+            print("account     : NOT LINKED, run `omarchy-signal link`")
+        else:
+            # signal-cli is up but has not said which accounts exist yet: not the same as "no account".
+            print("account     : checking (signal-cli is still starting)")
         print(f"unread      : {status['unread']}")
         print(f"history     : {'on' if status['historyEnabled'] else 'off'}")
         print(f"notifications: {status['notifications']}")
         if status.get("error"):
             print(f"last error  : {clean_text(status['error'], single_line=True)}")
+        if status["update"]["available"]:
+            print(f"update      : {status['update']['latest']} is available, install it with `omarchy-signal update`")
         return 0 if status["connected"] else 1
     return _run(go)
 
@@ -375,7 +425,16 @@ def cmd_link(args) -> int:
     from . import kitty, qr
 
     async def go(client, hello):
-        if hello.get("linked") and not args.force:
+        # signal-cli reports itself ready before it has said which accounts
+        # exist, and until then "not linked" only means "not known yet". Wait
+        # for the real answer rather than offer a QR code to a linked computer.
+        status = hello
+        for _ in range(40):
+            if status.get("linked") or status.get("accountsKnown", True):
+                break
+            await asyncio.sleep(0.5)
+            status = await client.request("status")
+        if status.get("linked") and not args.force:
             print("an account is already linked; pass --force to link another")
             return 1
         cfg = Config.load(_paths())
@@ -578,6 +637,97 @@ def cmd_bridge(args) -> int:
     return bridge_main(["--stderr"] if args.stderr else [])
 
 
+def _interactive() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def cmd_update(args) -> int:
+    """Check for a newer release, or install it: fetch through git from the remote
+    the plugin was added from, move the plugin folder to the newest release tag,
+    then run that release's install.sh in place."""
+    from . import update
+    paths = _paths()
+    info = update.InstallInfo.detect(state_dir=paths.state_dir)
+    if args.check:
+        if getattr(args, "if_due", False):
+            # The shell's daily check: answered from the cache within a day, and never when switched off.
+            result = update.check_if_due(info, paths.state_dir, enabled=Config.load(paths).update_check)
+            if result is None:
+                result = update.CheckResult(__version__, None, False, 0)
+        else:
+            result = update.check(info, current=__version__)
+            update.store(paths.state_dir, result)      # what `status`, `doctor` and the shell show
+        if args.json:
+            _print_json({**result.to_json(), "install": info.kind})
+        elif result.error:
+            print(f"omarchy-signal: could not check for updates: {result.error}", file=sys.stderr)
+        elif result.available:
+            print(f"omarchy-signal {result.latest} is available (installed: {result.current}). Install it with: omarchy-signal update")
+        else:
+            print(f"omarchy-signal {result.current} is up to date" + ("" if result.latest else " (no releases published yet)"))
+        return 1 if result.error else 0
+    rc = 0
+    try:
+        if info.kind == "link":
+            raise update.UpdateError(f"{info.plugin_dir} is a developer link to a checkout; update that checkout with git")
+        if info.kind == "none":
+            raise update.UpdateError("the plugin is not installed; add it with: omarchy plugin add " + update.DEFAULT_ORIGIN)
+        if info.kind == "git":
+            tag = update.plan(info.plugin_dir, current=__version__)
+        else:
+            found = update.check(info, current=__version__)
+            if found.error:
+                raise update.UpdateError(found.error)
+            tag = "v" + found.latest if found.available and found.latest else None
+        if tag is None:
+            print(f"omarchy-signal {__version__} is up to date")
+        else:
+            print(f"omarchy-signal {__version__} → {tag[1:]}   ({info.plugin_dir})")
+            if info.kind == "copy":
+                print("  This install is a plain copy. The update replaces it with a git checkout of the release")
+                print("  (the same thing `omarchy plugin add` makes), and keeps the old folder beside it as a backup.")
+            if not args.yes:
+                if not _interactive():
+                    print("omarchy-signal: not updating without a terminal to ask in; pass --yes", file=sys.stderr)
+                    return 1
+                if input("  Install it now? [Y/n] ").strip().lower() not in ("", "y", "yes"):
+                    return 0
+            if info.kind == "git":
+                update.fast_forward(info.plugin_dir, tag)
+            else:
+                backup = update.adopt(info, tag)
+                print(f"  The previous copy is at {backup}")
+            # From here on the files on disk are the new release; nothing of this
+            # (old) code is imported again, only the new installer runs.
+            rc = update.run_installer(info.plugin_dir)
+            if rc == 0:
+                with contextlib.suppress(OSError):
+                    update.cache_file(paths.state_dir).unlink()
+    except update.UpdateError as exc:
+        print(f"omarchy-signal: {exc}", file=sys.stderr)
+        rc = 1
+    if args.then_tui:
+        # Back to the client, in the freshly installed version. Nothing of this (old) code runs after this line.
+        if rc != 0:
+            input("  Press Enter to go back to the client… ")
+        exe = str(Path.home() / ".local/bin/omarchy-signal")
+        os.execv(exe, [exe, "tui"])
+    return rc
+
+
+def cmd_sync(args) -> int:
+    """Bring the pieces outside the plugin folder in line with it, quietly. The
+    shell runs this after `omarchy plugin update` moved the plugin's files."""
+    from . import sync
+    result = sync.sync(Path(__file__).resolve().parents[2])
+    if args.json:
+        _print_json(result)
+    else:
+        for part in ("unit", "hook", "bindings", "bridge"):
+            print(f"{part:<9}: {result[part]}")
+    return 0
+
+
 def cmd_doctor(args) -> int:
     paths = _paths()
     cfg = Config.load(paths)
@@ -609,9 +759,21 @@ def cmd_doctor(args) -> int:
         hello = asyncio.run(_with_client(go))
         check("bridge answers", True)
         check("signal-cli connected", hello.get("connected"), "journalctl --user -u omarchy-signal")
-        check("account linked", hello.get("linked"), "omarchy-signal link")
+        if hello.get("linked") or hello.get("accountsKnown", True):
+            check("account linked", hello.get("linked"), "omarchy-signal link")
+        else:
+            print("  [..] account: signal-cli has not said which accounts exist yet; run doctor again in a moment")
     except BridgeUnavailable as exc:
         check("bridge answers", False, str(exc).split(";")[0])
+    from . import update
+    info = update.InstallInfo.detect(state_dir=paths.state_dir)
+    how = {"git": "git checkout: `omarchy plugin update` and `omarchy-signal update` both work",
+           "copy": "plain copy: `omarchy-signal update` turns it into a git checkout on the next release",
+           "link": "developer link to a checkout", "none": "not installed"}[info.kind]
+    print(f"  [..] plugin folder: {how}")
+    found = update.cached(paths.state_dir)
+    if found is not None and found.available:
+        print(f"  [..] update: {found.latest} is available  → omarchy-signal update")
     from .kitty import terminal_supports_graphics
     print(f"  [..] this terminal draws images: {'yes' if terminal_supports_graphics(probe=False) else 'no'}")
     default_term = ""
@@ -666,6 +828,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_send)
 
+    s = sub.add_parser("delete", help="delete a message (for me by default)")
+    s.add_argument("conversation")
+    s.add_argument("ts", type=int, help="message timestamp")
+    s.add_argument("--everyone", action="store_true", help="Signal's remote delete; your own messages only")
+    s.add_argument("--sender", help="author key, when two messages share a timestamp")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_delete)
+
+    s = sub.add_parser("delete-chat", help="delete a conversation from this computer")
+    s.add_argument("conversation")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_delete_chat)
+
     s = sub.add_parser("react", help="react to a message")
     s.add_argument("conversation")
     s.add_argument("ts", type=int, help="message timestamp")
@@ -692,6 +867,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("paste-image", help=argparse.SUPPRESS)
     s.set_defaults(fn=cmd_paste_image)
+
+    s = sub.add_parser("update", help="install the newest release (git, fast-forward to the latest release tag, then its install.sh)")
+    s.add_argument("--check", action="store_true", help="only say whether a newer release exists")
+    s.add_argument("--yes", "-y", action="store_true", help="do not ask before installing")
+    s.add_argument("--json", action="store_true")
+    s.add_argument("--then-tui", action="store_true", help=argparse.SUPPRESS)
+    s.add_argument("--if-due", action="store_true", help=argparse.SUPPRESS)
+    s.set_defaults(fn=cmd_update)
+
+    s = sub.add_parser("sync", help=argparse.SUPPRESS)
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_sync)
 
     s = sub.add_parser("window", help="open a conversation in its own window, detached from the client")
     s.add_argument("conversation", nargs="?")

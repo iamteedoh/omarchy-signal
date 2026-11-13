@@ -189,6 +189,25 @@ class Store:
                               (conversation_key, ts))
         return cur.rowcount > 0
 
+    def forget_message(self, conversation_key: str, ts: int, sender: str = "") -> bool:
+        """Remove one message from this computer ("delete for me"). Unlike a
+        remote delete, which leaves a tombstone everywhere, this takes the row
+        out; the message is untouched on your phone and for whoever sent it."""
+        if sender:
+            cur = self.db.execute("DELETE FROM messages WHERE conversation = ? AND ts = ? AND sender = ?",
+                                  (conversation_key, ts, sender))
+        else:
+            cur = self.db.execute("DELETE FROM messages WHERE conversation = ? AND ts = ?", (conversation_key, ts))
+        return cur.rowcount > 0
+
+    def forget_conversation(self, key: str) -> int:
+        """Remove a conversation and its messages from this computer, the way
+        Signal's own clients delete a chat: nothing is sent, and the thread
+        comes back by itself if another message arrives in it."""
+        cur = self.db.execute("DELETE FROM messages WHERE conversation = ?", (key,))
+        self.db.execute("DELETE FROM conversations WHERE key = ?", (key,))
+        return cur.rowcount
+
     def close(self) -> None:
         self.db.close()
 

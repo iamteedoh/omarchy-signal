@@ -21,12 +21,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, clipboard, emoji, kitty, links, pathcomplete, qr
+from . import __version__, clipboard, emoji, kitty, links, pathcomplete, protocol, qr
 from .bridge import _guess_mime
 from .client import BridgeClient, BridgeError, BridgeUnavailable
 from .config import RESTART_REQUIRED, SETTINGS, Config, Paths, coerce_setting, save_config
 from .sanitize import InvalidAttachment, clean_name, clean_text, safe_attachment_path, safe_filename
-from .term import Key, KeyParser, Terminal, cells_text, pad, screen_cells, str_width, truncate, wrap
+from .term import Key, KeyParser, Terminal, cells_text, pad, query_background, screen_cells, str_width, truncate, wrap
 from .theme import Theme, mix
 
 T = Terminal
@@ -100,8 +100,16 @@ class App:
         self.paths = paths
         self.initial = initial
         self.start_new = new
+        # The terminal's own background, asked for once before raw mode. When it
+        # is the Omarchy theme's background (the usual case: Omarchy themes the
+        # terminal too) that colour is never painted, so the terminal's opacity
+        # and blur show through the client the way they do through a shell.
+        self.term_bg = query_background()
         self.theme = Theme.load(paths.omarchy_theme_dir)
+        self._apply_base_bg()
         self.term: Terminal | None = None
+        self.update_latest = ""            # a newer release, once the daily check has found one
+        self.update_requested = False
         self.client: BridgeClient | None = None
         self.status: dict = {}
         self.conversations: list[dict] = []
@@ -183,6 +191,7 @@ class App:
             loop.add_reader(term.fd_in, self._on_input)
             try:
                 await self._boot()
+                update_task = asyncio.create_task(self._check_for_update())   # noqa: F841  kept referenced while it runs
                 await self._main_loop()
             finally:
                 loop.remove_reader(term.fd_in)
@@ -217,6 +226,20 @@ class App:
             self.connected = False
             self.show_toast(str(exc).split(";")[0])
 
+    def _apply_base_bg(self) -> None:
+        """Leave the theme's background unpainted when it is the terminal's own."""
+        same = self.term_bg is not None and all(abs(a - b) <= 6 for a, b in zip(self.term_bg, self.theme.background))
+        Terminal.base_bg = self.theme.background if same else None
+
+    def _needs_linking(self) -> bool:
+        """Whether to offer linking. ``linked: false`` means "no account" only
+        once the bridge has actually asked signal-cli which accounts exist
+        (``accountsKnown``); before that it means "not known yet". signal-cli
+        reports itself ready before that answer arrives, so believing the gap
+        made the client ask a linked computer to link itself again, and put a QR
+        code on the screen, every time the service restarted."""
+        return bool(self.status.get("accountsKnown")) and not self.status.get("linked")
+
     async def _load_initial(self) -> None:
         assert self.client
         try:
@@ -238,7 +261,7 @@ class App:
                 self.show_toast(f"{exc}")
         if not self.active_key and self.conversations:
             self._select_index(0)
-        if not self.status.get("linked"):
+        if self._needs_linking():
             self.open_overlay("link")
         elif self.start_new:
             self.open_overlay("contacts")
@@ -252,6 +275,7 @@ class App:
                 last_theme_check = now
                 if self.theme.changed_on_disk(self.paths.omarchy_theme_dir):
                     self.theme = Theme.load(self.paths.omarchy_theme_dir)
+                    self._apply_base_bg()
                     self.dirty = True
             if self.toast and now > self.toast_until:
                 self.toast = ""
@@ -362,18 +386,21 @@ class App:
         elif name == "sent":
             key = data.get("conversation", "")
             self._touch_conversation(key, data.get("ts", 0), data.get("text") or "[attachment]")
-            msgs = self.messages.setdefault(key, [])
-            pending = next((m for m in msgs if m.get("_pending") and m.get("body") == data.get("text", "")), None)
+            # Like "message": only a thread already loaded is updated. Creating
+            # one here would stop its history from ever loading, so a chat you
+            # had replied to from elsewhere would open showing just the reply.
+            msgs = self.messages.get(key)
+            pending = next((m for m in msgs or [] if m.get("_pending") and m.get("body") == data.get("text", "")), None)
             if pending is not None:
                 # The bridge confirmed it before the send call returned: settle it now.
                 pending["ts"] = data.get("ts", pending["ts"])
                 pending["status"] = data.get("status", "sent")
                 pending.pop("_pending", None)
-            elif not any(m.get("ts") == data.get("ts") and m.get("outgoing") for m in msgs):
-                    msgs.append({
-                        "conversation": key, "ts": data.get("ts", 0), "sender": "me", "senderName": "You",
-                        "outgoing": True, "body": data.get("text", ""), "attachments": data.get("attachments", []),
-                        "status": data.get("status", "sent"), "reactions": {}, "quoteText": "", "quoteAuthor": ""})
+            elif msgs is not None and not any(m.get("ts") == data.get("ts") and m.get("outgoing") for m in msgs):
+                msgs.append({
+                    "conversation": key, "ts": data.get("ts", 0), "sender": "me", "senderName": "You",
+                    "outgoing": True, "body": data.get("text", ""), "attachments": data.get("attachments", []),
+                    "status": data.get("status", "sent"), "reactions": {}, "quoteText": "", "quoteAuthor": ""})
         elif name == "receipt":
             for msgs in self.messages.values():
                 for m in msgs:
@@ -400,6 +427,22 @@ class App:
                     m["deleted"] = True
                     m["body"] = ""
                     m["attachments"] = []
+        elif name == "removed":
+            key = data.get("conversation", "")
+            ts, sender = data.get("ts"), data.get("sender") or ""
+            rows = self.messages.get(key)
+            if rows is not None:
+                self.messages[key] = [m for m in rows
+                                      if not (m.get("ts") == ts and (not sender or m.get("sender") == sender))]
+                self.dirty = True
+        elif name == "conversationRemoved":
+            key = data.get("conversation", "")
+            self.messages.pop(key, None)
+            self.conversations = [c for c in self.conversations if c["key"] != key]
+            if self.active_key == key:
+                self.active_key = ""
+                self._select_index(0)
+            self.dirty = True
         elif name == "edited":
             for m in self.messages.get(data.get("conversation", ""), []):
                 if m.get("ts") == data.get("ts"):
@@ -418,8 +461,12 @@ class App:
                     if c["key"] == key:
                         c["unread"] = 0
         elif name == "status":
+            was_unknown = not self.status.get("accountsKnown")
             self.status.update(data)
             self.connected = bool(data.get("connected"))
+            # signal-cli has just come up and there is genuinely no account: now we know.
+            if was_unknown and not self.overlay and self._needs_linking():
+                self.open_overlay("link")
             if self.overlay == "link" and data.get("linked"):
                 self.close_overlay()
                 self.show_toast("Linked. Welcome aboard.")
@@ -614,14 +661,24 @@ class App:
             self.overlay_query = m.get("body", "")
             self.overlay_message = "edit the message; Enter sends the new text"
         elif key.name == "char" and key.char == "d":
-            if not m.get("outgoing"):
-                self.show_toast("you can only delete your own messages")
+            account = self.status.get("account") or ""
+            refusal = protocol.delete_for_everyone_refusal(
+                m.get("ts", 0), int(time.time() * 1000), outgoing=bool(m.get("outgoing")),
+                deleted=bool(m.get("deleted")), note_to_self=bool(account) and self.active_key == f"number:{account}")
+            if refusal:
+                self.show_toast(refusal)
                 return
             self.pick_target = m
             self.pick_action = "delete"
             self.overlay = "prompt"
             self.overlay_query = ""
             self.overlay_message = "delete for everyone? type yes"
+        elif key.name == "char" and key.char == "D":
+            self.pick_target = m
+            self.pick_action = "deleteLocal"
+            self.overlay = "prompt"
+            self.overlay_query = ""
+            self.overlay_message = "delete for me? type yes (it stays on your phone and for the sender)"
         elif key.name == "char" and key.char == "f":
             self.forward_payload = m
             self.open_overlay("forward")
@@ -686,6 +743,15 @@ class App:
             elif action == "delete" and target:
                 if q.lower() == "yes":
                     await self.client.request("delete", conversation=self.active_key, ts=target["ts"])
+            elif action == "deleteLocal" and target:
+                if q.lower() == "yes":
+                    await self.client.request("deleteLocal", conversation=self.active_key, ts=target["ts"],
+                                              sender=target.get("sender", ""))
+            elif action == "deleteConversation":
+                if q.lower() == "yes" and self.active_key:
+                    key = self.active_key
+                    await self.client.request("deleteConversation", conversation=key)
+                    self.show_toast("deleted from this computer")
             elif action == "expiration":
                 pass
             elif action == "rename":
@@ -732,6 +798,7 @@ class App:
                 items.append(("safety", "View safety number"))
                 items.append(("request", "Accept message request"))
             items.append(("block", "Unblock" if conv.get("blocked") else "Block"))
+            items.append(("deleteConversation", "Delete conversation (this computer only)"))
         items.append(("newgroup", "New group…"))
         items.append(("archived", "Show archived conversations"))
         self.menu_items = items
@@ -810,6 +877,11 @@ class App:
                 self.overlay = "prompt"
                 self.overlay_query = conv.get("name", "")
                 self.overlay_message = "new group name"
+            elif action == "deleteConversation" and conv:
+                self.pick_action = "deleteConversation"
+                self.overlay = "prompt"
+                self.overlay_query = ""
+                self.overlay_message = f"delete {conv.get('name') or conv['key']} from this computer? type yes"
             elif action == "leave" and conv:
                 await self.client.request("leaveGroup", conversation=conv["key"])
                 self.show_toast("left the group")
@@ -943,8 +1015,24 @@ class App:
             self.settings_pending.clear()
             self.show_toast("bridge restarting; reopen the client in a few seconds", 6)
             self.running = False
+        elif key.name == "char" and key.char == "u" and self.update_latest:
+            # Leave the client; run_tui hands the terminal to `omarchy-signal update`, which comes back here.
+            self.update_requested = True
+            self.running = False
         elif key.name == "char" and key.char == "q":
             self.close_overlay()
+
+    async def _check_for_update(self) -> None:
+        """Once a day, off the event loop: a release newer than this one gets a toast and a key in Settings."""
+        from . import update
+        try:
+            found = await asyncio.to_thread(lambda: update.check_if_due(update.InstallInfo.detect(state_dir=self.paths.state_dir), self.paths.state_dir,
+                                                                        enabled=self.cfg.update_check))
+        except Exception:                      # noqa: BLE001  an update check must never disturb the client
+            return
+        if found is not None and found.available and found.latest:
+            self.update_latest = found.latest
+            self.show_toast(f"omarchy-signal {found.latest} is available · Ctrl-S, then u, updates", 8)
 
     def open_attachment_menu(self, atts: list[dict], index: int = 0) -> None:
         atts = [a for a in atts if a.get("path")]
@@ -1742,7 +1830,20 @@ class App:
         """Ctrl-V, right-click (clipboard) and middle-click (primary selection).
         Text goes wherever typing would; a picture becomes an attachment."""
         try:
-            mime = "" if primary else clipboard.image_type(await asyncio.to_thread(clipboard.types))
+            offered = [] if primary else await asyncio.to_thread(clipboard.types)
+            files = await asyncio.to_thread(clipboard.copied_files, offered) if offered else []
+            if files:                                   # "Copy" in a file manager: attach the files, not their paths as text
+                if self.overlay or not self.active_key:
+                    self.show_toast("open a conversation to paste files into it")
+                    return
+                room = max(0, 8 - len(self.composer.attachments))
+                new = [f for f in files if f not in self.composer.attachments][:room]
+                self.composer.attachments.extend(new)
+                self.focus = "composer"
+                if new:
+                    self.show_toast(f"attached {Path(new[0]).name} (Esc removes it)" if len(new) == 1 else f"attached {len(new)} files (Esc removes them)")
+                return
+            mime = clipboard.image_type(offered)
             if mime:
                 if self.overlay or not self.active_key:
                     self.show_toast("open a conversation to paste a picture into it")
@@ -2543,7 +2644,7 @@ class App:
                 out.append(T.move(y, body_left) + style + pad(truncate(text, body_w - 8), body_w - 6)
                            + T.fg(th.dim if not selected else th.bright_foreground) + pad(self._fmt_time(m.get("ts", 0), short=True), 6, align="right") + T.RESET)
                 y += 1
-            hints = "r react · q quote · e edit · d delete · f forward · c copy · o open · i info · Esc"
+            hints = "r react · q quote · e edit · d delete for everyone · D delete for me · f forward · c copy · o open · i info · Esc"
             out.append(T.move(top + h - 2, body_left) + bg + T.fg(th.dim) + truncate(hints, body_w) + T.RESET)
         elif name == "convmenu":
             for i, (_, label) in enumerate(self.menu_items):
@@ -2737,6 +2838,8 @@ class App:
         footer = "↑↓ choose · Enter/→ next value · ← previous · Esc close"
         if self.settings_pending:
             footer += " · r restart bridge now"
+        if self.update_latest:
+            footer += f" · u update to {self.update_latest}"
         out.append(T.move(top + h - 2, body_left) + bg + T.fg(th.dim) + truncate(footer, body_w) + T.RESET)
         return out
 
@@ -2814,6 +2917,11 @@ def run_tui(cfg: Config, paths: Paths, initial: str = "", new: bool = False) -> 
         return 2
     app = App(cfg, paths, initial=initial, new=new)
     try:
-        return asyncio.run(app.run())
+        rc = asyncio.run(app.run())
     except KeyboardInterrupt:
         return 0
+    if app.update_requested:
+        import os
+        exe = os.path.realpath(sys.argv[0])
+        os.execv(exe, [exe, "update", "--then-tui"])
+    return rc
