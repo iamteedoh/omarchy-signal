@@ -276,10 +276,63 @@ class ClipboardTests(unittest.TestCase):
         from omarchy_signal import clipboard
         self.assertEqual(clipboard.image_type(["image/png"]), "image/png")
         self.assertEqual(clipboard.image_type(["image/jpeg", "image/png"]), "image/png")
-        self.assertEqual(clipboard.image_type(["text/html", "image/png"]), "")     # copied from a web page: paste the text
+        self.assertEqual(clipboard.image_type(["text/html", "image/png"]), "image/png")           # a browser's "Copy image"
+        self.assertEqual(clipboard.image_type(["text/html", "text/plain", "image/png"]), "")      # a selection from a web page: the text
+        self.assertEqual(clipboard.image_type(["text/uri-list", "image/png"]), "")                # a copied file: handled as a file
         self.assertEqual(clipboard.image_type(["UTF8_STRING"]), "")
         self.assertEqual(clipboard.image_type(["image/bmp"]), "")
 
+
+    def test_files_copied_in_a_file_manager_are_attached(self):
+        from unittest import mock
+        from omarchy_signal import clipboard
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp).resolve() / "home"
+            (home / "Pictures").mkdir(parents=True)
+            pic = home / "Pictures" / "zion map.png"
+            pic.write_bytes(b"png")
+            outside = Path(tmp).resolve() / "secret.txt"
+            outside.write_text("x")
+            listing = f"# copied by a file manager\r\n{pic.as_uri()}\r\n{outside.as_uri()}\r\nhttps://example.com/x.png\r\n".encode()
+            with mock.patch.object(clipboard, "_paste", return_value=listing) as paste:
+                self.assertEqual(clipboard.copied_files(["text/uri-list", "text/plain"], home), [str(pic)])
+                self.assertEqual(paste.call_args[0][0], ["--type", "text/uri-list"])
+                paste.reset_mock()
+                self.assertEqual(clipboard.copied_files(["text/plain"], home), [])     # plain text: the clipboard is not even read
+                paste.assert_not_called()
+
+    def test_the_terminals_own_background_is_never_painted(self):
+        from omarchy_signal.term import Terminal, parse_osc_color
+        self.assertEqual(parse_osc_color(b"\x1b]11;rgb:1414/1616/1818\x1b\\\x1b[?62;c"), (20, 22, 24))
+        self.assertEqual(parse_osc_color(b"\x1b]11;rgb:ff/80/00\x07"), (255, 128, 0))
+        self.assertEqual(parse_osc_color(b"\x1b]11;rgb:f/0/8\x07"), (255, 0, 136))
+        for junk in (b"", b"\x1b[?62;c", b"\x1b]11;rgb:zz/00/00\x07", b"\x1b]10;rgb:ff/ff/ff\x07"):
+            self.assertIsNone(parse_osc_color(junk))
+        try:
+            Terminal.base_bg = (10, 10, 12)
+            self.assertEqual(Terminal.bg((10, 10, 12)), "\x1b[49m")      # left to the terminal: its opacity shows through
+            self.assertEqual(Terminal.bg([10, 10, 12]), "\x1b[49m")
+            self.assertEqual(Terminal.bg((10, 10, 13)), "\x1b[48;2;10;10;13m")
+        finally:
+            Terminal.base_bg = None
+        self.assertEqual(Terminal.bg((10, 10, 12)), "\x1b[48;2;10;10;12m")
+
+    def test_the_client_only_skips_the_background_when_it_is_the_terminals(self):
+        # Omarchy themes the terminal too, so the two normally match. A user's
+        # own terminal colours must keep the painted background, or the client
+        # would draw the theme's text on a background it was never chosen for.
+        from omarchy_signal.term import Terminal
+        from omarchy_signal.tui import App
+        app = App.__new__(App)
+        app.theme = Theme()
+        try:
+            for term_bg, expected in ((Theme().background, Theme().background), ((22, 36, 49), Theme().background),
+                                      ((250, 250, 250), None), (None, None)):
+                app.term_bg = term_bg
+                app._apply_base_bg()
+                self.assertEqual(Terminal.base_bg, expected, term_bg)
+        finally:
+            Terminal.base_bg = None
     def test_round_trip_through_wl_clipboard_stand_ins(self):
         from omarchy_signal import clipboard
         with tempfile.TemporaryDirectory() as tmp:

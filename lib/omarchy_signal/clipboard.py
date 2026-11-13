@@ -61,10 +61,53 @@ def paste_text(*, primary: bool = False) -> str:
 
 
 def image_type(offered: list[str]) -> str:
-    """The picture type to ask for, when the clipboard holds a picture and no text."""
-    if any(t in TEXT_TYPES or t.startswith("text/") for t in offered):
+    """The picture type to ask for, when the clipboard holds a picture rather than text.
+
+    Only *plain* text counts as text: a browser's "Copy image" offers the picture
+    together with ``text/html`` (an <img> tag), which nobody wants typed into a message."""
+    if any(t in TEXT_TYPES for t in offered) or URI_LIST in offered:
         return ""
     return next((t for t in IMAGE_TYPES if t in offered), "")
+
+
+URI_LIST = "text/uri-list"
+MAX_FILES = 8
+MAX_FILE_BYTES = 100 * 1024 * 1024
+
+
+def local_files(urls: list[str], home: Path) -> list[str]:
+    """Regular files under the home directory named by ``file://`` URLs: what a
+    file manager puts on the clipboard for "Copy".
+
+    Anything else is dropped: remote URLs, directories, and paths outside home
+    (the bridge only accepts attachments from there; see sanitize.safe_attachment_path)."""
+    from urllib.parse import unquote, urlparse
+    out: list[str] = []
+    home = home.resolve()
+    for url in urls:
+        parts = urlparse(url.strip())
+        if parts.scheme != "file" or parts.netloc not in ("", "localhost"):
+            continue
+        try:
+            path = Path(unquote(parts.path)).resolve()
+            if not path.is_file() or home not in path.parents or path.stat().st_size > MAX_FILE_BYTES:
+                continue
+        except (OSError, ValueError):
+            continue
+        if str(path) not in out:
+            out.append(str(path))
+        if len(out) >= MAX_FILES:
+            break
+    return out
+
+
+def copied_files(offered: list[str], home: Path | None = None) -> list[str]:
+    """The files on the clipboard, when a file manager put them there."""
+    if URI_LIST not in offered:
+        return []
+    raw = _paste(["--type", URI_LIST], 65536).decode("utf-8", "replace")
+    urls = [line for line in raw.splitlines() if line.strip() and not line.startswith("#")]
+    return local_files(urls, home or Path.home())
 
 
 def paste_image(dest_dir: Path, mime: str) -> Path:

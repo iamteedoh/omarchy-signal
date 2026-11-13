@@ -1,0 +1,379 @@
+{
+  "_": "Shared by tests/qml/model.test.js and cosmic-applet/core/tests/vectors.rs. SPDX-License-Identifier: GPL-3.0-or-later",
+  "cleanText": [
+    {
+      "in": "a\u001b[31mb‮c⁦d﻿efg",
+      "max": 0,
+      "out": "a[31mbcdefg"
+    },
+    {
+      "in": "x\r\ny\rz",
+      "max": 0,
+      "out": "x\ny\nz"
+    },
+    {
+      "in": "xxxxxxxxxx",
+      "max": 3,
+      "out": "xxx"
+    },
+    {
+      "in": "a󰲚b­c",
+      "max": 0,
+      "out": "abc"
+    },
+    {
+      "in": "Ünïcödé ✓ 日本語 🎉",
+      "max": 0,
+      "out": "Ünïcödé ✓ 日本語 🎉"
+    },
+    {
+      "in": "tab\tkept",
+      "max": 0,
+      "out": "tab\tkept"
+    },
+    {
+      "in": "‎‏؜",
+      "max": 0,
+      "out": ""
+    }
+  ],
+  "singleLine": [
+    {
+      "in": "  a \n  b\n\nc  ",
+      "max": 0,
+      "out": "a b c"
+    },
+    {
+      "in": "one\r\ntwo",
+      "max": 0,
+      "out": "one two"
+    },
+    {
+      "in": "no breaks",
+      "max": 0,
+      "out": "no breaks"
+    },
+    {
+      "in": "\n\nlead",
+      "max": 0,
+      "out": "lead"
+    },
+    {
+      "in": "0123456789",
+      "max": 4,
+      "out": "0123"
+    }
+  ],
+  "isConversationKey": [
+    {
+      "in": "number:+15550002222",
+      "out": true
+    },
+    {
+      "in": "uuid:8f3a2c1e-1",
+      "out": true
+    },
+    {
+      "in": "group:AbC+/=_.-09",
+      "out": true
+    },
+    {
+      "in": "username:neo.01",
+      "out": true
+    },
+    {
+      "in": "number:+1'; rm -rf ~ #",
+      "out": false
+    },
+    {
+      "in": "number:$(id)",
+      "out": false
+    },
+    {
+      "in": "number:+1 2",
+      "out": false
+    },
+    {
+      "in": "number:`id`",
+      "out": false
+    },
+    {
+      "in": "group:a|b",
+      "out": false
+    },
+    {
+      "in": "uuid:a;b",
+      "out": false
+    },
+    {
+      "in": "number:+1\n",
+      "out": false
+    },
+    {
+      "in": "email:a@b",
+      "out": false
+    },
+    {
+      "in": "number:",
+      "out": false
+    },
+    {
+      "in": "",
+      "out": false
+    },
+    {
+      "in": "number:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "out": true
+    },
+    {
+      "in": "number:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "out": false
+    }
+  ],
+  "unreadLabel": [
+    {
+      "in": 0,
+      "out": ""
+    },
+    {
+      "in": -3,
+      "out": ""
+    },
+    {
+      "in": 1,
+      "out": "1"
+    },
+    {
+      "in": 99,
+      "out": "99"
+    },
+    {
+      "in": 100,
+      "out": "99+"
+    },
+    {
+      "in": 100000,
+      "out": "99+"
+    }
+  ],
+  "relativeTime": [
+    {
+      "ts": 0,
+      "now": 1000000000000,
+      "out": ""
+    },
+    {
+      "ts": 1000000000000,
+      "now": 1000000030000,
+      "out": "now"
+    },
+    {
+      "ts": 1000000000000,
+      "now": 1000000300000,
+      "out": "5m"
+    },
+    {
+      "ts": 1000000000000,
+      "now": 1000003600000,
+      "out": "1h"
+    },
+    {
+      "ts": 1000000000000,
+      "now": 1000086400000,
+      "out": "1d"
+    },
+    {
+      "ts": 1000000000000,
+      "now": 1000518400000,
+      "out": "6d"
+    },
+    {
+      "ts": 1000000000000,
+      "now": 1000604800000,
+      "out": "2001-09-09"
+    },
+    {
+      "ts": 1757289600000,
+      "now": 1790000000000,
+      "out": "2025-09-08"
+    },
+    {
+      "ts": 1000000100000,
+      "now": 1000000000000,
+      "out": "now"
+    }
+  ],
+  "sortConversations": {
+    "in": [
+      {
+        "key": "number:+1",
+        "lastTs": 5,
+        "unread": 0
+      },
+      {
+        "key": "number:+2",
+        "lastTs": 9,
+        "unread": 0
+      },
+      {
+        "key": "number:+3",
+        "lastTs": 5,
+        "unread": 2
+      },
+      {
+        "key": "number:+4",
+        "lastTs": 0,
+        "unread": 0
+      }
+    ],
+    "out": [
+      "number:+2",
+      "number:+3",
+      "number:+1",
+      "number:+4"
+    ]
+  },
+  "filterRows": {
+    "rows": [
+      {
+        "key": "number:+1",
+        "name": "Trinity",
+        "sub": "wake up, neo…"
+      },
+      {
+        "key": "number:+2",
+        "name": "Morpheus",
+        "sub": "the red pill"
+      },
+      {
+        "key": "group:x",
+        "name": "Nebuchadnezzar crew",
+        "sub": "Tank: ready"
+      }
+    ],
+    "cases": [
+      {
+        "query": "",
+        "out": [
+          "number:+1",
+          "number:+2",
+          "group:x"
+        ]
+      },
+      {
+        "query": "TRIN",
+        "out": [
+          "number:+1"
+        ]
+      },
+      {
+        "query": "pill",
+        "out": [
+          "number:+2"
+        ]
+      },
+      {
+        "query": " tank ",
+        "out": [
+          "group:x"
+        ]
+      },
+      {
+        "query": "zion",
+        "out": []
+      }
+    ]
+  },
+  "deleteForEveryoneRefusal": [
+    {
+      "name": "just sent",
+      "ts": 1702591999000,
+      "outgoing": true,
+      "deleted": false,
+      "noteToSelf": false,
+      "now": 1702592000000,
+      "out": ""
+    },
+    {
+      "name": "one millisecond inside the window",
+      "ts": 1702505600001,
+      "outgoing": true,
+      "deleted": false,
+      "noteToSelf": false,
+      "now": 1702592000000,
+      "out": ""
+    },
+    {
+      "name": "exactly a day old is already too old",
+      "ts": 1702505600000,
+      "outgoing": true,
+      "deleted": false,
+      "noteToSelf": false,
+      "now": 1702592000000,
+      "out": "Signal only allows delete for everyone within 24 hours of sending; delete it for me instead"
+    },
+    {
+      "name": "a week old",
+      "ts": 1701987200000,
+      "outgoing": true,
+      "deleted": false,
+      "noteToSelf": false,
+      "now": 1702592000000,
+      "out": "Signal only allows delete for everyone within 24 hours of sending; delete it for me instead"
+    },
+    {
+      "name": "a week old in Note to Self has no limit",
+      "ts": 1701987200000,
+      "outgoing": true,
+      "deleted": false,
+      "noteToSelf": true,
+      "now": 1702592000000,
+      "out": ""
+    },
+    {
+      "name": "someone else's message",
+      "ts": 1702591999000,
+      "outgoing": false,
+      "deleted": false,
+      "noteToSelf": false,
+      "now": 1702592000000,
+      "out": "you can only delete your own messages for everyone"
+    },
+    {
+      "name": "someone else's message in Note to Self is still not ours",
+      "ts": 1702591999000,
+      "outgoing": false,
+      "deleted": false,
+      "noteToSelf": true,
+      "now": 1702592000000,
+      "out": "you can only delete your own messages for everyone"
+    },
+    {
+      "name": "already deleted",
+      "ts": 1702591999000,
+      "outgoing": true,
+      "deleted": true,
+      "noteToSelf": false,
+      "now": 1702592000000,
+      "out": "that message is already deleted"
+    },
+    {
+      "name": "not ours wins over too old",
+      "ts": 1701987200000,
+      "outgoing": false,
+      "deleted": false,
+      "noteToSelf": false,
+      "now": 1702592000000,
+      "out": "you can only delete your own messages for everyone"
+    },
+    {
+      "name": "already deleted wins over too old",
+      "ts": 1701987200000,
+      "outgoing": true,
+      "deleted": true,
+      "noteToSelf": false,
+      "now": 1702592000000,
+      "out": "that message is already deleted"
+    }
+  ]
+}

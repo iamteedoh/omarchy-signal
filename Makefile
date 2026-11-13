@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-.PHONY: test security qml python bash shellcheck validate install dev legend-wrap
+.PHONY: test security qml python bash shellcheck validate install dev legend-wrap screenshots
 
 PY := python3
 
@@ -37,7 +37,12 @@ install:
 dev:
 	./install.sh --link
 
-# Renders ConversationView at several widths to prove the bottom legend wraps.
-# Opens a real window for a few seconds, so it is not part of `make test`.
+# Renders ConversationView offscreen at several widths to prove the bottom
+# legend wraps. Needs Quickshell and the Omarchy shell, so it is not part of `make test`.
 legend-wrap:
 	./tests/qml/legend-wrap.sh
+
+# Re-renders docs/media and preview.png offscreen against the demo bridge:
+# fictional contacts, a throwaway HOME, nothing captured from the screen.
+screenshots:
+	./scripts/demo-shots.sh

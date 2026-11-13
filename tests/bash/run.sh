@@ -160,10 +160,12 @@ echo "no shell-string execution in QML"
 # is exactly what Omarchy's own Util.execArgv does. Matched as a fixed string,
 # so any other use of execDetached / bash -c / sh -c still fails.
 EXEC_HELPER='Quickshell.execDetached(["bash", "-lc", '"'"'exec "$@"'"'"', "bash"].concat(argv))'
-shell_hits=$(grep -n "execDetached\|bash -c\|sh -c" \
-  "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" "$ROOT/Model.js" \
+# Every QML and JS file the plugin ships, so a new component is covered the day it is added.
+mapfile -t PLUGIN_QML < <(find "$ROOT" -maxdepth 1 -name '*.qml' | sort)
+mapfile -t PLUGIN_JS < <(find "$ROOT" -maxdepth 1 -name '*.js' | sort)
+shell_hits=$(grep -n "execDetached\|bash -c\|sh -c" "${PLUGIN_QML[@]}" "${PLUGIN_JS[@]}" \
   | grep -vF "$EXEC_HELPER" || true)
-n_helper=$(grep -cF "$EXEC_HELPER" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" | awk -F: '{s+=$2} END {print s}')
+n_helper=$(grep -cF "$EXEC_HELPER" "${PLUGIN_QML[@]}" | awk -F: '{s+=$2} END {print s}')
 if [[ -n $shell_hits ]]; then echo "$shell_hits"; echo "  FAIL shell strings found"; fail=1
 elif [[ $n_helper -ne 3 ]]; then echo "  FAIL expected the execArgv helper in all 3 components, found $n_helper"; fail=1
 else echo "  ok   argv only (execArgv helper x$n_helper)"; fi
@@ -177,7 +179,7 @@ BASELINE="$ROOT/tests/omarchy-api-baseline.txt"
 if [[ -f $BASELINE ]]; then
   min_omarchy=$(grep -E '^MIN_OMARCHY=' "$BASELINE" | cut -d= -f2)
   allowed=$(grep -vE '^#|^MIN_OMARCHY=|^$' "$BASELINE" | sort -u)
-  actual=$(sed 's|//.*||' "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" \
+  actual=$(sed 's|//.*||' "${PLUGIN_QML[@]}" \
     | grep -ohE '\b(Util|Style|Color)\.[A-Za-z_][A-Za-z0-9_.]*' | sort -u)
   extra=$(comm -13 <(printf '%s\n' "$allowed") <(printf '%s\n' "$actual"))
   if [[ -n $extra ]]; then
@@ -194,24 +196,41 @@ else
 fi
 echo "the bottom legend wraps instead of eliding"
 # OMSIG-6: the legend was a single elided line, so the only way to read the end
-# of it ("Ctrl+O attach · Esc closes") was to widen the window. All three
-# properties below are load-bearing -- in particular, without preferredWidth 0
-# the RowLayout honours the Text's full single-line implicitWidth and never asks
-# it to be narrower, so it silently goes back to one line.
-legend=$(awk '/objectName: "legendText"/{p=1} p{print} p&&/^      }$/{exit}' "$ROOT/ConversationView.qml")
+# of it ("Ctrl+O attach · Esc closes") was to widen the window. It is now a Flow
+# of keycaps. Both layout properties below are load-bearing -- without
+# preferredWidth 0 the RowLayout reserves the legend's full single-line width
+# and the keycaps run off the edge instead of wrapping.
+legend=$(awk '/objectName: "legendFlow"/{p=1} p{print} p&&/^      }$/{exit}' "$ROOT/ConversationView.qml")
 if [[ -z $legend ]]; then
-  echo "  FAIL could not find the legendText block in ConversationView.qml"; fail=1
+  echo "  FAIL could not find the legendFlow block in ConversationView.qml"; fail=1
 else
-  for prop in 'wrapMode: Text.WordWrap' 'Layout.preferredWidth: 0' 'Layout.fillWidth: true'; do
+  for prop in 'Layout.preferredWidth: 0' 'Layout.fillWidth: true'; do
     if grep -qF "$prop" <<<"$legend"; then echo "  ok   legend sets $prop"
     else echo "  FAIL legend is missing $prop"; fail=1; fi
   done
   if grep -q 'elide:' <<<"$legend"; then
-    echo "  FAIL legend elides again; it cannot both elide and wrap"; fail=1
+    echo "  FAIL legend elides again; it must wrap"; fail=1
   else
     echo "  ok   legend does not elide"
   fi
 fi
+
+echo "the theme singleton is always named through Commons"
+# Qt 6.12 has a Color type of its own. A bare "Color." can resolve to it instead
+# of Omarchy's palette, and then every colour in the file is undefined while the
+# file still loads. Omarchy's own QML writes Commons.Color for the same reason.
+bare=$(sed 's|//.*||' "${PLUGIN_QML[@]}" | grep -nE '(^|[^.A-Za-z_])Color\.[a-z]' || true)
+if [[ -n $bare ]]; then echo "$bare" | head -5; echo "  FAIL bare Color. found; write Commons.Color."; fail=1
+else echo "  ok   every palette reference is Commons.Color"; fi
+
+echo "the shell starts no process to talk to the bridge"
+# Opening a conversation used to start five or six Python interpreters. The
+# plugin's requests go over the bridge's socket (Bridge.qml); only these CLI
+# commands may still be run from QML, each on an explicit user action or once.
+allowed='"(ls-files|paste-image|raise-window|float-window|sync|update|demo)"'
+spawned=$(grep -nE 'cliPath, *"[a-z-]+"' "${PLUGIN_QML[@]}" | grep -vE "cliPath, *$allowed" || true)
+if [[ -n $spawned ]]; then echo "$spawned"; echo "  FAIL QML runs the CLI for something the socket should carry"; fail=1
+else echo "  ok   only the file picker, clipboard, window placement and update helpers run the CLI"; fi
 
 echo "every GitHub Action is pinned to a commit SHA"
 # OMSIG-10: a major-version tag like @v7 is mutable. If upstream moves it, or the
@@ -282,8 +301,8 @@ rm -rf "$hs"
 echo "no 32-bit int holds a Signal timestamp"
 if grep -n -E "property int (\w*[a-z0-9_]Ts|ts|\w*Timestamp)\b" "$ROOT"/*.qml; then echo "  FAIL use real/var for timestamps"; fail=1; else echo "  ok"; fi
 echo "every Text, TextEdit and TextArea is PlainText"
-n_text=$(grep -c -E "^\s*(Text|TextEdit|QQC\.TextArea) \{" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" | awk -F: '{s+=$2} END {print s}')
-n_plain=$(grep -c -E "textFormat: (Text|TextEdit).PlainText" "$ROOT/Service.qml" "$ROOT/BarWidget.qml" "$ROOT/ConversationView.qml" | awk -F: '{s+=$2} END {print s}')
+n_text=$(grep -c -E "^\s*(Text|TextEdit|QQC\.TextArea) \{" "${PLUGIN_QML[@]}" | awk -F: '{s+=$2} END {print s}')
+n_plain=$(grep -c -E "textFormat: (Text|TextEdit).PlainText" "${PLUGIN_QML[@]}" | awk -F: '{s+=$2} END {print s}')
 if [[ $n_text -eq $n_plain ]]; then echo "  ok   $n_text/$n_plain"; else echo "  FAIL $n_text Text blocks, $n_plain PlainText"; fail=1; fi
 
 exit $fail

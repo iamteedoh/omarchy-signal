@@ -101,10 +101,32 @@ No shell strings carry remote data. `signal-cli` is invoked with an argv list
 and driven over JSON-RPC; the single shell string in the code base is the
 launch command handed to Omarchy's `omarchy-launch-or-focus` (which evals
 it), assembled from our own fixed argv with `shlex.quote` and never from
-message text; the Quickshell plugin launches `omarchy-signal` via
-`execArgv` with arrays built by `Model.tuiArgv` / `Model.sendArgv`, which
-validate the conversation key against `^(number|uuid|group|username):[A-Za-z0-9+/=_.-]+$`
-and pass free text as `--message=…` after which the key follows `--`.
+message text. The Quickshell plugin does not go through a command line for
+messages at all: it is a client of the bridge's socket (`Bridge.qml`), and a
+send, reaction or delete is a JSON request built by `Model.requestLine` with
+`JSON.stringify`, which the bridge validates against its schema like any other
+client's. A parameter cannot replace a request's `id` or `op`, and message text
+cannot start a second request, because a newline inside a JSON string is
+escaped. The few programs the plugin still starts (the terminal client, the
+file listing for the attachment picker, reading the clipboard, window
+placement, the updater) go through `execArgv` or a `Process` with an argv
+array, and `Model.tuiArgv` validates the conversation key against
+`^(number|uuid|group|username):[A-Za-z0-9+/=_.-]+$` first.
+
+### Installing and updating
+
+`install.sh` installs packages only through Omarchy's `omarchy-pkg-add` and
+`omarchy-pkg-aur-add`, after asking. It never calls `sudo` or a package manager
+itself. `omarchy-signal update` trusts what adding the plugin trusted and
+nothing new: it fetches from the plugin folder's own git remote, considers
+release tags (`vX.Y.Z`) only, moves by fast-forward only, refuses a folder
+with local changes or on another branch, requires the release to pass
+`omarchy plugin validate` and to still be this plugin, and puts the folder back
+if it does not. Tag names and remotes are pattern-checked before git sees them.
+The daily check requests the tag listing from that remote and sends nothing
+else; `update_check = false` turns it off. After `omarchy plugin update`, the
+plugin refreshes its own unit, hook and keybinding block and restarts a bridge
+that is running; it never starts, enables or unmasks one that is not.
 
 Recipients are allow-listed (`classify_recipient`): E.164, UUID, base64
 group id, or Signal username. Nothing starting with `-` can reach
@@ -179,4 +201,4 @@ Please do not post message contents or safety numbers in a report.
 payloads (`tests/python/test_sanitize.py::INJECTIONS`), hostile envelope
 shapes, option-injection recipients, path traversal and device-node
 attachments, oversize and malformed socket requests, socket and database
-permissions, and the argv builders in `Model.js`.
+permissions, the request builders in `Model.js`, and the updater (`tests/python/test_update.py`, `test_sync.py`).

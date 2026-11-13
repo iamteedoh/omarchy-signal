@@ -25,6 +25,7 @@ message_layout = "left"   # left: everything left-aligned · bubbles: yours on t
 # ── Appearance ──
 scroll_speed = 9   # Multiplier for trackpad and mouse-wheel scrolling in the popup and chat window; 0 = Qt's default
 terminal = "auto"   # auto follows omarchy default terminal; images need ghostty, kitty or wezterm
+window_opacity = 0   # How solid the popup conversation and the chat window are; 100 = no transparency, 0 = follow the Omarchy theme
 terminal_images = "auto"   # auto probes the terminal
 image_max_rows = 14
 qr_style = "auto"   # auto: shell popup, else image, else text
@@ -32,3 +33,4 @@ qr_style = "auto"   # auto: shell popup, else image, else text
 history_enabled = true   # Store messages on disk (owner-only SQLite); off = nothing survives a restart (restart)
 history_retain_days = 0   # 0 keeps everything
 device_name = "omarchy-signal"   # Shown in Signal's Linked devices (restart)
+update_check = true   # Asks the git remote the plugin was installed from for new release tags, once a day; nothing else is sent. Update with: omarchy-signal update

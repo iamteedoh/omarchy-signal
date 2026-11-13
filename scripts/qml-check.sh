@@ -28,7 +28,12 @@ qmlcheck_verdict() {
   fi
   # Errors Quickshell reports without reaching our own error branch.
   local qml_errors
-  qml_errors=$(grep -E "Cannot assign|is not a type|Unexpected token|Expected token" <<<"$out" | head -5 || true)
+  # The last three are what a theme singleton resolving to the wrong type looks
+  # like: the file loads, and every colour in it is undefined. Only what was
+  # logged before the verdict counts: once Quickshell is told to stop, bindings
+  # re-evaluate against objects that are already gone and log "of null" noise.
+  local live=${out%%QMLCHECK OK*}
+  qml_errors=$(grep -E "Cannot assign|is not a type|Unexpected token|Expected token|TypeError|ReferenceError|Unable to assign \[undefined\]" <<<"$live" | head -5 || true)
   if [[ -n $qml_errors ]]; then
     echo "qml-check: QML errors:" >&2
     sed 's/^/  /' <<<"$qml_errors" >&2
@@ -82,7 +87,7 @@ ShellRoot {
     var specs = [
       { file: "Service.qml", props: ({}) },
       { file: "BarWidget.qml", props: ({}) },
-      { file: "ConversationView.qml", props: ({ cliPath: "/bin/true" }) }
+      { file: "ConversationView.qml", props: ({ cliPath: "/bin/true", bridge: null }) }
     ]
     for (var i = 0; i < specs.length; i++) {
       var c = Qt.createComponent(specs[i].file)

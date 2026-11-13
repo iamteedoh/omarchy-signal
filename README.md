@@ -30,18 +30,31 @@ Omarchy theme.
 
 ## Tour
 
-![The full demo: a message arrives with a popup, a reply with an emoji shortcode, an attachment with a thumbnail, settings, the contact picker, the chat window and the reply dialog](docs/media/demo.webp)
+![The chat window with a conversation, the bar panel listing every conversation, and a popup from Morpheus with Reply, Open chat and Terminal](preview.png)
 
-The same 76-second walkthrough as a video file:
-[`docs/media/demo.mp4`](docs/media/demo.mp4). It was recorded against the
-fake `signal-cli` in `scripts/demo-env.sh`, so every contact and message in
-it is fictional.
+The popup, the reply dialog and the chat window are drawn with Omarchy's own
+colours, borders, rounding and fonts, so they change with the theme. Lumon
+above; Catppuccin Latte and Gruvbox below.
 
 | | |
 |---|---|
-| ![A message from Trinity arrives: unread badge in the list, popup top right](docs/media/incoming-message-and-popup.png) | ![Attach picker with path completion and a thumbnail of the picture](docs/media/attach-with-thumbnail.png) |
-| ![The sent picture rendered inline in the thread](docs/media/image-inline.png) | ![Settings screen modelled on Signal Desktop](docs/media/settings.png) |
-| ![The tabbed chat window over the terminal, with a reply just sent](docs/media/chat-window-reply.png) | ![The click-to-reply dialog after answering Morpheus](docs/media/reply-dialog-sent.png) |
+| ![The reply dialog on Catppuccin Latte, quoting a message](docs/media/catppuccin-latte-reply-dialog.png) | ![The chat window on Gruvbox](docs/media/gruvbox-chat-window.png) |
+| ![A message selected: Reply, React with quick emojis, Copy, Delete](docs/media/message-actions.png) | ![The attachment picker with thumbnails](docs/media/attach-picker.png) |
+| ![A group chat with sender names](docs/media/group-chat.png) | ![Every shortcut, behind the ? button](docs/media/shortcuts.png) |
+| ![A popup, at rest](docs/media/notification.png) | ![The reply dialog on Lumon](docs/media/reply-dialog.png) |
+| ![The bar panel: every conversation, unread counts, search](docs/media/chat-list.png) | |
+
+The terminal client:
+
+| | |
+|---|---|
+| ![Attach picker with path completion and a thumbnail of the picture](docs/media/attach-with-thumbnail.png) | ![The sent picture rendered inline in the thread](docs/media/image-inline.png) |
+| ![Settings screen modelled on Signal Desktop](docs/media/settings.png) | |
+
+The pictures of the popups and the chat window are rendered offscreen by
+`make screenshots` against the fake `signal-cli` in `scripts/demo-env.sh`, in
+a throwaway home directory: every contact, message and file in them is
+fictional, and nothing is captured from a screen.
 
 ## What you get
 
@@ -53,11 +66,15 @@ it is fictional.
 - Emoji shortcodes (`:smile:`) with a picker as you type, and emoticons
   (`:D`, `:)`, `<3`, …); both convert after the space, or send raw (setting).
 - Message actions on any message: react, quote/reply, edit, delete for
-  everyone, forward, copy, info. Attachment menu: open larger, save, save as,
+  everyone or only for you, forward, copy, info. Delete a whole conversation
+  from this computer. Attachment menu: open larger, save, save as,
   copy path, show/hide inline.
 - Copy and paste with mouse or keyboard: drag to select any text on screen
   (copied when you let go), `Ctrl-V` or right-click to paste, middle-click
-  pastes the last selection. A picture on the clipboard becomes an attachment.
+  pastes the last selection. A picture on the clipboard becomes an attachment,
+  and so do files copied in a file manager.
+- Leaves the terminal's own background unpainted, so its opacity and blur show
+  through the client the way they do through a shell.
 - Conversation menu: disappearing timer, mute, archive, block, message
   requests, safety number with verification, group members, rename, leave,
   new group, Note to Self.
@@ -66,20 +83,31 @@ it is fictional.
 - Settings screen (`Ctrl-S`) grouped like Signal's own client.
 
 **Popups and the chat window** (Quickshell)
-- An incoming message slides in top right. Click it: a conversation view opens
-  front and centre with the thread, images, reply-to-message, reactions,
-  attachments (thumbnail picker), emoji, typing indicator.
+- An incoming message slides in top right, drawn like Omarchy's own
+  notifications. Hover it for Reply, Open chat and Terminal. Click it: a
+  conversation view opens front and centre with the thread, images,
+  reply-to-message, reactions, attachments (thumbnail picker), emoji, typing
+  indicator.
 - **Detach** it, or pick a chat from the bar, and it lives in the **chat
   window**: one real window with a tab per conversation, so Hyprland can float
   it, tile it, or park it in the scratchpad (`SUPER+ALT+S`, back with
-  `SUPER+S`). Tabs show unread dots; `Ctrl+Tab` cycles them.
+  `SUPER+S`). Tabs show unread dots and keep their own draft; `Ctrl+Tab`
+  cycles them.
+- Delete a message for you or for everyone (within Signal's 24 hours), or a
+  whole chat from this computer. Day separators, delivery and read ticks.
+- Everything follows the active theme, and animations switch off with
+  `omarchy toggle animations`.
 - Kinetic trackpad and wheel scrolling with a speed setting.
 - Notification content levels (name and message / name only / nothing),
   Do Not Disturb awareness, optional sound.
+- Light on the machine: the shell talks to the bridge over its socket instead
+  of starting a program per action, so opening a chat costs no process at all.
 
-**Bar widget**: Signal glyph with a pulsing unread dot and count. Click for a
+**Bar widget**: Signal glyph with an unread dot and count. Click for a
 searchable list of conversations and contacts (also `SUPER+CTRL+G`): `Enter`
-opens the chat window, `Ctrl+Enter` or right-click the terminal client.
+opens the chat window, `Ctrl+Enter` or right-click the terminal client. It
+also carries the one thing left to do when there is one: finish setup, link
+this computer, or install an update.
 
 **Command line**: send, react, list, history, status, doctor, settings.
 
@@ -100,59 +128,74 @@ opens the chat window, `Ctrl+Enter` or right-click the terminal client.
   `$XDG_RUNTIME_DIR`. Every string from the network is sanitised before it is
   stored or forwarded; every request from a client is schema-validated.
 - The **terminal client**, the **CLI** and the **Quickshell plugin** are thin
-  clients of the bridge. The plugin drives it through `omarchy-signal events`
-  (a JSON line stream) and the CLI, always as argv arrays, never shell strings.
+  clients of the bridge, all speaking the same newline-delimited JSON on its
+  socket. The plugin never builds a shell string; the few programs it starts
+  (file listing, clipboard, window placement) get argv arrays.
 
 ## Install
 
 Requirements: Omarchy 4.x (Quattro), Python ≥ 3.11 (ships with Omarchy),
 `signal-cli` from the AUR, `qrencode` (linking) and ImageMagick (image
-conversion). The installer offers to install the last three. Inline images in
+conversion). Setup offers to install the last three. Inline images in
 the terminal need Ghostty, kitty or WezTerm as Omarchy's default terminal
 (`omarchy default terminal ghostty`) or `terminal = "ghostty"` in the config.
-
-```bash
-git clone https://github.com/iamteedoh/omarchy-signal ~/git/omarchy-signal
-cd ~/git/omarchy-signal
-./install.sh          # also fine from ~/.config/omarchy/plugins/iamteedoh.signal after `omarchy plugin add`
-                      # (--link symlinks the checkout instead; see docs/STATUS.md before using it)
-omarchy-signal link   # a QR code pops up on screen; scan it with Signal on your phone
-omarchy-signal tui
-```
-
-`install.sh` load-checks the QML against your shell, copies the plugin to
-`~/.config/omarchy/plugins/iamteedoh.signal`, links `~/.local/bin/omarchy-signal`,
-installs and (re)starts the `omarchy-signal` user service, adds the
-keybindings and the menu row, enables the bar widget, installs a post-update
-check, and restarts the shell so the notification service picks up new code.
-`./uninstall.sh` reverses all of it (`--purge` also deletes history), and
-`omarchy plugin remove iamteedoh.signal` drops the plugin folder.
-
-### From the plugin marketplace
-
-The standard Omarchy way works as well:
 
 ```bash
 omarchy plugin add https://github.com/iamteedoh/omarchy-signal --enable
 ```
 
-That clones the plugin into `~/.config/omarchy/plugins/iamteedoh.signal` and
-turns on the bar widget and the notification service. Because this plugin
-also needs a command line tool and a background service, a **"Signal: finish
-setup"** popup appears at that point; click it (or run
-`~/.config/omarchy/plugins/iamteedoh.signal/install.sh` yourself) and the
-installer completes the rest in a terminal, asking before it installs any
-package. Then `omarchy-signal link`.
+That is Omarchy's own way of adding a plugin: it clones the repository into
+`~/.config/omarchy/plugins/iamteedoh.signal` and turns on the bar widget and
+the notification service. Because this plugin also needs a command and a
+background service, a **Finish setting up Signal** popup appears. Click
+**Finish setup** (the bar panel has the same button) and a terminal runs
+`install.sh` from the plugin folder, in place: it checks the QML against your
+shell, links `~/.local/bin/omarchy-signal`, installs and starts the
+`omarchy-signal` user service, adds the keybindings and the menu row, and
+offers to link this computer with a QR code. It asks before it installs any
+package.
+
+`./uninstall.sh` in the plugin folder reverses all of it (`--purge` also
+deletes history).
 
 ### Updating
 
 ```bash
-omarchy plugin update iamteedoh.signal      # pulls the new code
-~/.config/omarchy/plugins/iamteedoh.signal/install.sh   # restarts the bridge and shell with it
-omarchy-signal doctor
+omarchy-signal update
 ```
 
-(For a `git clone` install, `git pull` in the checkout and `./install.sh`.)
+It fetches from the remote the plugin was added from, moves the plugin folder
+to the newest release tag (fast-forward only, never a branch tip), checks it
+with `omarchy plugin validate`, and runs that release's `install.sh` so the
+service, keybindings and shell all pick up the new code. `--check` only
+reports. Once a day the plugin looks for a new release tag and offers it in a
+popup and in the bar panel (`update_check = false` turns that off; nothing but
+the tag listing is requested).
+
+Omarchy's own command works too:
+
+```bash
+omarchy plugin update iamteedoh.signal
+```
+
+The plugin notices its files changed, refreshes the service unit, keybindings
+and hook, restarts the bridge if it was running, and asks you to restart the
+shell. It never starts a bridge you had stopped or disabled.
+
+An install made before 0.5 by `./install.sh` from a separate checkout is a
+plain copy with no git history, which `omarchy plugin update` cannot see.
+`omarchy-signal update` replaces it with a git checkout of the release and
+keeps the old folder beside it as a hidden backup, so from then on both
+commands work.
+
+### Developing
+
+```bash
+git clone https://github.com/iamteedoh/omarchy-signal ~/git/omarchy-signal
+cd ~/git/omarchy-signal
+./install.sh          # copies this checkout into the plugin folder and sets it up
+                      # (--link symlinks the checkout instead; see docs/STATUS.md before using it)
+```
 
 ### Dependencies and permissions
 
@@ -161,8 +204,9 @@ account keys and does every cryptographic operation), `qrencode` (linking
 QR), ImageMagick (image conversion), and optionally `wl-clipboard` (copy and paste), `pw-play` and
 `xdg-open`. The installer asks before installing any of them; package
 installation is the only step that touches the system outside your home
-directory, and it goes through `omarchy-pkg-add` (or `pacman` with `sudo`
-when that helper is missing). Everything else, including the user-level
+directory, and it goes through Omarchy's own `omarchy-pkg-add` and
+`omarchy-pkg-aur-add`. The installer never calls `sudo` or a package manager
+itself: without those commands it lists what is missing and stops. Everything else, including the user-level
 systemd service, lives under `$HOME`, `$XDG_RUNTIME_DIR` and
 `~/.config/omarchy`. The plugin never overwrites your `shell.json`,
 bindings or menu files; it appends clearly marked blocks that
@@ -190,7 +234,7 @@ bindings or menu files; it appends clearly marked blocks that
 | `Ctrl-U` | contacts and groups (start a conversation; "me" is Note to Self) |
 | `/` | search history |
 | `Ctrl-A` | attach: path prompt with Tab completion, folder listing and image preview |
-| `Ctrl-G` | pick any message: react, quote, edit, delete for everyone, forward, copy, open, info |
+| `Ctrl-G` | pick any message: react, quote, edit, delete for everyone (`d`) or for me (`D`), forward, copy, open, info |
 | `Ctrl-R` / `Ctrl-Q` | react to / quote the last message |
 | `Ctrl-O`, or click an attachment or picture | open larger, save to `~/Downloads`, save as…, copy path, show/hide inline |
 | `Ctrl-T` | conversation: detach into the chat window, disappearing messages, mute, archive, block, message request, safety number (`v` verifies), group members/rename/leave, new group, archived chats |
@@ -202,7 +246,7 @@ bindings or menu files; it appends clearly marked blocks that
 | `Ctrl-X` / `Ctrl-L` | clear composer / redraw |
 | drag with the mouse | select text; copied to the clipboard (and the primary selection) on release |
 | `Ctrl-C` | copy the selection; with nothing selected, quit |
-| `Ctrl-V`, right-click | paste into the composer or the open prompt; a picture on the clipboard is attached |
+| `Ctrl-V`, right-click | paste into the composer or the open prompt; a picture or copied files on the clipboard are attached |
 | `SUPER+V`, `Shift-Insert`, `Ctrl-Shift-V` | paste text (the terminal does this paste itself, and terminals paste text only) |
 | middle-click | paste the primary selection |
 | `?` | help |
@@ -211,17 +255,18 @@ bindings or menu files; it appends clearly marked blocks that
 
 | Key or mouse | Action |
 |--------------|--------|
-| click a message | action row: Reply · React (quick emojis) · Copy |
+| click a message | action row: Reply · React (quick emojis) · Copy · Delete (for me, or for everyone within 24 hours) |
 | drag across message text | select it; `Ctrl+C` / `SUPER+C` or a right-click on it copies (Copy then copies just the selection) |
 | right-click a message | reactions |
 | middle-click a message | reply to it |
 | click a picture | open it larger |
 | `Enter` / `Shift+Enter` or `Alt+Enter` | send / new line; the message box grows to 10 lines, then scrolls (shortcodes and emoticons convert after the space) |
-| `Ctrl+V` / `SUPER+V`, right-click the message field, middle-click | paste (right-click shows Cut · Copy · Paste); a picture on the clipboard is attached |
+| `Ctrl+V` / `SUPER+V`, right-click the message field, middle-click | paste (right-click shows Cut · Copy · Paste); a picture or copied files on the clipboard are attached |
 | `Ctrl+O` / `Ctrl+Shift+A` / 󰁦 | attachment picker: arrows move, `Enter` attaches, `Backspace` on an empty filter goes up a folder |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab`, click a tab | switch conversation tab; ✕ closes a tab |
-| `Esc` | closes one layer at a time: picker → text selection → message actions → quote → window (`SUPER+W` closes the popup at once) |
-| Detach / Terminal buttons | move the popup into the chat window / open the terminal client |
+| `Esc` | closes one layer at a time: shortcut list → picker → menus → text selection → message actions → quote → window (`SUPER+W` closes the popup at once) |
+| `?` | every shortcut |
+| header buttons | conversation menu (delete chat) · open the terminal client · move the popup into the chat window · close |
 
 ### Bar panel
 
@@ -259,11 +304,13 @@ offers `r`). File: `~/.config/omarchy-signal/config.toml`
 | | `emoji_autoconvert` | `:smile:` and `:D` → emoji; off sends them raw |
 | | `message_layout` | `left` · `bubbles` |
 | Appearance | `scroll_speed` | chat window trackpad/wheel multiplier (0 = Qt default) |
+| | `window_opacity` | how solid the popup conversation and chat window are, in percent (0 = follow the theme) |
 | | `terminal` | `auto` (Omarchy default) · `ghostty` · `kitty` · `wezterm` · `foot` · `alacritty` |
 | | `terminal_images`, `image_max_rows` | inline image support and height |
 | | `qr_style` | linking QR: `auto` (shell popup) · `shell` · `image` · `half` · `quad` · `braille` |
 | Data | `history_enabled`, `history_retain_days` | local history (restart), retention |
 | | `device_name` | shown in Signal's Linked devices (restart) |
+| | `update_check` | look for a new release tag once a day |
 
 ## Command line
 
@@ -273,6 +320,9 @@ omarchy-signal open [chat] [--new]         # open or focus the client in a termi
 omarchy-signal window [chat]               # open a chat in the tabbed chat window
 omarchy-signal send "Trinity" -m "on my way" [-a photo.jpg] [--quote-ts …]
 omarchy-signal react <chat> <ts> <author> 🔥
+omarchy-signal delete <chat> <ts> [--everyone]   # for me by default; nothing is sent
+omarchy-signal delete-chat <chat>          # from this computer only
+omarchy-signal update [--check] [--yes]    # install the newest release
 omarchy-signal conversations | contacts [--refresh] | history <chat> -n 30
 omarchy-signal mark-read <chat>            # also clears the phone's notification
 omarchy-signal link [--force] [--qr-style …]
@@ -306,6 +356,7 @@ from a stranger do anything to your terminal, your shell or your files.
 
 ```bash
 make test          # python unit + integration tests (fake signal-cli), node tests, shell checks, QML load check
+make screenshots   # re-render preview.png and docs/media offscreen, from the demo bridge
 make security      # the adversarial subset: terminal injection, path traversal, protocol abuse
 ```
 
@@ -315,9 +366,8 @@ Released: the current version is on the
 [Releases](https://github.com/iamteedoh/omarchy-signal/releases) page and in
 `manifest.json`. It runs daily against a real account (linking, sending,
 receiving, attachments, receipts, reactions, the popups and the chat
-window). Install from this repository with `omarchy plugin add` or
-`git clone` as described above; a listing on plugins.omarchy.org is
-planned. Known issues live in [`docs/STATUS.md`](docs/STATUS.md); bugs and
+window). Install it with `omarchy plugin add` as described above; it is
+listed on [plugins.omarchy.org](https://plugins.omarchy.org/plugin.html?id=iamteedoh.signal). Known issues live in [`docs/STATUS.md`](docs/STATUS.md); bugs and
 ideas go in the [issues](https://github.com/iamteedoh/omarchy-signal/issues).
 
 ## Contributing

@@ -181,6 +181,11 @@ class Bridge:
         self.store = Store(paths.database if cfg.history_enabled else ":memory:")
         self.supervisor = SignalCliSupervisor(cfg, paths, self._on_notification)
         self.account = cfg.account
+        # Whether signal-cli has actually been asked which accounts exist. Until it
+        # has, `linked: false` means "not known yet", not "no account": signal-cli
+        # reports itself ready before listAccounts has answered, and a client that
+        # reads the gap as an unlinked computer offers to link one that is linked.
+        self._accounts_known = False
         self.accounts: list[str] = []
         self.subscribers: set[asyncio.StreamWriter] = set()
         self.server: asyncio.AbstractServer | None = None
@@ -276,6 +281,7 @@ class Bridge:
                 if isinstance(item, dict) and isinstance(item.get("number"), str):
                     numbers.append(item["number"])
         self.accounts = numbers
+        self._accounts_known = True
         if self.cfg.account and self.cfg.account in numbers:
             self.account = self.cfg.account
         elif numbers and not self.cfg.account:
@@ -291,6 +297,7 @@ class Bridge:
         return {
             "version": __version__, "protocol": protocol.PROTOCOL_VERSION,
             "connected": self.supervisor.ready.is_set(), "linked": bool(self.account),
+            "accountsKnown": self._accounts_known and self.supervisor.ready.is_set(),
             "accountCount": len(self.accounts), "unread": self.store.total_unread(),
             "historyEnabled": self.cfg.history_enabled, "notifications": self.cfg.notifications,
             "notificationPreview": self.cfg.notification_preview,
@@ -299,6 +306,8 @@ class Bridge:
             "emojiAutoconvert": self.cfg.emoji_autoconvert,
             "attachmentThumbnails": self.cfg.attachment_thumbnails,
             "scrollSpeed": self.cfg.scroll_speed,
+            "windowOpacity": self.cfg.window_opacity,
+            "updateCheck": self.cfg.update_check,
             "notificationSound": os.path.expanduser(self.cfg.notification_sound) if self.cfg.notification_sound and os.path.isfile(os.path.expanduser(self.cfg.notification_sound)) else "",
             "account": self.account,
             "notificationTimeoutMs": self.cfg.notification_timeout_ms,
@@ -665,6 +674,30 @@ class Bridge:
         await self._broadcast("unread", {"total": self.store.total_unread(), "conversation": rec.key})
         return {"ts": ts, "status": status, "failures": failures}
 
+    async def op_deleteLocal(self, p: dict) -> dict:
+        """Remove one message from this computer only ("delete for me"). Any
+        message, including one you received: nothing is sent to Signal, so it
+        stays on your phone and on the sender's device."""
+        rec = parse_conversation_key(p["conversation"])
+        sender = p.get("sender", "")
+        if sender:
+            parse_conversation_key(sender)                 # a key, not free text
+        removed = self.store.forget_message(rec.key, p["ts"], sender)
+        if removed:
+            await self._broadcast("removed", {"conversation": rec.key, "ts": p["ts"], "sender": sender})
+            await self._broadcast("unread", {"total": self.store.total_unread(), "conversation": rec.key})
+        return {"removed": removed}
+
+    async def op_deleteConversation(self, p: dict) -> dict:
+        """Remove a conversation and its messages from this computer only, the
+        way Signal's own clients delete a chat. Nothing is sent; the thread
+        comes back by itself if another message arrives in it."""
+        rec = parse_conversation_key(p["conversation"])
+        count = self.store.forget_conversation(rec.key)
+        await self._broadcast("conversationRemoved", {"conversation": rec.key, "messages": count})
+        await self._broadcast("unread", {"total": self.store.total_unread()})
+        return {"removed": True, "messages": count}
+
     async def op_markRead(self, p: dict) -> dict:
         rec = parse_conversation_key(p["conversation"])
         unread_msgs = []
@@ -842,10 +875,18 @@ class Bridge:
         account = self._require_account()
         rec = parse_conversation_key(p["conversation"])
         msg = self.store.message(rec.key, p["ts"])
-        if not msg or not msg.outgoing:
-            raise ValueError("you can only delete your own messages")
+        if not msg:
+            raise ValueError("no such message")
+        note_to_self = rec.kind == "number" and rec.value == account
+        refusal = protocol.delete_for_everyone_refusal(msg.ts, int(time.time() * 1000), outgoing=msg.outgoing,
+                                                       deleted=msg.deleted, note_to_self=note_to_self)
+        if refusal:
+            raise ValueError(refusal)
         params: dict[str, Any] = {"account": account, "targetTimestamp": p["ts"]}
-        params.update(self._target_params(rec))
+        if note_to_self:
+            params["noteToSelf"] = True          # as send and edit do; signal-cli's --note-to-self
+        else:
+            params.update(self._target_params(rec))
         await self.supervisor.call("remoteDelete", params, timeout=60)
         self.store.delete_own(rec.key, p["ts"])
         await self._broadcast("deleted", {"conversation": rec.key, "ts": p["ts"]})
