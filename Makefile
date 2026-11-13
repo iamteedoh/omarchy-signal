@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-.PHONY: test security qml python bash shellcheck validate install dev legend-wrap screenshots
+.PHONY: test security qml python bash shellcheck validate install dev legend-wrap screenshots tui-screenshots
 
 PY := python3
 
@@ -46,3 +46,9 @@ legend-wrap:
 # fictional contacts, a throwaway HOME, nothing captured from the screen.
 screenshots:
 	./scripts/demo-shots.sh
+
+# Re-takes the terminal client pictures (docs/media/tui-*.png): Ghostty in a
+# private nested Hyprland against the demo bridge. Needs a Hyprland session;
+# the nested compositor's window shows on the desktop for a few seconds.
+tui-screenshots:
+	./scripts/demo-tui-shots.sh
