@@ -60,8 +60,9 @@ class ClientTrustTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         server = getattr(self, "server", None)
         if server is not None:
-            pass
-            server.close_clients()
+            server.close()
+            if hasattr(server, "close_clients"):      # Python 3.13+
+                server.close_clients()
             await asyncio.sleep(0.05)
         self.tmp.cleanup()
 
@@ -81,17 +82,16 @@ class ClientTrustTests(unittest.IsolatedAsyncioTestCase):
         return self.server
 
     async def test_connects_to_our_own_bridge(self):
-        server = await self._serve()
+        await self._serve()
         c = BridgeClient(self.paths)
         try:
             hello = await c.connect(timeout=2)
             self.assertEqual(hello.get("version"), "x")
         finally:
             await c.close()
-            pass
 
     async def test_refuses_a_directory_others_can_use(self):
-        server = await self._serve()
+        await self._serve()
         self.paths.run_dir.chmod(0o777)
         try:
             with self.assertRaises(BridgeUnavailable) as cm:
@@ -99,27 +99,20 @@ class ClientTrustTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(cm.exception.code, "untrusted")
         finally:
             self.paths.run_dir.chmod(0o700)
-            pass
 
     async def test_refuses_a_server_run_by_another_user(self):
-        server = await self._serve()
-        try:
-            with mock.patch.object(client_mod, "server_is_us", return_value=False):
-                with self.assertRaises(BridgeUnavailable) as cm:
-                    await BridgeClient(self.paths).connect(timeout=2)
-            self.assertEqual(cm.exception.code, "untrusted")
-        finally:
-            pass
+        await self._serve()
+        with mock.patch.object(client_mod, "server_is_us", return_value=False):
+            with self.assertRaises(BridgeUnavailable) as cm:
+                await BridgeClient(self.paths).connect(timeout=2)
+        self.assertEqual(cm.exception.code, "untrusted")
 
     async def test_peer_credentials_are_read(self):
-        server = await self._serve()
-        try:
-            _r, w = await asyncio.open_unix_connection(str(self.paths.socket))
-            self.assertTrue(client_mod.server_is_us(w))
-            w.close()
-            await w.wait_closed()
-        finally:
-            pass
+        await self._serve()
+        _r, w = await asyncio.open_unix_connection(str(self.paths.socket))
+        self.assertTrue(client_mod.server_is_us(w))
+        w.close()
+        await w.wait_closed()
 
     async def test_missing_bridge_is_offline_not_untrusted(self):
         with self.assertRaises(BridgeUnavailable) as cm:
