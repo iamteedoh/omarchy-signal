@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, clipboard, emoji, kitty, links, pathcomplete, protocol, qr
+from . import __version__, clipboard, emoji, kitty, links, pathcomplete, protocol, qr, telemetry
 from .bridge import _guess_mime
 from .client import BridgeClient, BridgeError, BridgeUnavailable
 from .config import RESTART_REQUIRED, SETTINGS, Config, Paths, coerce_setting, save_config
@@ -1215,6 +1215,9 @@ class App:
             return
         if key.alt and key.name == "char" and key.char in ("d", "w") and self.active_key:
             self._open_in_window(self.active_key)
+            return
+        if key.alt and key.name == "char" and key.char == "t":
+            self.toggle_telemetry()
             return
         if key.ctrl and key.char == "a":
             self.open_overlay("attach")
@@ -2436,7 +2439,7 @@ class App:
             sub += " · blocked"
         out.append(T.move(top, left) + T.fg(self._hue(conv["key"])) + T.BOLD + truncate(title, width // 2) + T.RESET
                    + T.fg(th.dim) + "  " + truncate(sub, width // 2 - 4) + T.RESET)
-        out.append(T.move(top + 1, left) + T.fg(th.border) + "╌" * (width - 1) + T.RESET)
+        out.append(T.move(top + 1, left) + self._telemetry_line(conv["key"], width - 1))
         lines = self._render_lines()
         area = rows - 2
         max_scroll = max(0, len(lines) - area)
@@ -2505,6 +2508,43 @@ class App:
                     out.append(T.move(y, col) + kitty.encode_place(image_id, cols=cols, rows=irows))
                     self.placed[image_id] = (y, col, cols, irows)
         return "".join(out)
+
+    def telemetry_on(self) -> bool:
+        """The setting, as the bridge last announced it: the chat window's
+        switch changes it too, and both clients follow the one value."""
+        value = self.status.get("telemetry")
+        return value if isinstance(value, bool) else self.cfg.telemetry
+
+    def toggle_telemetry(self) -> None:
+        on = not self.telemetry_on()
+        self.status["telemetry"] = on
+        self._settings_apply("telemetry", on)
+        self.show_toast("telemetry on" if on else "telemetry off", 2)
+
+    def _telemetry_line(self, key: str, width: int) -> str:
+        """The rule under a conversation's title. With telemetry on it carries
+        the readings (traffic, delivery, reply times, the last 24 hours), as
+        many as the width holds; off, or with nothing to say, it is the plain
+        rule. One row either way, so nothing below it moves."""
+        th = self.theme
+        rule = T.fg(th.border)
+        msgs = self.messages.get(key) or []
+        if not self.telemetry_on() or not msgs or width < 24:
+            return rule + "╌" * width + T.RESET
+        stats = telemetry.thread_stats(msgs[-telemetry.WINDOW:])
+        tones = {"accent": th.accent, "alarm": th.red}
+        parts: list[str] = []
+        used = 3                                   # the "╌◢ " the line opens with
+        for label, value, tone in telemetry.readout(stats):
+            need = len(label) + 1 + str_width(value) + 3      # and the " ╌ " after it
+            if used + need > width:
+                break
+            parts.append(T.fg(th.dim) + label + " " + T.fg(tones.get(tone, th.foreground)) + value)
+            used += need
+        if not parts:
+            return rule + "╌" * width + T.RESET
+        body = (rule + " ╌ ").join(parts)
+        return rule + "╌" + T.fg(th.accent) + "◢ " + body + rule + " " + "╌" * max(0, width - used + 2) + T.RESET
 
     def _covered_rows(self) -> tuple[int, int] | None:
         """Terminal rows an overlay or the emoji picker will draw on this frame."""
@@ -2797,6 +2837,7 @@ class App:
                     ("Ctrl-G", "message actions: react, quote, edit, delete, forward, copy, info"),
                     ("Ctrl-T", "conversation: open in a window (detach), timers, mute, archive, block, safety number, groups"),
                     ("Alt-D (w in the list)", "detach this chat into the shell's chat window"),
+                    ("Alt-T", "telemetry line on or off"),
                     ("Ctrl-E / m", "mute conversation"), ("Ctrl-S / F2", "settings"), ("Ctrl-L", "redraw"), ("Ctrl-X", "clear composer"),
                     ("Ctrl-Z", "put a failed message back in the composer"), (":smile:", "emoji shortcodes; a picker opens as you type"),
                     ("drag", "select text; it is copied when you let go"), ("Ctrl-V, right-click", "paste; a picture attaches (SUPER+V pastes text only)"),

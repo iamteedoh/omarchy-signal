@@ -37,6 +37,7 @@ ShellRoot {
     readonly property bool unlinked: false
     readonly property bool needsSetup: false
     readonly property string latestVersion: ""
+    readonly property bool telemetry: true
     readonly property string cliPath: shots.cliPath
     property bool showContacts: false
     property string query: ""
@@ -138,14 +139,14 @@ ShellRoot {
 
   FloatingWindow {
     visible: true
-    implicitWidth: 1240
-    implicitHeight: 800
+    implicitWidth: 1500
+    implicitHeight: 860
     color: Commons.Color.background
 
     Item {
       id: stage
-      width: 1240
-      height: 800
+      width: 1500
+      height: 860
 
       // A plain backdrop in the theme's own colours: no wallpaper, no desktop.
       Rectangle {
@@ -159,7 +160,7 @@ ShellRoot {
       Ui.BorderSurface {
         id: frame
         x: 50; y: 50
-        width: shots.sp(700); height: shots.sp(700)
+        width: shots.sp(940); height: shots.sp(760)
         color: Commons.Color.popups.background
         borderSpec: Commons.Border.surfaceSpec("popups", "border", Commons.Color.popups.border, Math.max(1, shots.sp(2)))
         radius: Commons.Style.cornerRadius
@@ -172,10 +173,12 @@ ShellRoot {
           connected: shots.up
           linked: shots.up
           account: "+15550001111"
+          totalUnread: listOwner.unread
           detached: true
           siblings: [{ key: shots.trinity, name: "Trinity", unread: false }, { key: shots.morpheus, name: "Morpheus", unread: true },
                      { key: shots.crew, name: "Nebuchadnezzar crew", unread: false }]
         }
+        HudFrame { anchors.fill: parent; anchors.margins: shots.sp(4); arm: shots.sp(16) }
       }
 
       // The bar panel's list, in the surface the panel gives it.
@@ -216,7 +219,7 @@ ShellRoot {
         Rectangle { anchors.fill: parent; color: Commons.Color.menu.scrim }
         Ui.BorderSurface {
           anchors.centerIn: parent
-          width: shots.sp(680); height: shots.sp(640)
+          width: shots.sp(940); height: shots.sp(760)
           color: Commons.Util.alpha(Commons.Color.popups.background, 0.98)
           borderSpec: Commons.Border.surfaceSpec("popups", "border", Commons.Color.popups.border, Math.max(1, shots.sp(2)))
           radius: Commons.Style.cornerRadius

@@ -13,7 +13,29 @@ node tests for the shared JS, shell static checks and a QML load check.
 Visual behaviour in the chat window (send flicker, scroll pinning) was
 verified with burst screenshot captures of real sends, not by inspection.
 
+## Checked only against the demo bridge
+
+- **The instrument-panel look and the telemetry** (OMSIG-2026-1113-0004): the
+  chat window, the popups, the bar panel and the terminal client's telemetry
+  line were rendered offscreen against the fake `signal-cli` in three themes
+  and at several widths, and their figures are unit tested. They have not yet
+  been run against a real account in the live shell.
+
 ## Known issues and gotchas
+
+- **Telemetry looks at the newest 240 messages of a conversation.** Reply times,
+  delivery counts and the busiest hour describe that window, not the whole
+  history. A reply that takes more than 12 hours counts as a new conversation
+  and is left out of the reply time.
+- **signal-cli keeps only a contact's current key.** `listIdentities` returns one
+  entry a contact (checked on 0.14.10), dated by `addedTimestamp`. The rail
+  therefore says "Key changed" when the conversation's history is older than
+  the key, not by counting stored keys. Until this branch the bridge read a
+  field called `addedDate`, which signal-cli never sends, so every key looked
+  undated and the key age never showed.
+- **"Transit" is the gap between the sender's clock and this computer's.** It
+  is shown only when that gap is under five minutes; a phone with a wrong clock
+  shows none.
 
 - **Omarchy shell may abort on plugin hot-reload (upstream).** Writing under
   `~/.config/omarchy/plugins/` reloads every user plugin; a cloned copy of the

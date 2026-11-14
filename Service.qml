@@ -59,6 +59,7 @@ Item {
   property bool attachmentThumbnails: true
   property int scrollSpeed: 9
   property int windowOpacity: 0          // percent; 0 = what the theme uses
+  property bool telemetry: true          // the readings beside a conversation
   property bool updateCheck: true
   property string bridgeVersion: ""
   property var windows: []               // conversation keys open as tabs of the chat window
@@ -70,6 +71,16 @@ Item {
   // How solid the popup conversation and the chat window are.
   function surfaceAlpha(themeDefault) {
     return root.windowOpacity > 0 ? Math.max(0.5, Math.min(1, root.windowOpacity / 100)) : themeDefault
+  }
+
+  // The telemetry switch in a conversation's header. It changes here at once,
+  // and the setting is written by the command line, which also tells the
+  // bridge; the bridge cannot do it, its unit mounts the config read-only. The
+  // bridge then announces the setting, which is how the terminal client and a
+  // second view hear of it.
+  function setTelemetry(on) {
+    root.telemetry = on === true
+    root.execArgv([root.cliPath, "settings", "telemetry", root.telemetry ? "true" : "false"])
   }
 
   onWindowsChanged: { root.refreshTabs(); if (root.windows.length) root.refreshNames() }
@@ -308,6 +319,7 @@ Item {
     if ("attachmentThumbnails" in d) root.attachmentThumbnails = d.attachmentThumbnails !== false
     if (typeof d.scrollSpeed === "number") root.scrollSpeed = Math.max(0, Math.min(20, d.scrollSpeed))
     if (typeof d.windowOpacity === "number") root.windowOpacity = Math.max(0, Math.min(100, d.windowOpacity))
+    if ("telemetry" in d) root.telemetry = d.telemetry !== false
     if ("updateCheck" in d) root.updateCheck = d.updateCheck !== false
     if (typeof d.version === "string") root.bridgeVersion = Model.singleLine(d.version, 20)
     root.lastError = Model.singleLine(d.error || "", 200)
@@ -599,8 +611,9 @@ Item {
         id: dialog
         anchors.centerIn: parent
         anchors.verticalCenterOffset: Style.space(12) * (1 - replyWindow.reveal)
-        width: Math.min(parent.width - Style.space(48), Style.space(680))
-        height: Math.min(parent.height - Style.space(48), Style.space(640))
+        // Wide enough for the telemetry rail while it is on.
+        width: Math.min(parent.width - Style.space(48), Style.space(root.telemetry ? 940 : 680))
+        height: Math.min(parent.height - Style.space(48), Style.space(root.telemetry ? 760 : 640))
         color: Util.alpha(Commons.Color.popups.background, root.surfaceAlpha(0.98))
         borderSpec: Border.surfaceSpec("popups", "border", Commons.Color.popups.border, Math.max(1, Style.space(2)))
         radius: Style.cornerRadius
@@ -620,10 +633,22 @@ Item {
           emojiAutoconvert: root.emojiAutoconvert
           thumbnails: root.attachmentThumbnails
           scrollSpeed: root.scrollSpeed
+          telemetry: root.telemetry
+          active: root.replyOpen
+          totalUnread: root.unread
+          bridgeVersion: root.bridgeVersion
+          onRequestTelemetry: function(on) { root.setTelemetry(on) }
           onRequestClose: root.closeReply()
           onRequestTerminal: root.openTerminal(root.replyKey)
           onRequestDetach: { var k = root.replyKey; root.closeReply(); root.openWindow(k, root.replyName) }
         }
+      }
+      // Brackets close on the dialog as it opens.
+      HudFrame {
+        anchors.fill: dialog
+        anchors.margins: -Style.space(8)
+        arm: Style.space(18)
+        lock: replyWindow.reveal
       }
     }
   }
@@ -658,8 +683,9 @@ Item {
       property alias view: chatView
       title: "Signal · " + (chatView.conversationName || "chats")
       color: Util.alpha(Commons.Color.popups.background, root.surfaceAlpha(1.0))
-      implicitWidth: Style.space(680)
-      implicitHeight: Style.space(640)
+      // Sized once, when it opens: wide enough for the telemetry rail if that is on.
+      implicitWidth: Style.space(root.telemetry ? 940 : 680)
+      implicitHeight: Style.space(root.telemetry ? 760 : 640)
       minimumSize: Qt.size(Style.space(380), Style.space(320))
       visible: false
       onVisibleChanged: {
@@ -679,6 +705,10 @@ Item {
         emojiAutoconvert: root.emojiAutoconvert
         thumbnails: root.attachmentThumbnails
         scrollSpeed: root.scrollSpeed
+        telemetry: root.telemetry
+        totalUnread: root.unread
+        bridgeVersion: root.bridgeVersion
+        onRequestTelemetry: function(on) { root.setTelemetry(on) }
         detached: true
         siblings: root.windowTabs
         // The window's content eases in once, when the window first maps.
@@ -695,6 +725,13 @@ Item {
         onRequestTerminal: root.openTerminal(root.activeTab)
         onRequestRaise: function(key) { root.showTab(key) }
         onRequestCloseTab: function(key) { root.closeWindow(key) }
+      }
+      // The window's corners, inside the border the window manager draws.
+      HudFrame {
+        anchors.fill: parent
+        anchors.margins: Style.space(4)
+        arm: Style.space(16)
+        color: root.connected && root.linked ? Commons.Color.accent : Commons.Color.urgent
       }
     }
   }

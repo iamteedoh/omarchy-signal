@@ -6,8 +6,9 @@ import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
-// What the bar panel shows: the connection state, the one thing left to do,
-// the search field, the list of conversations or contacts, and the keys.
+// What the bar panel shows: the connection state, a row of readings (when
+// telemetry is on), the one thing left to do, the search field, the list of
+// conversations or contacts, and the keys.
 //
 // It holds no state of its own. `owner` is the bar widget (BarWidget.qml),
 // which keeps the lists, the cursor and the actions; this draws them. Keeping
@@ -33,17 +34,64 @@ Column {
       font.family: owner.fontFamily
       font.pixelSize: Style.font.subtitle
       font.bold: true
+      font.capitalization: Font.AllUppercase
+      font.letterSpacing: Math.max(0.5, Style.font.subtitle * 0.12)
     }
-    Text {
+    HudLabel {
+      anchors.left: headerTitle.right
+      anchors.leftMargin: Style.space(8)
+      anchors.baseline: headerTitle.baseline
+      text: "// comms"
+      foreground: owner.fg
+      strength: 0.38
+      font.family: owner.fontFamily
+    }
+    Rectangle {
+      id: headerDot
+      anchors.right: headerState.left
+      anchors.rightMargin: Style.space(7)
+      anchors.verticalCenter: parent.verticalCenter
+      width: Math.max(5, Style.space(7)); height: width
+      radius: Math.min(Style.cornerRadius, width / 2)
+      color: headerState.tone
+    }
+    HudLabel {
       id: headerState
+      readonly property color tone: owner.linked ? Commons.Color.accent : (owner.connected && !owner.unlinked ? owner.dim : Commons.Color.urgent)
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       text: owner.linked ? (owner.unread > 0 ? owner.unread + " unread" : "Connected")
             : owner.unlinked ? "Not linked" : owner.connected ? "Connecting" : "Offline"
-      textFormat: Text.PlainText
-      color: owner.linked ? (owner.unread > 0 ? Commons.Color.accent : owner.dim) : (owner.connected && !owner.unlinked ? owner.dim : Commons.Color.urgent)
+      foreground: owner.linked ? (owner.unread > 0 ? Commons.Color.accent : owner.fg) : (owner.connected && !owner.unlinked ? owner.fg : Commons.Color.urgent)
+      strength: owner.linked && owner.unread === 0 ? 0.55 : 1
       font.family: owner.fontFamily
-      font.pixelSize: Style.font.caption
+    }
+  }
+
+  HudRule { width: parent.width; foreground: owner.fg }
+
+  // The state of everything at a glance: how many chats, how much is unread,
+  // what is open in the chat window. Hidden with the telemetry setting.
+  Flow {
+    visible: owner.telemetry !== false && owner.linked
+    width: parent.width
+    spacing: Style.space(6)
+    readonly property int openCount: owner.rows.filter(function(r) { return r.open === true }).length
+    readonly property int unreadChats: owner.rows.filter(function(r) { return r.unread > 0 }).length
+    HudChip { foreground: owner.fg; label: owner.showContacts ? "Contacts" : "Chats"; value: String(owner.rows.length) }
+    HudChip {
+      foreground: owner.fg
+      label: "Unread"
+      value: owner.unread > 0 ? owner.unread + (parent.unreadChats > 0 && !owner.showContacts ? " in " + parent.unreadChats : "") : "0"
+      toned: owner.unread > 0
+      tone: owner.unread > 0 ? Commons.Color.accent : Util.alpha(owner.fg, 0.3)
+    }
+    HudChip {
+      foreground: owner.fg
+      visible: !owner.showContacts
+      label: "Open"
+      value: String(parent.openCount)
+      tone: parent.openCount > 0 ? Commons.Color.accent : Util.alpha(owner.fg, 0.3)
     }
   }
 
@@ -187,6 +235,15 @@ Column {
                      : (rowHover.containsMouse ? Style.hoverFillFor(owner.fg, Commons.Color.accent) : "transparent")
       Behavior on color { ColorAnimation { duration: owner.ms(90) } }
 
+      Rectangle {
+        anchors.left: parent.left
+        anchors.top: parent.top; anchors.bottom: parent.bottom
+        width: Math.max(2, Style.space(3))
+        color: Commons.Color.accent
+        opacity: rowItem.current ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: owner.ms(90) } }
+      }
+
       MouseArea {
         id: rowHover
         anchors.fill: parent
@@ -199,7 +256,7 @@ Column {
       Avatar {
         id: rowAvatar
         anchors.left: parent.left
-        anchors.leftMargin: Style.space(8)
+        anchors.leftMargin: Style.space(11)
         anchors.verticalCenter: parent.verticalCenter
         size: Style.space(30)
         name: rowItem.modelData.name
@@ -241,21 +298,20 @@ Column {
         anchors.rightMargin: Style.space(10)
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(3)
-        Text {
+        HudLabel {
           anchors.right: parent.right
           visible: text.length > 0
           text: rowItem.modelData.open ? "open" : Model.relativeTime(rowItem.modelData.ts)
-          textFormat: Text.PlainText
-          color: rowItem.modelData.open ? Commons.Color.accent : owner.dim
+          foreground: rowItem.modelData.open ? Commons.Color.accent : owner.fg
+          strength: rowItem.modelData.open ? 1 : 0.55
           font.family: owner.fontFamily
-          font.pixelSize: Style.font.caption
         }
         Rectangle {
           anchors.right: parent.right
           visible: rowItem.modelData.unread > 0
           width: Math.max(height, badgeText.implicitWidth + Style.space(8))
           height: badgeText.implicitHeight + Style.space(2)
-          radius: height / 2
+          radius: Math.min(Style.cornerRadius, height / 2)
           color: Commons.Color.accent
           Text {
             id: badgeText

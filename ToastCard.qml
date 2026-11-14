@@ -8,6 +8,8 @@ import qs.Ui
 // One popup card. Drawn like Omarchy's own notifications: the same surface
 // colours and border, a 40px mark for the sender, the title in bold over a
 // dimmer body, and the things the card can do as a bar along its bottom edge.
+// What marks it as ours is the lit edge on its left and the brackets in its
+// corners, which close in as the card arrives.
 // It only draws and reports; Service.qml decides what a click means.
 Item {
   id: card
@@ -57,6 +59,25 @@ Item {
     borderSpec: Border.surfaceSpec("notifications", "border", Commons.Color.notifications.border, Math.max(1, Style.space(2)))
     clip: true
 
+    Rectangle {
+      x: plate.borderLeft; y: plate.borderTop
+      width: Math.max(2, Style.space(3))
+      height: plate.height - plate.borderTop - plate.borderBottom
+      color: Commons.Color.accent
+    }
+    HudFrame {
+      id: reticle
+      anchors.fill: parent
+      anchors.leftMargin: plate.borderLeft + Style.space(7); anchors.rightMargin: plate.borderRight + Style.space(4)
+      anchors.topMargin: plate.borderTop + Style.space(4); anchors.bottomMargin: plate.borderBottom + Style.space(4)
+      arm: Style.space(8)
+      weight: 1
+      color: Util.alpha(Commons.Color.accent, 0.8)
+      lock: 0
+      Component.onCompleted: lock = 1
+      Behavior on lock { NumberAnimation { duration: card.ms(320); easing.type: Easing.OutCubic } }
+    }
+
     MouseArea {
       anchors.fill: parent
       acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
@@ -71,8 +92,8 @@ Item {
     RowLayout {
       id: cardBody
       anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-      anchors.leftMargin: plate.borderLeft + Style.space(12)
-      anchors.rightMargin: plate.borderRight + Style.space(12)
+      anchors.leftMargin: plate.borderLeft + Style.space(16)
+      anchors.rightMargin: plate.borderRight + Style.space(14)
       anchors.topMargin: plate.borderTop + Style.space(10)
       spacing: Style.space(12)
 
@@ -81,6 +102,7 @@ Item {
         visible: card.isMessage
         name: card.convName || card.title
         foreground: card.text
+        ticks: false               // the card's own brackets frame it
       }
       Rectangle {
         Layout.alignment: Qt.AlignTop
@@ -118,16 +140,14 @@ Item {
           Item {
             implicitWidth: Math.max(sourceText.implicitWidth, closeMark.implicitWidth + Style.space(6))
             implicitHeight: Math.max(sourceText.implicitHeight, closeMark.implicitHeight)
-            Text {
+            HudLabel {
               id: sourceText
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              text: "Signal"
-              textFormat: Text.PlainText
-              color: card.dim
+              text: card.isMessage ? "Incoming" : "Signal"
+              foreground: card.isMessage ? Commons.Color.accent : card.text
+              strength: card.isMessage ? 1 : 0.6
               opacity: card.hovered ? 0 : 1
-              font.family: Style.font.family
-              font.pixelSize: Style.font.bodySmall
               Behavior on opacity { NumberAnimation { duration: card.ms(150) } }
             }
             Text {

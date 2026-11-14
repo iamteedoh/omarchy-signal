@@ -16,7 +16,7 @@ Omarchy theme.
  ◢ SIGNAL // OMARCHY  ◉ SECURE                       3 unread ▸ lumon-dark ▸ IMG
  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    ● Morpheus          1 │ Trinity  +15550002222
-     The Oracle will se… │ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+     The Oracle will se… │ ╌◢ TX 3 ▰▰▰▱▱▱▱▱ 6 RX ╌ READ 0/3 ╌ ANSWERS ~1m ╌╌╌╌
    ● Tank              2 │ You · 00:33 ✓
      Pick up on the sec… │   Which way out?
  ▌ ● Trinity       00:38 │ Trinity · 00:35 ✓✓
@@ -84,6 +84,10 @@ the real desktop can end up in a picture.
   new group, Note to Self.
 - Attach files with a path prompt that completes as you type, lists the folder,
   and previews the highlighted image.
+- A telemetry line under the conversation's title: messages sent and received,
+  how many of yours were read, how quickly each side answers, how long since
+  the last one came in, and the last 24 hours as a graph. It shows as many
+  readings as the width holds. `Alt-T` switches it off and on.
 - Settings screen (`Ctrl-S`) grouped like Signal's own client. When a new
   release is out, the client says so and `u` on the settings screen installs
   it and comes back.
@@ -101,8 +105,21 @@ the real desktop can end up in a picture.
   cycles them.
 - Delete a message for you or for everyone (within Signal's 24 hours), or a
   whole chat from this computer. Day separators, delivery and read ticks.
-- Everything follows the active theme, and animations switch off with
-  `omarchy toggle animations`.
+- Drawn as an instrument panel: corner brackets on the window, the popups and
+  the pictures, a lit rule under the header, a marked edge on every message
+  (yours in the accent colour), a scan line when a conversation comes up, a
+  light along the composer while a message is being sent.
+- **Telemetry** beside the conversation, readable at a glance and worked out
+  from what is already on this computer: the link to the bridge (round trip,
+  uptime), the contact's safety number (verified or not, and when the key last
+  changed), the disappearing timer, messages each way with the last 24 hours
+  as a graph, how far your messages got (read, delivered, in flight, failed),
+  how quickly each side answers, running counters since the last message in
+  and out, what is waiting in the composer, and what is unread in the other
+  chats. A narrow window shows the same readings as a row of chips. The pulse
+  button in the header or `Ctrl+T` hides it, and the choice is kept.
+- Everything follows the active theme (every colour is the theme's own), and
+  animations switch off with `omarchy toggle animations`.
 - Kinetic trackpad and wheel scrolling with a speed setting.
 - Notification content levels (name and message / name only / nothing),
   Do Not Disturb awareness, optional sound.
@@ -113,7 +130,9 @@ the real desktop can end up in a picture.
 searchable list of conversations and contacts (also `SUPER+CTRL+G`): `Enter`
 opens the chat window, `Ctrl+Enter` or right-click the terminal client. It
 also carries the one thing left to do when there is one: finish setup, link
-this computer, or install an update.
+this computer, or install an update. With telemetry on, a row of readings
+says how many chats there are, how much is unread and what is open in the
+chat window.
 
 **Command line**: send, react, list, history, status, doctor, settings.
 
@@ -248,6 +267,7 @@ bindings or menu files; it appends clearly marked blocks that
 | `Ctrl-O`, or click an attachment or picture | open larger, save to `~/Downloads`, save as…, copy path, show/hide inline |
 | `Ctrl-T` | conversation: detach into the chat window, disappearing messages, mute, archive, block, message request, safety number (`v` verifies), group members/rename/leave, new group, archived chats |
 | `Alt-D` | detach this chat into the chat window |
+| `Alt-T` | telemetry line on or off |
 | `Ctrl-E` | mute conversation |
 | `:smile:` / `:D` | emoji shortcodes and emoticons convert after the space (setting); a picker opens as you type |
 | `Ctrl-S` / `F2` | settings (`u` there installs an available update, `r` restarts the bridge after a restart-only change) |
@@ -274,9 +294,10 @@ bindings or menu files; it appends clearly marked blocks that
 | middle-click the message field | paste the primary selection |
 | `Ctrl+O` / `Ctrl+Shift+A` / 󰁦 | attachment picker: arrows move, `Enter` attaches, `Backspace` on an empty filter goes up a folder |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab`, click a tab | switch conversation tab; ✕ closes a tab |
+| `Ctrl+T`, or the pulse button in the header | telemetry on or off (the setting is kept, and the terminal client follows it) |
 | `Esc` | closes one layer at a time: shortcut list → picker → menus → text selection → message actions → quote → window (`SUPER+W` closes the popup at once) |
 | `?` | every shortcut |
-| header buttons | conversation menu (disappearing messages timer, delete chat) · open the terminal client · move the popup into the chat window · close |
+| header buttons | telemetry · conversation menu (disappearing messages timer, delete chat) · open the terminal client · move the popup into the chat window · close |
 
 ### Bar panel
 
@@ -315,6 +336,7 @@ offers `r`). File: `~/.config/omarchy-signal/config.toml`
 | | `message_layout` | `left` · `bubbles` |
 | Appearance | `scroll_speed` | chat window trackpad/wheel multiplier (0 = Qt default) |
 | | `window_opacity` | how solid the popup conversation and chat window are, in percent (0 = follow the theme) |
+| | `telemetry` | the readings beside a conversation in the chat window, in the bar panel and in the terminal client |
 | | `terminal` | `auto` (Omarchy default) · `ghostty` · `kitty` · `wezterm` · `foot` · `alacritty` |
 | | `terminal_images`, `image_max_rows` | inline image support and height |
 | | `qr_style` | linking QR: `auto` (shell popup) · `shell` · `image` · `half` · `quad` · `braille` |
