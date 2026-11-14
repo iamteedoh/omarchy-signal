@@ -201,7 +201,8 @@ Item {
         if (Number(have.ts) === Number(row.ts) && !!have.outgoing === !!row.outgoing) {
           if (have.body !== row.body || have.status !== row.status || have.reactions !== row.reactions || have.edited !== row.edited
               || have.deleted !== row.deleted || have.image !== row.image || have.filesText !== row.filesText || have.quote !== row.quote
-              || have.newDay !== row.newDay || have.firstOfRun !== row.firstOfRun || have.who !== row.who) threadModel.set(k, row)
+              || have.newDay !== row.newDay || have.firstOfRun !== row.firstOfRun || have.who !== row.who
+              || have.tick !== row.tick || have.expiresIn !== row.expiresIn) threadModel.set(k, row)
           continue
         }
       }
@@ -799,6 +800,8 @@ Item {
         required property real imageW
         required property real imageH
         required property string status
+        required property string tick
+        required property string expiresIn
         required property bool edited
         required property bool deleted
         required property string quote
@@ -839,109 +842,111 @@ Item {
             }
           }
 
-          // A little air between one person's run of messages and the next.
-          Item { width: 1; height: row.firstOfRun && !row.newDay ? Style.space(8) : 0 }
+          // A blank line between messages, as in the terminal client.
+          Item { width: 1; height: row.newDay ? 0 : Style.space(10) }
 
-          Item {
+          // Drawn like the terminal client: the name, time and delivery mark on
+          // one line, the message under it, everything on the left. Only the
+          // selected message gets a tint.
+          Rectangle {
+            id: entry
             width: parent.width
-            height: bubble.height
+            height: content.implicitHeight + Style.space(8)
+            radius: Style.cornerRadius
+            color: row.selected ? Util.alpha(Commons.Color.accent, 0.12) : "transparent"
+            border.width: row.selected ? 1 : 0
+            border.color: Util.alpha(Commons.Color.accent, 0.5)
+            Behavior on color { ColorAnimation { duration: view.ms(120) } }
 
-            Rectangle {
-              id: bubble
-              anchors.left: row.outgoing ? undefined : parent.left
-              anchors.right: row.outgoing ? parent.right : undefined
-              width: Math.min(parent.width * 0.8, Math.max(content.implicitWidth + Style.space(24), Style.space(96)))
-              height: content.implicitHeight + Style.space(14)
-              radius: Style.cornerRadius
-              color: row.outgoing ? Util.alpha(Commons.Color.accent, row.selected ? 0.26 : 0.16)
-                                  : Util.alpha(Commons.Color.popups.text, row.selected ? 0.13 : 0.07)
-              border.width: row.selected ? 1 : 0
-              border.color: Util.alpha(Commons.Color.accent, 0.8)
-              Behavior on color { ColorAnimation { duration: view.ms(120) } }
-
-              MouseArea {
-                anchors.fill: parent
-                acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
-                onClicked: function(mouse) {
-                  if (mouse.button === Qt.MiddleButton) { view.quoteRow(row.message); return }
-                  if (mouse.button === Qt.RightButton) {
-                    // Right-click on selected text copies it; anywhere else it opens the reaction row.
-                    if (bodyText.selectedText.length > 0) { view.copyText(bodyText.selectedText); return }
-                    view.confirmDeleteTs = 0
-                    view.selectedTs = row.ts
-                    view.emojiRowOpen = true
-                    return
-                  }
-                  view.emojiRowOpen = false
+            MouseArea {
+              anchors.fill: parent
+              acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+              onClicked: function(mouse) {
+                if (mouse.button === Qt.MiddleButton) { view.quoteRow(row.message); return }
+                if (mouse.button === Qt.RightButton) {
+                  // Right-click on selected text copies it; anywhere else it opens the reaction row.
+                  if (bodyText.selectedText.length > 0) { view.copyText(bodyText.selectedText); return }
                   view.confirmDeleteTs = 0
-                  view.selectedTs = row.selected ? 0 : row.ts
+                  view.selectedTs = row.ts
+                  view.emojiRowOpen = true
+                  return
                 }
+                view.emojiRowOpen = false
+                view.confirmDeleteTs = 0
+                view.selectedTs = row.selected ? 0 : row.ts
               }
+            }
 
-              ColumnLayout {
-                id: content
-                anchors.fill: parent
-                anchors.topMargin: Style.space(7)
-                anchors.bottomMargin: Style.space(7)
-                anchors.leftMargin: Style.space(12)
-                anchors.rightMargin: Style.space(12)
-                spacing: Style.space(4)
+            ColumnLayout {
+              id: content
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.top: parent.top
+              anchors.topMargin: Style.space(4)
+              anchors.leftMargin: Style.space(6)
+              anchors.rightMargin: Style.space(6)
+              spacing: Style.space(3)
 
-                // In a group, the name once per run; in a 1:1 chat the header already says who.
+              // You · 20:01  (edited)  ✓✓
+              RowLayout {
+                Layout.fillWidth: true
+                spacing: 0
                 Text {
-                  visible: view.isGroup && !row.outgoing && row.firstOfRun
                   text: row.who
                   textFormat: Text.PlainText
-                  color: Commons.Color.accent
+                  elide: Text.ElideRight
+                  Layout.maximumWidth: content.width * 0.6
+                  color: row.outgoing ? Commons.Color.accent : view.fg
                   font.family: Style.font.family
-                  font.pixelSize: Style.font.caption
+                  font.pixelSize: Style.font.body
                   font.bold: true
                 }
+                Text {
+                  text: " · " + row.time
+                  textFormat: Text.PlainText
+                  color: view.dim
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.body
+                }
+                Text {
+                  visible: row.edited
+                  text: "  (edited)"
+                  textFormat: Text.PlainText
+                  color: view.dim
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.body
+                }
+                Text {
+                  visible: row.tick.length > 0 && !row.deleted
+                  text: "  " + row.tick
+                  textFormat: Text.PlainText
+                  color: row.status === "failed" ? Commons.Color.urgent
+                       : row.status === "read" || row.status === "viewed" ? Commons.Color.accent : view.dim
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.body
+                }
+                Item { Layout.fillWidth: true }
+              }
+
+              // The message, indented under its name line.
+              ColumnLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: Style.space(18)
+                spacing: Style.space(3)
+
                 // The message this one answers.
-                RowLayout {
+                Text {
                   visible: row.quote.length > 0
                   Layout.fillWidth: true
-                  Layout.fillHeight: false
-                  Layout.maximumHeight: implicitHeight
-                  spacing: Style.space(8)
-                  Rectangle { Layout.fillHeight: true; implicitWidth: Math.max(2, Style.space(2)); radius: 1; color: Util.alpha(Commons.Color.accent, 0.7) }
-                  Text {
-                    Layout.fillWidth: true
-                    text: row.quote
-                    textFormat: Text.PlainText
-                    elide: Text.ElideRight
-                    maximumLineCount: 2
-                    wrapMode: Text.Wrap
-                    color: view.dim
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.caption
-                  }
-                }
-                // Photos are decoded once at thumbnail size and cached, and their
-                // box is sized from Signal's metadata before the decode finishes,
-                // so scrolling never re-decodes or re-lays out the thread.
-                Item {
-                  visible: row.image.length > 0
-                  readonly property real boxW: Math.min(Style.space(360), list.width * 0.66)
-                  readonly property real ratio: (row.imageW > 0 && row.imageH > 0) ? row.imageH / row.imageW : 0.66
-                  Layout.preferredWidth: boxW
-                  Layout.preferredHeight: visible ? Math.min(Style.space(300), boxW * ratio) : 0
-                  Loader {
-                    anchors.fill: parent
-                    active: row.image.length > 0
-                    sourceComponent: Image {
-                      source: "file://" + row.image
-                      asynchronous: true
-                      cache: true
-                      smooth: true
-                      fillMode: Image.PreserveAspectFit
-                      horizontalAlignment: row.outgoing ? Image.AlignRight : Image.AlignLeft
-                      sourceSize.width: 480
-                      opacity: status === Image.Ready ? 1 : 0
-                      Behavior on opacity { NumberAnimation { duration: view.ms(160) } }
-                      MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: view.execArgv(["xdg-open", row.image]) }
-                    }
-                  }
+                  text: "↩ " + row.quote
+                  textFormat: Text.PlainText
+                  elide: Text.ElideRight
+                  maximumLineCount: 2
+                  wrapMode: Text.Wrap
+                  color: view.dim
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.body
+                  font.italic: true
                 }
                 // Selectable: drag to select, Ctrl+C (or Super+C, or a right-click) copies.
                 TextEdit {
@@ -999,44 +1004,57 @@ Item {
                     }
                   }
                 }
+                // Photos are decoded once at thumbnail size and cached, and their
+                // box is sized from Signal's metadata before the decode finishes,
+                // so scrolling never re-decodes or re-lays out the thread.
+                Item {
+                  visible: row.image.length > 0
+                  readonly property real boxW: Math.min(Style.space(360), list.width * 0.66)
+                  readonly property real ratio: (row.imageW > 0 && row.imageH > 0) ? row.imageH / row.imageW : 0.66
+                  Layout.preferredWidth: boxW
+                  Layout.preferredHeight: visible ? Math.min(Style.space(300), boxW * ratio) : 0
+                  Loader {
+                    anchors.fill: parent
+                    active: row.image.length > 0
+                    sourceComponent: Image {
+                      source: "file://" + row.image
+                      asynchronous: true
+                      cache: true
+                      smooth: true
+                      fillMode: Image.PreserveAspectFit
+                      horizontalAlignment: Image.AlignLeft
+                      sourceSize.width: 480
+                      opacity: status === Image.Ready ? 1 : 0
+                      Behavior on opacity { NumberAnimation { duration: view.ms(160) } }
+                      MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: view.execArgv(["xdg-open", row.image]) }
+                    }
+                  }
+                }
                 Text {
-                  visible: row.filesText.length > 0 && row.image.length === 0
+                  visible: row.filesText.length > 0
                   text: "󰁦 " + row.filesText
                   textFormat: Text.PlainText
                   elide: Text.ElideRight
                   Layout.fillWidth: true
                   color: view.dim
                   font.family: Style.font.family
-                  font.pixelSize: Style.font.caption
+                  font.pixelSize: Style.font.body
                 }
-                RowLayout {
-                  Layout.fillWidth: true
-                  spacing: Style.space(8)
-                  Rectangle {
-                    visible: row.reactions.length > 0
-                    implicitWidth: reactionText.implicitWidth + Style.space(12)
-                    implicitHeight: reactionText.implicitHeight + Style.space(4)
-                    radius: Math.min(Style.cornerRadius, height / 2)
-                    color: Util.alpha(Commons.Color.popups.text, 0.08)
-                    Text {
-                      id: reactionText
-                      anchors.centerIn: parent
-                      text: row.reactions
-                      textFormat: Text.PlainText
-                      color: view.fg
-                      font.family: Style.font.family
-                      font.pixelSize: Style.font.caption
-                    }
-                  }
-                  Item { Layout.fillWidth: true }
-                  Text {
-                    text: row.time + (row.edited ? " · edited" : "")
-                          + (row.outgoing && !row.deleted ? (row.status === "read" || row.status === "delivered" ? "  ✓✓" : row.status === "failed" ? "  ✗" : "  ✓") : "")
-                    textFormat: Text.PlainText
-                    color: !row.outgoing ? view.faint : row.status === "failed" ? Commons.Color.urgent : row.status === "read" ? Commons.Color.accent : view.faint
-                    font.family: Style.font.family
-                    font.pixelSize: Style.font.caption
-                  }
+                Text {
+                  visible: row.reactions.length > 0
+                  text: row.reactions
+                  textFormat: Text.PlainText
+                  color: view.fg
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.body
+                }
+                Text {
+                  visible: row.expiresIn.length > 0
+                  text: "⏱ " + row.expiresIn
+                  textFormat: Text.PlainText
+                  color: view.dim
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
                 }
               }
             }
@@ -1048,8 +1066,7 @@ Item {
           Loader {
             active: row.selected
             visible: active
-            anchors.left: row.outgoing ? undefined : parent.left
-            anchors.right: row.outgoing ? parent.right : undefined
+            x: Style.space(24)
             sourceComponent: Item {
               id: actionsRoot
               implicitWidth: actions.implicitWidth

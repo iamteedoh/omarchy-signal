@@ -2069,6 +2069,13 @@ class App:
         col = LIST_WIDTH + 4 + col_w
         return T.move(row, col) + "\x1b[5 q" + T.SHOW_CURSOR
 
+    def _title(self, conv: dict) -> str:
+        """A conversation's name; your own number is Note to Self, as in Signal."""
+        account = self.status.get("account") or ""
+        if account and conv.get("key") == f"number:{account}":
+            return "Note to Self"
+        return clean_name(conv.get("name")) or clean_name(conv.get("key", "")).split(":", 1)[-1]
+
     def _hue(self, key: str):
         th = self.theme
         palette = [th.blue, th.green, th.cyan, th.magenta, th.yellow, th.orange, th.bright_green, th.bright_magenta, th.bright_cyan]
@@ -2116,7 +2123,7 @@ class App:
                 is_active = c["key"] == self.active_key
                 idx = self.conversations.index(c)
                 unread = c.get("unread", 0)
-                name = truncate(clean_name(c.get("name")) or clean_name(c["key"]).split(":", 1)[-1], width - 8)
+                name = truncate(self._title(c), width - 8)
                 if c.get("muted"):
                     name = "󰖁 " + truncate(name, width - 10)
                 badge = pad(f" {min(unread, 99):>2} ", 5, align="right") if unread else "     "
@@ -2153,7 +2160,7 @@ class App:
                     bg = T.bg(th.selection) if is_active else T.bg(th.background)
                     if i % 2 == 0:
                         marker = T.fg(th.accent) + ("▶" if self.focus == "list" and is_active else ("▌" if is_active else " "))
-                        name = clean_name(c.get("name")) or clean_name(c["key"]).split(":", 1)[-1]
+                        name = self._title(c)
                         if c.get("muted"):
                             name = "󰖁 " + name
                         name = truncate(name, width - 8)
@@ -2419,7 +2426,7 @@ class App:
             msg = "No conversation selected. Press Ctrl-U to pick a contact, or Tab to browse."
             out.append(T.move(top + rows // 2, left + max(0, (width - len(msg)) // 2)) + T.fg(th.dim) + msg + T.RESET)
             return "".join(out)
-        title = clean_name(conv.get("name")) or clean_name(conv["key"]).split(":", 1)[-1]
+        title = self._title(conv)
         sub = clean_name(conv["key"]).split(":", 1)[-1] if conv.get("kind") != "group" else "group"
         if conv.get("muted"):
             sub += " · muted"

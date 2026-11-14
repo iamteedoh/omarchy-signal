@@ -179,6 +179,12 @@ test("parseDnd reads Omarchy's state file", () => {
   assert.equal(M.parseDnd('{"dnd":"true"}'), false)
 })
 
+test("tickText matches the terminal client", () => {
+  assert.equal(M.tickText("sending"), "◌ sending"); assert.equal(M.tickText("sent"), "✓")
+  assert.equal(M.tickText("delivered"), "✓✓"); assert.equal(M.tickText("read"), "✓✓")
+  assert.equal(M.tickText("failed"), "✗ failed"); assert.equal(M.tickText(""), ""); assert.equal(M.tickText("toString"), "")
+})
+
 test("threadRows normalises history rows", () => {
   const day1 = new Date(2026, 10, 11, 23, 50).getTime(), day2 = new Date(2026, 10, 12, 0, 10).getTime()
   const rows = M.threadRows([
@@ -198,6 +204,9 @@ test("threadRows normalises history rows", () => {
   assert.deepEqual(rows.map(r => r.newDay), [true, false, true, false])
   assert.deepEqual(rows.map(r => r.firstOfRun), [true, false, true, true])
   assert.equal(rows[0].day, "2026-11-11"); assert.equal(rows[2].day, "2026-11-12"); assert.equal(rows[0].time, "23:50")
+  assert.equal(rows[3].tick, "✓✓"); assert.equal(rows[0].tick, "")
+  assert.equal(M.threadRows([{ ts: day1, body: "x", expiresIn: 300 }])[0].expiresIn, "5m")
+  assert.equal(M.threadRows([{ ts: day1, body: "x" }])[0].expiresIn, "")
   // Every field must be a flat value: the rows are stored in a ListModel.
   for (const r of rows) for (const k in r) assert.ok(["string", "number", "boolean"].includes(typeof r[k]), k)
   assert.deepEqual(M.threadRows(null), [])

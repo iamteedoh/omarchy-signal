@@ -255,6 +255,10 @@ class BridgeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await c.request("resolve", query="me"))["name"], "Note to Self")
             self.assertEqual((await c.request("resolve", query="+15550001111"))["key"], "number:+15550001111")
             self.assertEqual((await c.request("contacts"))[0]["displayName"], "Note to Self")
+            from omarchy_signal.sanitize import parse_conversation_key
+            h.bridge.store.upsert_conversation(parse_conversation_key("number:+15550001111"), last_ts=1700000000000)
+            convs = {cv["key"]: cv for cv in await c.request("conversations")}
+            self.assertEqual(convs["number:+15550001111"]["name"], "Note to Self")
             self.assertEqual((await c.request("resolve", query="trin"))["key"], "number:+15550002222")
             self.assertEqual((await c.request("resolve", query="+15550007777"))["key"], "number:+15550007777")
             self.assertEqual((await c.request("resolve", query="crew"))["kind"], "group")
