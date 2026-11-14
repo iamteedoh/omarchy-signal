@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/iamteedoh/omarchy-signal/compare/v0.5.1...v0.6.0) (2026-11-14)
+
+
+### Features
+
+* draw chat window messages like the terminal client ([#31](https://github.com/iamteedoh/omarchy-signal/issues/31)) ([53273b7](https://github.com/iamteedoh/omarchy-signal/commit/53273b741401db6ad13f43251d6273c75f4248ab))
+* redraw the client as an instrument panel with telemetry ([#33](https://github.com/iamteedoh/omarchy-signal/issues/33)) ([bea7048](https://github.com/iamteedoh/omarchy-signal/commit/bea70485d530e25e958b93477b37b3926774b515))
+
 ## [0.5.1](https://github.com/iamteedoh/omarchy-signal/compare/v0.5.0...v0.5.1) (2026-11-13)
 
 
