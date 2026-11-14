@@ -249,6 +249,18 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(set(cols), {tui.LIST_WIDTH + 3})
         self.assertNotIn("▏", app.term.text())
 
+    def test_your_own_number_is_note_to_self(self):
+        app = make_app()
+        seed(app)
+        app.status = {"linked": True, "connected": True, "account": "+15550001111"}
+        me = {"key": "number:+15550001111", "kind": "number", "name": "+15550001111", "lastTs": 1700000200000, "preview": "hi", "unread": 0}
+        app.conversations.insert(0, me)
+        app.active_key = me["key"]
+        app.messages[me["key"]] = []
+        app.draw()
+        screen = "\n".join("".join(r) for r in tui.screen_cells(app.frame_text, app.term.cols, app.term.rows))
+        self.assertEqual(screen.count("Note to Self"), 2, "in the list and over the thread")
+
     def test_mouse_selects_conversation(self):
         app = make_app()
         seed(app)

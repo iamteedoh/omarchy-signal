@@ -250,6 +250,12 @@ function clockTime(tsMs) {
   return pad2(d.getHours()) + ":" + pad2(d.getMinutes())
 }
 
+// The delivery mark after a message's time, the same as the terminal client's.
+function tickText(status) {
+  var ticks = { sending: "◌ sending", sent: "✓", delivered: "✓✓", read: "✓✓", viewed: "✓✓", failed: "✗ failed" }
+  return Object.prototype.hasOwnProperty.call(ticks, status) ? ticks[status] : ""
+}
+
 // "👍 2  ❤️" from the bridge's {sender: emoji} map.
 function reactionSummary(reactions) {
   if (!reactions || typeof reactions !== "object") return ""
@@ -344,6 +350,8 @@ function threadRows(rows, limit) {
       imageW: imageW,
       imageH: imageH,
       status: singleLine(m.status || "", 20),
+      tick: tickText(m.status),
+      expiresIn: timerLabel(m.expiresIn),
       edited: m.edited === true,
       deleted: m.deleted === true,
       quote: singleLine(m.quoteText || "", 200),
@@ -380,6 +388,7 @@ if (typeof module !== "undefined") {
     dayLabel: dayLabel,
     clockTime: clockTime,
     reactionSummary: reactionSummary,
+    tickText: tickText,
     versionNewer: versionNewer,
     TIMERS: TIMERS,
     timerLabel: timerLabel,

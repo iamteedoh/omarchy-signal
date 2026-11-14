@@ -607,7 +607,12 @@ class Bridge:
         return self.status()
 
     async def op_conversations(self, p: dict) -> list[dict]:
-        return [c.to_json() for c in self.store.conversations(include_archived=p.get("includeArchived", False))]
+        convs = self.store.conversations(include_archived=p.get("includeArchived", False))
+        mine = f"number:{self.account}" if self.account else ""
+        for c in convs:
+            if c.key == mine:
+                c.name = "Note to Self"          # as Signal names it, not by your own number
+        return [c.to_json() for c in convs]
 
     async def op_history(self, p: dict) -> list[dict]:
         rec = parse_conversation_key(p["conversation"])
