@@ -200,7 +200,7 @@ echo "the bottom legend wraps instead of eliding"
 # of keycaps. Both layout properties below are load-bearing -- without
 # preferredWidth 0 the RowLayout reserves the legend's full single-line width
 # and the keycaps run off the edge instead of wrapping.
-legend=$(awk '/objectName: "legendFlow"/{p=1} p{print} p&&/^      }$/{exit}' "$ROOT/ConversationView.qml")
+legend=$(awk '/objectName: "legendFlow"/{p=1} p{print} p&&/^          }$/{exit}' "$ROOT/ConversationView.qml")
 if [[ -z $legend ]]; then
   echo "  FAIL could not find the legendFlow block in ConversationView.qml"; fail=1
 else
@@ -227,10 +227,12 @@ echo "the shell starts no process to talk to the bridge"
 # Opening a conversation used to start five or six Python interpreters. The
 # plugin's requests go over the bridge's socket (Bridge.qml); only these CLI
 # commands may still be run from QML, each on an explicit user action or once.
-allowed='"(ls-files|paste|raise-window|float-window|sync|update|demo)"'
+# "settings" is the telemetry switch: it writes config.toml, which the bridge
+# cannot do (its unit mounts the config directory read-only).
+allowed='"(ls-files|paste|raise-window|float-window|sync|update|demo|settings)"'
 spawned=$(grep -nE 'cliPath, *"[a-z-]+"' "${PLUGIN_QML[@]}" | grep -vE "cliPath, *$allowed" || true)
 if [[ -n $spawned ]]; then echo "$spawned"; echo "  FAIL QML runs the CLI for something the socket should carry"; fail=1
-else echo "  ok   only the file picker, clipboard, window placement and update helpers run the CLI"; fi
+else echo "  ok   only the file picker, clipboard, window placement, update helpers and the telemetry switch run the CLI"; fi
 
 echo "every GitHub Action is pinned to a commit SHA"
 # OMSIG-10: a major-version tag like @v7 is mutable. If upstream moves it, or the

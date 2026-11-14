@@ -51,6 +51,24 @@ EXPIRE_MIN_S = 0.5
 RESTART_BACKOFF = (1, 2, 5, 10, 30, 60)
 
 
+
+def identity_added(item: dict) -> int:
+    """When signal-cli first saw an identity key, in ms since the epoch; 0 if it does not say.
+
+    signal-cli's listIdentities calls it ``addedTimestamp``. The bridge read
+    ``addedDate`` until 2026-11-13 (OMSIG-2026-1113-0004), which signal-cli has
+    never sent, so every key looked undated. Both are read so an older answer
+    still works."""
+    for name in ("addedTimestamp", "addedDate"):
+        value = item.get(name)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int) and value > 0:
+            return value
+        if isinstance(value, str) and value.isdigit() and int(value) > 0:
+            return int(value)
+    return 0
+
 class SignalCliSupervisor:
     """Keeps one ``signal-cli jsonRpc`` process alive and exposes its RPC."""
 
@@ -352,6 +370,7 @@ class Bridge:
             "attachmentThumbnails": self.cfg.attachment_thumbnails,
             "scrollSpeed": self.cfg.scroll_speed,
             "windowOpacity": self.cfg.window_opacity,
+            "telemetry": self.cfg.telemetry,
             "updateCheck": self.cfg.update_check,
             "notificationSound": os.path.expanduser(self.cfg.notification_sound) if self.cfg.notification_sound and os.path.isfile(os.path.expanduser(self.cfg.notification_sound)) else "",
             "account": self.account,
@@ -1016,6 +1035,8 @@ class Bridge:
         return {"accepted": bool(p["accept"])}
 
     async def op_identities(self, p: dict) -> list[dict]:
+        # "addedDate" in the answer is when signal-cli first saw that key, in ms (0 = unknown);
+        # the telemetry rail shows it as the key's age.
         """Safety numbers for a contact, newest first, as Signal shows them."""
         account = self._require_account()
         rec = parse_conversation_key(p["conversation"])
@@ -1029,7 +1050,7 @@ class Bridge:
                     continue
                 sn = clean_name(item.get("safetyNumber"), max_length=120)
                 out.append({"safetyNumber": sn, "trustLevel": clean_name(item.get("trustLevel"), max_length=40),
-                            "addedDate": int(item.get("addedDate") or 0) if str(item.get("addedDate", "")).lstrip("-").isdigit() else 0,
+                            "addedDate": identity_added(item),
                             "fingerprint": clean_name(item.get("fingerprint"), max_length=200)})
         out.sort(key=lambda x: -x["addedDate"])
         return out

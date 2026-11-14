@@ -1,0 +1,629 @@
+{
+  "_": "Shared by tests/qml/telemetry.test.js (Telemetry.js) and tests/python/test_telemetry.py (lib/omarchy_signal/telemetry.py). SPDX-License-Identifier: GPL-3.0-or-later",
+  "threadStats": [
+    {
+      "name": "nothing",
+      "rows": [],
+      "now": 1794600000000,
+      "expect": {
+        "total": 0,
+        "tx": 0,
+        "rx": 0,
+        "delivery": {
+          "sending": 0,
+          "sent": 0,
+          "delivered": 0,
+          "read": 0,
+          "failed": 0
+        },
+        "lastRx": 0,
+        "lastTx": 0,
+        "lastTxStatus": "",
+        "media": 0,
+        "links": 0,
+        "reactions": 0,
+        "edited": 0,
+        "expiring": 0,
+        "replyTheirs": -1,
+        "replyYours": -1,
+        "transit": -1,
+        "senders": [],
+        "firstTs": 0
+      }
+    },
+    {
+      "name": "rows that are not messages",
+      "rows": [
+        {
+          "ts": 0
+        },
+        {
+          "body": "no timestamp"
+        },
+        {
+          "ts": "soon"
+        }
+      ],
+      "now": 1794600000000,
+      "expect": {
+        "total": 0,
+        "tx": 0,
+        "rx": 0,
+        "delivery": {
+          "sending": 0,
+          "sent": 0,
+          "delivered": 0,
+          "read": 0,
+          "failed": 0
+        },
+        "lastRx": 0,
+        "lastTx": 0,
+        "lastTxStatus": "",
+        "media": 0,
+        "links": 0,
+        "reactions": 0,
+        "edited": 0,
+        "expiring": 0,
+        "replyTheirs": -1,
+        "replyYours": -1,
+        "transit": -1,
+        "senders": [],
+        "firstTs": 0
+      }
+    },
+    {
+      "name": "a short exchange",
+      "now": 1794601800000,
+      "rows": [
+        {
+          "ts": 1794600000000,
+          "outgoing": true,
+          "sender": "",
+          "senderName": "",
+          "body": "see https://example.org/a and http://example.org/b",
+          "status": "read"
+        },
+        {
+          "ts": 1794600120000,
+          "outgoing": false,
+          "sender": "number:+15550002222",
+          "senderName": "Trinity",
+          "body": "",
+          "status": "",
+          "attachments": [
+            {
+              "path": "/x.png"
+            },
+            {
+              "path": "/y.png"
+            }
+          ],
+          "reactions": {
+            "number:+15550001111": "👍",
+            "number:+15550003333": "🔥"
+          },
+          "receivedAt": 1794600120450
+        },
+        {
+          "ts": 1794600180000,
+          "outgoing": true,
+          "sender": "",
+          "senderName": "",
+          "body": "",
+          "status": "delivered",
+          "edited": true
+        },
+        {
+          "ts": 1794600240000,
+          "outgoing": true,
+          "sender": "",
+          "senderName": "",
+          "body": "",
+          "status": "failed"
+        },
+        {
+          "ts": 1794600300000,
+          "outgoing": true,
+          "sender": "",
+          "senderName": "",
+          "body": "",
+          "status": "viewed",
+          "expiresIn": 3600
+        },
+        {
+          "ts": 1794600540000,
+          "outgoing": false,
+          "sender": "number:+15550002222",
+          "senderName": "Trinity",
+          "body": "https://example.org/gone",
+          "status": "",
+          "deleted": true,
+          "attachments": [
+            {
+              "path": "/z"
+            }
+          ],
+          "receivedAt": 1794600540150
+        }
+      ],
+      "expect": {
+        "total": 6,
+        "tx": 4,
+        "rx": 2,
+        "delivery": {
+          "sending": 0,
+          "sent": 0,
+          "delivered": 1,
+          "read": 2,
+          "failed": 1
+        },
+        "lastRx": 1794600540000,
+        "lastTx": 1794600300000,
+        "lastTxStatus": "viewed",
+        "media": 2,
+        "links": 2,
+        "reactions": 2,
+        "edited": 1,
+        "expiring": 1,
+        "replyTheirs": 180000,
+        "replyYours": 60000,
+        "transit": 300,
+        "senders": [
+          {
+            "name": "You",
+            "count": 4
+          },
+          {
+            "name": "Trinity",
+            "count": 2
+          }
+        ],
+        "firstTs": 1794600000000
+      }
+    },
+    {
+      "name": "reply times, given out of order",
+      "now": 1794708000000,
+      "rows": [
+        {
+          "ts": 1794601080000,
+          "outgoing": false,
+          "sender": "number:+15550002222",
+          "senderName": "Trinity",
+          "body": "",
+          "status": ""
+        },
+        {
+          "ts": 1794600000000,
+          "outgoing": true,
+          "sender": "",
+          "senderName": "",
+          "body": "",
+          "status": "sent"
+        },
+        {
+          "ts": 1794600120000,
+          "outgoing": false,
+          "sender": "number:+15550002222",
+          "senderName": "Trinity",
+          "body": "",
+          "status": ""
+        },
+        {
+          "ts": 1794600180000,
+          "outgoing": false,
+          "sender": "number:+15550002222",
+          "senderName": "Trinity",
+          "body": "",
+          "status": ""
+        },
+        {
+          "ts": 1794600210000,
+          "outgoing": true,
+          "sender": "",
+          "senderName": "",
+          "body": "",
+          "status": "sent"
+        },
+        {
+          "ts": 1794600810000,
+          "outgoing": false,
+          "sender": "number:+15550002222",
+          "senderName": "Trinity",
+          "body": "",
+          "status": ""
+        },
+        {
+          "ts": 1794600840000,
+          "outgoing": true,
+          "sender": "",
+          "senderName": "",
+          "body": "",
+          "status": "sent"
+        },
+        {
+          "ts": 1794693600000,
+          "outgoing": true,
+          "sender": "",
+          "senderName": "",
+          "body": "",
+          "status": "sent"
+        }
+      ],
+      "expect": {
+        "total": 8,
+        "tx": 4,
+        "rx": 4,
+        "delivery": {
+          "sending": 0,
+          "sent": 4,
+          "delivered": 0,
+          "read": 0,
+          "failed": 0
+        },
+        "lastRx": 1794601080000,
+        "lastTx": 1794693600000,
+        "lastTxStatus": "sent",
+        "media": 0,
+        "links": 0,
+        "reactions": 0,
+        "edited": 0,
+        "expiring": 0,
+        "replyTheirs": 240000,
+        "replyYours": 30000,
+        "transit": -1,
+        "senders": [
+          {
+            "name": "Trinity",
+            "count": 4
+          },
+          {
+            "name": "You",
+            "count": 4
+          }
+        ],
+        "firstTs": 1794600000000
+      }
+    },
+    {
+      "name": "a group",
+      "now": 1794601200000,
+      "rows": [
+        {
+          "ts": 1794600000000,
+          "outgoing": false,
+          "sender": "number:+15550004444",
+          "senderName": "Tank",
+          "body": "",
+          "status": ""
+        },
+        {
+          "ts": 1794600060000,
+          "outgoing": false,
+          "sender": "number:+15550002222",
+          "senderName": "Trinity",
+          "body": "",
+          "status": ""
+        },
+        {
+          "ts": 1794600120000,
+          "outgoing": false,
+          "sender": "number:+15550004444",
+          "senderName": "Tank",
+          "body": "",
+          "status": ""
+        },
+        {
+          "ts": 1794600180000,
+          "outgoing": true,
+          "sender": "",
+          "senderName": "",
+          "body": "",
+          "status": "sent"
+        },
+        {
+          "ts": 1794600240000,
+          "outgoing": false,
+          "sender": "number:+15550003333",
+          "senderName": "Morpheus",
+          "body": "",
+          "status": ""
+        },
+        {
+          "ts": 1794600300000,
+          "outgoing": false,
+          "sender": "number:+15550005555",
+          "senderName": "Switch",
+          "body": "",
+          "status": ""
+        },
+        {
+          "ts": 1794600360000,
+          "outgoing": false,
+          "sender": "number:+15550006666",
+          "senderName": "Niobe",
+          "body": "",
+          "status": ""
+        },
+        {
+          "ts": 1794600420000,
+          "outgoing": false,
+          "sender": "number:+15550004444",
+          "senderName": "Tank",
+          "body": "",
+          "status": ""
+        },
+        {
+          "ts": 1794600480000,
+          "outgoing": true,
+          "sender": "",
+          "senderName": "",
+          "body": "",
+          "status": "sending"
+        }
+      ],
+      "expect": {
+        "total": 9,
+        "tx": 2,
+        "rx": 7,
+        "delivery": {
+          "sending": 1,
+          "sent": 1,
+          "delivered": 0,
+          "read": 0,
+          "failed": 0
+        },
+        "lastRx": 1794600420000,
+        "lastTx": 1794600480000,
+        "lastTxStatus": "sending",
+        "media": 0,
+        "links": 0,
+        "reactions": 0,
+        "edited": 0,
+        "expiring": 0,
+        "replyTheirs": 60000,
+        "replyYours": 60000,
+        "transit": -1,
+        "senders": [
+          {
+            "name": "Tank",
+            "count": 3
+          },
+          {
+            "name": "You",
+            "count": 2
+          },
+          {
+            "name": "Morpheus",
+            "count": 1
+          },
+          {
+            "name": "Niobe",
+            "count": 1
+          }
+        ],
+        "firstTs": 1794600000000
+      }
+    },
+    {
+      "name": "clocks that disagree",
+      "now": 1794601200000,
+      "rows": [
+        {
+          "ts": 1794600000000,
+          "outgoing": false,
+          "sender": "number:+15550002222",
+          "senderName": "Trinity",
+          "body": "",
+          "status": "",
+          "receivedAt": 1794600000400
+        },
+        {
+          "ts": 1794600060000,
+          "outgoing": false,
+          "sender": "number:+15550002222",
+          "senderName": "Trinity",
+          "body": "",
+          "status": "",
+          "receivedAt": 1794600060800
+        },
+        {
+          "ts": 1794600120000,
+          "outgoing": false,
+          "sender": "number:+15550002222",
+          "senderName": "Trinity",
+          "body": "",
+          "status": "",
+          "receivedAt": 1794600115000
+        },
+        {
+          "ts": 1794600180000,
+          "outgoing": false,
+          "sender": "number:+15550002222",
+          "senderName": "Trinity",
+          "body": "",
+          "status": "",
+          "receivedAt": 1794603780000
+        },
+        {
+          "ts": 1794600240000,
+          "outgoing": false,
+          "sender": "number:+15550002222",
+          "senderName": "Trinity",
+          "body": "",
+          "status": ""
+        },
+        {
+          "ts": 1794600300000,
+          "outgoing": true,
+          "sender": "",
+          "senderName": "",
+          "body": "",
+          "status": "sent",
+          "receivedAt": 1794600300001
+        }
+      ],
+      "expect": {
+        "total": 6,
+        "tx": 1,
+        "rx": 5,
+        "delivery": {
+          "sending": 0,
+          "sent": 1,
+          "delivered": 0,
+          "read": 0,
+          "failed": 0
+        },
+        "lastRx": 1794600240000,
+        "lastTx": 1794600300000,
+        "lastTxStatus": "sent",
+        "media": 0,
+        "links": 0,
+        "reactions": 0,
+        "edited": 0,
+        "expiring": 0,
+        "replyTheirs": -1,
+        "replyYours": 60000,
+        "transit": 600,
+        "senders": [
+          {
+            "name": "Trinity",
+            "count": 5
+          },
+          {
+            "name": "You",
+            "count": 1
+          }
+        ],
+        "firstTs": 1794600000000
+      }
+    }
+  ],
+  "shortDuration": [
+    {
+      "ms": -1,
+      "out": ""
+    },
+    {
+      "ms": 0,
+      "out": "<1s"
+    },
+    {
+      "ms": 400,
+      "out": "<1s"
+    },
+    {
+      "ms": 999,
+      "out": "<1s"
+    },
+    {
+      "ms": 1000,
+      "out": "1s"
+    },
+    {
+      "ms": 42000,
+      "out": "42s"
+    },
+    {
+      "ms": 59999,
+      "out": "59s"
+    },
+    {
+      "ms": 60000,
+      "out": "1m"
+    },
+    {
+      "ms": 185000,
+      "out": "3m"
+    },
+    {
+      "ms": 3599000,
+      "out": "59m"
+    },
+    {
+      "ms": 3600000,
+      "out": "1h 00m"
+    },
+    {
+      "ms": 7500000,
+      "out": "2h 05m"
+    },
+    {
+      "ms": 86399000,
+      "out": "23h 59m"
+    },
+    {
+      "ms": 86400000,
+      "out": "1d 0h"
+    },
+    {
+      "ms": 273600000,
+      "out": "3d 4h"
+    },
+    {
+      "ms": 1209600000,
+      "out": "14d"
+    },
+    {
+      "ms": 3902400000,
+      "out": "45d"
+    },
+    {
+      "ms": 31449600000,
+      "out": "364d"
+    },
+    {
+      "ms": 31536000000,
+      "out": "1.0y"
+    },
+    {
+      "ms": 94608000000,
+      "out": "3.0y"
+    }
+  ],
+  "median": [
+    {
+      "in": [],
+      "out": -1
+    },
+    {
+      "in": [
+        5
+      ],
+      "out": 5
+    },
+    {
+      "in": [
+        9,
+        1,
+        5
+      ],
+      "out": 5
+    },
+    {
+      "in": [
+        1,
+        2,
+        3,
+        10
+      ],
+      "out": 3
+    },
+    {
+      "in": [
+        1,
+        2
+      ],
+      "out": 2
+    },
+    {
+      "in": [
+        7,
+        7,
+        8,
+        100
+      ],
+      "out": 8
+    }
+  ]
+}

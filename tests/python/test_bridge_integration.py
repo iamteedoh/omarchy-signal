@@ -421,6 +421,8 @@ class BridgeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             ids = await c.request("identities", conversation=conv)
             self.assertEqual(ids[0]["trustLevel"], "TRUSTED_UNVERIFIED")
             self.assertTrue(ids[0]["safetyNumber"].startswith("12345"))
+            # Dated from signal-cli's addedTimestamp, newest first (the telemetry's key age).
+            self.assertEqual([i["addedDate"] for i in ids], [1700000000000, 1600000000000])
             await c.request("trust", conversation=conv, safetyNumber="12345 67890")
             tr = [s for s in h.sent() if s["method"] == "trust"][-1]
             self.assertEqual(tr["params"]["verifiedSafetyNumber"], "1234567890")

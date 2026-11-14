@@ -75,11 +75,14 @@ def handle(req):
         return {"jsonrpc": "2.0", "result": {}, "id": rid}
     if method == "listIdentities":
         log_sent(method, params)
+        # The field names signal-cli 0.14 really sends (addedTimestamp, not addedDate),
+        # oldest key first, so the bridge's newest-first sort is exercised.
         return {"jsonrpc": "2.0", "result": [
+            {"number": params.get("number"), "fingerprint": "05 00 00", "safetyNumber": "00000 11111", "trustLevel": "UNTRUSTED",
+             "addedTimestamp": 1600000000000},
             {"number": params.get("number"), "uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "fingerprint": "05 ab cd",
              "safetyNumber": "12345 67890 12345 67890 12345 67890 12345 67890 12345 67890 12345 67890", "scannableSafetyNumber": "x",
-             "trustLevel": "TRUSTED_UNVERIFIED", "addedDate": 1700000000000},
-            {"number": params.get("number"), "fingerprint": "05 00 00", "safetyNumber": "00000 11111", "trustLevel": "UNTRUSTED", "addedDate": 1600000000000},
+             "trustLevel": "TRUSTED_UNVERIFIED", "addedTimestamp": 1700000000000},
         ], "id": rid}
     if method in ("send", "sendTyping", "sendReceipt", "sendReaction"):
         if params.get("account") != ACCOUNT:

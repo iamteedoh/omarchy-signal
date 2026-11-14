@@ -119,6 +119,7 @@ class Config:
     scroll_speed: int = 9                  # chat window: trackpad/wheel scroll multiplier (0 = Qt default)
     terminal: str = "auto"                 # terminal for `omarchy-signal open`: auto (system default) | ghostty | kitty | wezterm | foot | alacritty
     window_opacity: int = 0                # how solid the popup and chat window are, in percent; 0 = what the Omarchy theme uses
+    telemetry: bool = True                 # the readings beside a conversation (link, traffic, delivery, reply times)
     image_max_rows: int = 14
     qr_rows: int = 9                       # height of the linking QR code in terminal rows (image mode)
     qr_style: str = "auto"                 # auto (shell popup, else image, else text) | shell | image | half | quad | braille
@@ -232,6 +233,8 @@ SETTINGS: list[dict] = [
      "choices": ["auto", "ghostty", "kitty", "wezterm", "foot", "alacritty"], "help": "auto follows omarchy default terminal; images need ghostty, kitty or wezterm"},
     {"section": "Appearance", "key": "window_opacity", "label": "Window opacity (%)", "type": "int",
      "min": 0, "max": 100, "step": 2, "help": "How solid the popup conversation and the chat window are; 100 = no transparency, 0 = follow the Omarchy theme"},
+    {"section": "Appearance", "key": "telemetry", "label": "Telemetry", "type": "bool",
+     "help": "Link, traffic, delivery and reply-time readings beside a conversation, in the chat window and the terminal client; Ctrl+T in the chat window switches it too"},
     {"section": "Appearance", "key": "terminal_images", "label": "Terminal image support", "type": "choice",
      "choices": ["auto", "on", "off"], "help": "auto probes the terminal"},
     {"section": "Appearance", "key": "image_max_rows", "label": "Inline image height (rows)", "type": "int",

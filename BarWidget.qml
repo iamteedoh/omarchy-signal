@@ -62,6 +62,8 @@ Panel {
   property var service: null
   readonly property var openWindows: root.service ? root.service.windowTabs : []
   readonly property string latestVersion: root.service ? root.service.latestVersion : ""
+  // The readings in the panel follow the same setting as the chat window's.
+  readonly property bool telemetry: root.service ? root.service.telemetry !== false : true
   readonly property bool needsSetup: !root.connected && root.service !== null && root.service.serviceInstalled === false
   Timer {
     interval: 2000
