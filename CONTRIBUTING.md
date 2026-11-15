@@ -16,7 +16,6 @@ validation, and the pull request process.
 - Python 3.11 or newer (the tests run on 3.12 in CI)
 - Node.js 20 or newer (tests for `Model.js`)
 - Lua 5.1 or newer, or LuaJIT (tests for `config/bindings.lua`)
-- Lua 5.1 or newer, or LuaJIT (tests for `config/bindings.lua`)
 - `qrencode` and ImageMagick (used by a few tests)
 - gitleaks 8.30.1 or newer
 
@@ -50,7 +49,7 @@ make lua           # Hyprland keybinding handlers in config/bindings.lua
 make bash          # static checks: syntax, systemd unit, manifest, QML hygiene
 make qmlcheck      # loads Service.qml in a throwaway Quickshell (needs Omarchy)
 make security      # the adversarial subset
-gitleaks git . --config .gitleaks.toml --redact --no-banner
+make secrets       # gitleaks over the full Git history, as CI runs it
 ```
 
 Anything visual (the terminal client, the popups, the chat window) should be

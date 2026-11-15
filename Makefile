@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-.PHONY: test security lua qml python bash shellcheck validate install dev legend-wrap screenshots tui-screenshots demo-video
+.PHONY: test security secrets lua qml python bash shellcheck validate install dev legend-wrap screenshots tui-screenshots demo-video
 
 PY := python3
 # Lua 5.4 where it is installed under that name (Ubuntu, CI), else plain lua (Arch).
@@ -19,6 +19,11 @@ security:
 	  test_bridge_integration.BridgeIntegrationTests.test_send_rejects_bad_input \
 	  test_bridge_integration.BridgeIntegrationTests.test_socket_permissions
 	node --test tests/qml/*.test.js
+
+# Scans the full Git history for secrets with the same command and rules as
+# CI's Secret scan job. Needs gitleaks 8.30.1 or newer (omarchy pkg add gitleaks).
+secrets:
+	gitleaks git . --config .gitleaks.toml --redact --no-banner
 
 qml:
 	node --test tests/qml/*.test.js
