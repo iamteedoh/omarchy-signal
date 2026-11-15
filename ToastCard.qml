@@ -115,7 +115,7 @@ Item {
         color: Util.alpha(Commons.Color.accent, 0.18)
         Text {
           anchors.centerIn: parent
-          text: "󰭹"
+          text: card.kind === "call" ? "\u{F03F2}" : "󰭹"     // a phone for a ringing call
           textFormat: Text.PlainText
           color: Commons.Color.accent
           font.family: Style.font.family
@@ -147,9 +147,9 @@ Item {
               id: sourceText
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              text: card.isMessage ? "Incoming" : "Signal"
-              foreground: card.isMessage ? Commons.Color.accent : card.text
-              strength: card.isMessage ? 1 : 0.6
+              text: card.isMessage ? "Incoming" : card.kind === "call" ? "Ringing" : "Signal"
+              foreground: card.isMessage || card.kind === "call" ? Commons.Color.accent : card.text
+              strength: card.isMessage || card.kind === "call" ? 1 : 0.6
               opacity: card.hovered ? 0 : 1
               Behavior on opacity { NumberAnimation { duration: card.ms(150) } }
             }

@@ -130,7 +130,9 @@ hc reload >/dev/null
 sleep 1
 size=$(hc -j monitors | python3 -c 'import json,sys; m=json.load(sys.stdin)[0]; print(m["width"], m["height"], "scale", m["scale"])')
 echo "  nested output: $size" >&2
-hc eval "hl.exec_cmd(\"ghostty --title=omarchy-signal -e $HERE/bin/omarchy-signal tui Trinity\")" >/dev/null
+# The client is started through scripts/demo/tui-call.py: the real client, plus a
+# made-up call played into it while $work/call exists (shot 4).
+hc eval "hl.exec_cmd(\"env DEMO_CALL_TRIGGER=$work/call ghostty --title=omarchy-signal -e $HERE/scripts/demo/tui-call.py Trinity\")" >/dev/null
 sleep 4   # Ghostty starts, the client connects and draws
 
 key() { WAYLAND_DISPLAY="$nested" wtype "$@"; sleep "${PAUSE:-0.8}"; }
@@ -153,3 +155,8 @@ key -k Escape
 PAUSE=1.2 key -M ctrl s -m ctrl
 shot tui-settings
 key -k Escape
+# 4. A voice call: the call line under the title, with a waveform for each side.
+touch "$work/call"
+sleep 3.5                          # long enough for both sides to have spoken
+shot tui-call
+rm -f "$work/call"

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-.PHONY: test security qml python bash shellcheck validate install dev legend-wrap screenshots tui-screenshots
+.PHONY: test security qml python bash shellcheck validate install dev legend-wrap screenshots tui-screenshots demo-video
 
 PY := python3
 
@@ -52,3 +52,6 @@ screenshots:
 # the nested compositor's window shows on the desktop for a few seconds.
 tui-screenshots:
 	./scripts/demo-tui-shots.sh
+
+demo-video:
+	./scripts/demo-shots.sh --video
