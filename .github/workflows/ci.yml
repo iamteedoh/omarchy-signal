@@ -37,7 +37,7 @@ jobs:
       - name: Install tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qrencode imagemagick jq shellcheck
+          sudo apt-get install -y --no-install-recommends qrencode imagemagick jq shellcheck lua5.4
           pip install yamllint
 
       - name: Check YAML
@@ -56,6 +56,9 @@ jobs:
 
       - name: Model.js tests
         run: make qml
+
+      - name: Hyprland keybinding handler tests (Lua)
+        run: make lua
 
       - name: Static checks (systemd unit, manifest, QML hygiene, Omarchy API baseline)
         run: make bash

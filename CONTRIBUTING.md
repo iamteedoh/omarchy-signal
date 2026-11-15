@@ -15,6 +15,7 @@ validation, and the pull request process.
 - Omarchy 4.x (Quattro) for anything that touches the shell plugin
 - Python 3.11 or newer (the tests run on 3.12 in CI)
 - Node.js 20 or newer (tests for `Model.js`)
+- Lua 5.1 or newer, or LuaJIT (tests for `config/bindings.lua`)
 - `qrencode` and ImageMagick (used by a few tests)
 - gitleaks 8.30.1 or newer
 
@@ -44,6 +45,7 @@ Run the same checks that protect `main`:
 ```bash
 make python        # unit + integration tests against the fake signal-cli
 make qml           # node tests for Model.js
+make lua           # Hyprland keybinding handlers in config/bindings.lua
 make bash          # static checks: syntax, systemd unit, manifest, QML hygiene
 make qmlcheck      # loads Service.qml in a throwaway Quickshell (needs Omarchy)
 make security      # the adversarial subset
