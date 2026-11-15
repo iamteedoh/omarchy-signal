@@ -39,7 +39,7 @@ verified with burst screenshot captures of real sends, not by inspection.
   console is created, including when a window is moved onto an empty console
   (checked on Hyprland 0.56; Omarchy's comment says it should not). Sending the
   chat window there therefore brings the agent along. Not ours to fix; the
-  README's top warning has a `hyprland.lua` wrap that skips that one launch.
+  README's known-issue note under Status has a `hyprland.lua` wrap that skips that one launch.
 - **The chat window floats, and the Quake console only lays out tiled
   windows.** `config/bindings.lua` tiles it when it lands on
   `special:qconsole` and floats it again when it leaves. A Hyprland reload
