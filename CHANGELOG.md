@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.0](https://github.com/iamteedoh/omarchy-signal/compare/v0.5.1...v0.6.0) (2026-11-15)
+
+
+### Features
+
+* add voice calls with live telemetry and waveforms ([#34](https://github.com/iamteedoh/omarchy-signal/issues/34)) ([9aca735](https://github.com/iamteedoh/omarchy-signal/commit/9aca7351e6eaf296e614ae2719178687a6756935))
+* draw chat window messages like the terminal client ([#31](https://github.com/iamteedoh/omarchy-signal/issues/31)) ([53273b7](https://github.com/iamteedoh/omarchy-signal/commit/53273b741401db6ad13f43251d6273c75f4248ab))
+* redraw the client as an instrument panel with telemetry ([#33](https://github.com/iamteedoh/omarchy-signal/issues/33)) ([bea7048](https://github.com/iamteedoh/omarchy-signal/commit/bea70485d530e25e958b93477b37b3926774b515))
+
+
+### Documentation
+
+* lead the README with a demo video and refresh its pictures ([#35](https://github.com/iamteedoh/omarchy-signal/issues/35)) ([aff4664](https://github.com/iamteedoh/omarchy-signal/commit/aff4664812deb8605c05dca9898c7f92626388c4))
+* move the Quake console note out of the top of the README ([#36](https://github.com/iamteedoh/omarchy-signal/issues/36)) ([52a992f](https://github.com/iamteedoh/omarchy-signal/commit/52a992f147be3192dd5356803c314fbae86a2c81))
+
 ## [0.5.1](https://github.com/iamteedoh/omarchy-signal/compare/v0.5.0...v0.5.1) (2026-11-13)
 
 
