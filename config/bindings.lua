@@ -38,9 +38,12 @@ end)
 -- place and size it had on the workspace and hangs over the console instead
 -- of sitting in it. So the chat window is tiled while it is on the console,
 -- and floats again when it is moved back off.
+-- These handlers run for every window on the desktop, and Hyprland can report
+-- a short-lived one (a portal file picker, say) with no address. Indexing a
+-- table with nil is a Lua error, so every handler checks the address first.
 local signal_docked = {}
 local function signal_chat(window)
-  return window and window.class == "org.quickshell" and (window.title or ""):find("Signal · ", 1, true) == 1
+  return window and window.address and window.class == "org.quickshell" and (window.title or ""):find("Signal · ", 1, true) == 1
 end
 hl.on("window.move_to_workspace", function(window, ws)
   if not ws or not signal_chat(window) then return end
@@ -57,5 +60,5 @@ hl.on("window.move_to_workspace", function(window, ws)
   end
 end)
 hl.on("window.destroy", function(window)
-  if window then signal_docked[window.address] = nil end
+  if window and window.address then signal_docked[window.address] = nil end
 end)

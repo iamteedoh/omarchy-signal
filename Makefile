@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-.PHONY: test security qml python bash shellcheck validate install dev legend-wrap screenshots tui-screenshots demo-video
+.PHONY: test security lua qml python bash shellcheck validate install dev legend-wrap screenshots tui-screenshots demo-video
 
 PY := python3
+# Lua 5.4 where it is installed under that name (Ubuntu, CI), else plain lua (Arch).
+LUA := $(or $(shell command -v lua5.4 2>/dev/null),lua)
 
-test: python qml bash shellcheck validate qmlcheck
+test: python qml lua bash shellcheck validate qmlcheck
 
 qmlcheck:
 	./scripts/qml-check.sh
@@ -20,6 +22,10 @@ security:
 
 qml:
 	node --test tests/qml/*.test.js
+
+# Drives the Hyprland event handlers in config/bindings.lua against stub hl/o tables.
+lua:
+	$(LUA) tests/lua/bindings_test.lua
 
 bash:
 	bash tests/bash/run.sh
