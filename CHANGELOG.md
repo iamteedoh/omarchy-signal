@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/iamteedoh/omarchy-signal/compare/v0.6.0...v0.6.1) (2026-11-15)
+
+
+### Bug Fixes
+
+* stop the Hyprland window handlers erroring on windows with no address ([#38](https://github.com/iamteedoh/omarchy-signal/issues/38)) ([9146499](https://github.com/iamteedoh/omarchy-signal/commit/9146499549f86cea0051f890c601087846882e33))
+
 ## [0.6.0](https://github.com/iamteedoh/omarchy-signal/compare/v0.5.1...v0.6.0) (2026-11-15)
 
 
