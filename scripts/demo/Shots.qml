@@ -2,14 +2,21 @@
 import QtQuick
 import Quickshell
 import qs.Commons as Commons
+import Quickshell.Io
 import qs.Ui as Ui
 import "Model.js" as Model
+import "Calls.js" as Calls
 
 // Renders the plugin's real components against the demo bridge and saves
 // pictures of them, without a compositor: scripts/demo-shots.sh runs this
 // under Qt's offscreen platform. Nothing is drawn on a screen, so nothing of
 // the desktop can end up in a picture, and every path the components can list
 // is inside the demo's throwaway HOME.
+//
+// With SHOTS_VIDEO=1 it plays a short scripted scene instead and saves every
+// frame it can grab, with the time it was taken (scripts/demo-shots.sh --video
+// turns them into a video). Messages arrive through the fake signal-cli's
+// event file, the same way the demo's seeded conversations do.
 ShellRoot {
   id: shots
 
@@ -24,6 +31,7 @@ ShellRoot {
   property int saved: 0
   property var convs: []
   property bool listShown: false
+  readonly property bool video: Quickshell.env("SHOTS_VIDEO") === "1"
 
   // Stands in for the bar widget behind the panel's list (ChatList.qml): the
   // same rows, built the same way, from the demo bridge's conversations.
@@ -75,8 +83,167 @@ ShellRoot {
     onEvent: function(name, data) {
       if (name === "hello" || name === "status") {
         shots.up = data.connected === true && data.linked === true
-        if (shots.up && !runner.running && runner.step === 0) runner.start()
+        if (shots.up && shots.video && !scene.started) scene.begin()
+        else if (shots.up && !shots.video && !runner.running && runner.step === 0) runner.start()
       }
+      if (shots.video) chat.onEvent(name, data)
+    }
+  }
+
+  // ---- video mode -------------------------------------------------------
+  readonly property string trinityNumber: "+15550002222"
+  readonly property string morpheusNumber: "+15550003333"
+
+  Component { id: injectorComponent; Process { onExited: destroy() } }
+  // One line into the fake signal-cli's event file, which it emits as a notification.
+  function inject(params) {
+    var p = injectorComponent.createObject(shots, {
+      command: ["sh", "-c", 'printf "%s\\n" "$1" >>"$FAKE_SIGNAL_EVENTS"', "sh", JSON.stringify(params)] })
+    p.running = true
+  }
+  function incoming(number, name, text) {
+    var ts = Date.now()
+    shots.inject({ envelope: { source: number, sourceNumber: number, sourceName: name, sourceDevice: 1, timestamp: ts,
+                               dataMessage: { timestamp: ts, message: text, expiresInSeconds: 0, viewOnce: false, attachments: [] } } })
+  }
+  function typing(number, name) {
+    var ts = Date.now()
+    shots.inject({ envelope: { source: number, sourceNumber: number, sourceName: name, sourceDevice: 1, timestamp: ts,
+                               typingMessage: { action: "STARTED", timestamp: ts } } })
+  }
+  function slideToast(show) {
+    toastSlide.stop()
+    toastSlide.from = show ? stage.width : toast.x
+    toastSlide.to = show ? stage.width - toast.width - 70 : stage.width + 20
+    if (show) { toast.x = toastSlide.from; toast.visible = true }
+    toastSlide.start()
+  }
+  NumberAnimation { id: toastSlide; target: toast; property: "x"; duration: 420; easing.type: Easing.OutCubic }
+
+  // A call as the bridge would report it, changed in place.
+  function callState(changes) {
+    var c = Object.assign({}, chat.activeCall || {}, changes)
+    chat.activeCall = c
+  }
+  property real talkStart: 0
+  // Two people taking turns: each side speaks in bursts of syllables, then listens.
+  Timer {
+    id: talk
+    interval: 66; repeat: true
+    onTriggered: {
+      var t = (Date.now() - shots.talkStart) / 1000
+      // Short turns that overlap a little, so both waveforms keep moving.
+      var mine = Math.sin(t * 1.9) > -0.1
+      var theirs = Math.sin(t * 1.9 + 2.6) > -0.2
+      function voice(on, phase) {
+        if (!on) return 0.02 + 0.03 * Math.random()
+        var syllable = Math.abs(Math.sin(t * 7.3 + phase)) * (0.6 + 0.4 * Math.sin(t * 2.1 + phase))
+        return Math.max(0.05, Math.min(1, 0.25 + 0.65 * syllable + 0.08 * Math.random()))
+      }
+      var muted = chat.activeCall && chat.activeCall.muted
+      var tx = muted ? 0 : voice(mine, 0)
+      var rx = voice(theirs, 1.7)
+      chat.callTx = Calls.pushLevel(chat.callTx, tx, 48)
+      chat.callRx = Calls.pushLevel(chat.callRx, rx, 48)
+      var lv = chat.activeCall.levels || {}
+      shots.callState({ levels: { tx: tx, rx: rx, txPeak: Math.max(lv.txPeak || 0, tx), rxPeak: Math.max(lv.rxPeak || 0, rx),
+                                  txTalkMs: (lv.txTalkMs || 0) + (tx > 0.42 ? 66 : 0), rxTalkMs: (lv.rxTalkMs || 0) + (rx > 0.42 ? 66 : 0) } })
+    }
+  }
+
+  // The scene, as [time in ms, what happens]. About 25 seconds.
+  readonly property var script: [
+    [300, function() { chat.load(shots.trinity, "Trinity") }],
+    [2600, function() { shots.typing(shots.trinityNumber, "Trinity") }],
+    [4300, function() { shots.incoming(shots.trinityNumber, "Trinity", "Exit 04 is clear. Move now.") }],
+    [5600, function() { typer.text = "On my way. Two minutes."; typer.at = 0; typer.start() }],
+    [7400, function() { chat.send() }],
+    [8900, function() {
+        shots.incoming(shots.morpheusNumber, "Morpheus", "The Oracle will see you now. 🔮")
+        toast.kind = "message"; toast.title = "Morpheus"; toast.convName = "Morpheus"; toast.body = "The Oracle will see you now. 🔮"
+        shots.slideToast(true)
+      }],
+    [10100, function() { toast.forceHover = true }],
+    [11400, function() { toast.forceHover = false; shots.slideToast(false) }],
+    [12000, function() {
+        var now = Date.now()
+        chat.callsAvailable = true
+        chat.callTx = []; chat.callRx = []
+        chat.activeCall = { id: "43", conversation: shots.trinity, name: "Trinity", outgoing: false, state: "ringing",
+                            media: "audio", startedAt: now, connectedAt: 0, endedAt: 0, reason: "", muted: false,
+                            reconnects: 0, encrypted: true, setupMs: 0, audioError: "", mic: "", speaker: "", levels: {} }
+        toast.kind = "call"; toast.title = "Trinity"; toast.convName = "Trinity"; toast.body = "Incoming voice call"
+        shots.slideToast(true)
+      }],
+    [14400, function() { shots.slideToast(false); shots.callState({ state: "connecting" }) }],
+    [15100, function() {
+        shots.callState({ state: "connected", connectedAt: Date.now(), setupMs: 700,
+                          mic: "alsa_input.usb-desk-microphone", speaker: "alsa_output.usb-headphones" })
+        shots.talkStart = Date.now(); talk.start()
+      }],
+    [19000, function() { shots.callState({ muted: true }) }],
+    [20600, function() { shots.callState({ muted: false }) }],
+    [22600, function() { talk.stop(); shots.callState({ state: "ended", endedAt: Date.now(), reason: "local_hangup" }) }],
+    [25000, function() { scene.finish() }]
+  ]
+
+  Timer {
+    id: typer
+    property string text: ""
+    property int at: 0
+    interval: 60; repeat: true
+    onTriggered: { at += 1; chat.draft = text.slice(0, at); if (at >= text.length) stop() }
+  }
+
+  QtObject {
+    id: scene
+    property bool started: false
+    property real t0: 0
+    property int next: 0
+    property int frames: 0
+    property bool busy: false
+    property bool done: false
+    function begin() {
+      started = true
+      link.request("conversations", {}, function(ok, rows) { shots.convs = ok ? rows : [] })
+      t0 = Date.now()
+      clock.start()
+      grabber.start()
+    }
+    function finish() {
+      done = true
+      clock.stop()
+      grabber.stop()
+      Qt.callLater(function() { console.log("SHOTS DONE " + scene.frames); Qt.quit() })
+    }
+  }
+  Timer {
+    id: clock
+    interval: 20; repeat: true
+    onTriggered: {
+      var t = Date.now() - scene.t0
+      while (scene.next < shots.script.length && shots.script[scene.next][0] <= t) {
+        shots.script[scene.next][1]()
+        scene.next += 1
+      }
+    }
+  }
+  // Grabs as fast as the scene renders (aiming at 30 a second) and logs when
+  // each frame was taken, so the video keeps real time even if a grab is slow.
+  Timer {
+    id: grabber
+    interval: 33; repeat: true
+    onTriggered: {
+      if (scene.busy || scene.done) return
+      scene.busy = true
+      var n = scene.frames
+      var t = Date.now() - scene.t0
+      stage.grabToImage(function(result) {
+        var name = "frame-" + ("00000" + n).slice(-5) + ".bmp"   // uncompressed: a PNG costs a third of the frame rate
+        if (result.saveToFile(shots.outDir + "/" + name)) console.log("FRAME " + name + " " + t)
+        scene.frames += 1
+        scene.busy = false
+      }, Qt.size(stage.width * 2, stage.height * 2))   // twice the logical size, like the pictures
     }
   }
 
@@ -112,7 +279,23 @@ ShellRoot {
                             levels: { tx: 0.58, rx: 0.22, txPeak: 0.91, rxPeak: 0.84, txTalkMs: 71000, rxTalkMs: 93000 } }
         chat.now = now
       } },
-    { wait: 700, name: "notification", run: function() { chat.activeCall = null; chat.callTx = []; chat.callRx = []; toast.visible = true } },
+    { wait: 900, name: "incoming-call", run: function() {
+        // Trinity calling: the panel rings in the chat and the popup offers Answer and Decline.
+        var now = Date.now()
+        chat.callTx = []; chat.callRx = []
+        chat.activeCall = { id: "43", conversation: shots.trinity, name: "Trinity", outgoing: false, state: "ringing",
+                            media: "audio", startedAt: now - 6000, connectedAt: 0, endedAt: 0, reason: "",
+                            muted: false, reconnects: 0, encrypted: true, setupMs: 0, audioError: "",
+                            mic: "", speaker: "", levels: {} }
+        chat.now = now
+        toast.kind = "call"; toast.title = "Trinity"; toast.convName = "Trinity"; toast.body = "Incoming voice call"
+        toast.visible = true
+      } },
+    { wait: 700, name: "notification", run: function() {
+        chat.activeCall = null; chat.callTx = []; chat.callRx = []
+        toast.kind = "message"; toast.title = "Morpheus"; toast.convName = "Morpheus"; toast.body = "The Oracle will see you now. 🔮"
+        toast.visible = true
+      } },
     { wait: 700, name: "chat-list", run: function() { toast.visible = false; shots.listShown = true } },
     { wait: 700, name: "preview", run: function() { toast.visible = true; toast.forceHover = true } },
     { wait: 1400, name: "", run: function() {
@@ -161,7 +344,7 @@ ShellRoot {
   }
 
   // Give up rather than hang when the demo bridge never answers.
-  Timer { interval: 60000; running: true; onTriggered: { console.log("SHOTS TIMEOUT up=" + shots.up); Qt.quit() } }
+  Timer { interval: 90000; running: true; onTriggered: { console.log("SHOTS TIMEOUT up=" + shots.up); Qt.quit() } }
 
   FloatingWindow {
     visible: true
@@ -171,8 +354,10 @@ ShellRoot {
 
     Item {
       id: stage
-      width: 1500
-      height: 860
+      // The video frames the chat window alone, and its popups land over the
+      // window's top right corner, where Omarchy's notifications would be.
+      width: shots.video ? frame.x + frame.width + 50 : 1500
+      height: shots.video ? frame.y + frame.height + 50 : 860
 
       // A plain backdrop in the theme's own colours: no wallpaper, no desktop.
       Rectangle {
@@ -230,7 +415,7 @@ ShellRoot {
         id: toast
         visible: false
         x: stage.width - width - 50
-        y: shots.listShown ? listFrame.y + listFrame.height + 24 : 50
+        y: shots.listShown ? listFrame.y + listFrame.height + 24 : shots.video ? 70 : 50
         width: shots.listShown ? listFrame.width : shots.sp(380)
         kind: "message"
         title: "Morpheus"

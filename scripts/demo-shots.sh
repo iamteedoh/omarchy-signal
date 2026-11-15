@@ -14,10 +14,13 @@
 #
 #   scripts/demo-shots.sh [output-dir]                 (default docs/media)
 #   DEMO_THEMES="tokyo-night catppuccin-latte" scripts/demo-shots.sh
+#   scripts/demo-shots.sh --video [output-dir]         a 25 second scene as demo.mp4 and demo.webp
 #
 # The first theme's pictures are saved under their plain names; the others get
 # the theme name as a prefix, to show the plugin following the active theme.
 set -uo pipefail
+VIDEO=0
+[[ ${1:-} == --video ]] && { VIDEO=1; shift; }
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$(mkdir -p "${1:-$HERE/docs/media}" && cd "${1:-$HERE/docs/media}" && pwd)"
 # The first theme is the one the README leads with. lumon-dark is a user theme;
@@ -25,6 +28,8 @@ OUT="$(mkdir -p "${1:-$HERE/docs/media}" && cd "${1:-$HERE/docs/media}" && pwd)"
 LEAD=lumon-dark
 [[ -f ${OMARCHY_PATH:-/usr/share/omarchy}/themes/$LEAD/colors.toml || -f $HOME/.config/omarchy/themes/$LEAD/colors.toml ]] || LEAD=lumon
 THEMES=${DEMO_THEMES:-$LEAD catppuccin-latte gruvbox}
+(( VIDEO )) && THEMES=${DEMO_THEMES:-$LEAD}
+(( VIDEO )) && { command -v ffmpeg >/dev/null || { echo "demo-shots: ffmpeg not found" >&2; exit 1; }; }
 SHELL_SRC="${OMARCHY_PATH:-/usr/share/omarchy}/shell"
 REAL_HOME="$HOME"
 command -v qs >/dev/null || { echo "demo-shots: Quickshell (qs) not found" >&2; exit 1; }
@@ -60,12 +65,14 @@ for theme in $THEMES; do
     if [[ $HOME == "$REAL_HOME" || $HOME != "$OMARCHY_SIGNAL_DEMO_DIR"/* ]]; then
       echo "demo-shots: refusing to render with HOME=$HOME" >&2; exit 1
     fi
-    export SHOTS_OUT="$OUT" SHOTS_CLI="$HERE/bin/omarchy-signal" SHOTS_PREFIX="$prefix"
+    export SHOTS_OUT="$OUT" SHOTS_CLI="$HERE/bin/omarchy-signal" SHOTS_PREFIX="$prefix" SHOTS_VIDEO="$VIDEO"
+    (( VIDEO )) && { mkdir -p "$work/frames"; SHOTS_OUT="$work/frames"; }
     export QT_QPA_PLATFORM=offscreen
     cd "$work" && timeout 90 qs -p "$work/shell.qml" >"$work/qs.$theme.log" 2>&1
   )
   if grep -q "SHOTS DONE" "$work/qs.$theme.log"; then
     grep -o "SHOT saved .*" "$work/qs.$theme.log" | sed "s|$OUT/||; s/^/  /"
+    (( VIDEO )) && echo "  $(grep -c '^.*FRAME ' "$work/qs.$theme.log") frames"
     # Anything the components complained about while drawing is worth seeing.
     grep -E "WARN.*(qml|scene)|ReferenceError|TypeError|Unable to assign|is not defined" "$work/qs.$theme.log" \
       | grep -v -E "portal|window masks|toplevel-mapping|QT_QPA_PLATFORM" | sed 's/^/  ! /' | sort -u | head -20
@@ -76,6 +83,31 @@ for theme in $THEMES; do
   fi
   first=0
 done
+# A video: each frame lasts until the next one was taken, so the result keeps
+# the scene's real timing even where a grab was slow, then it is resampled to
+# a steady 30 frames a second. The colours are tagged BT.709, limited range:
+# an untagged file is guessed at by each player and tends to look washed out. The MP4 is the full-quality copy; the animated
+# WebP plays inline in a README, so it is kept small (720 px, 10 frames a
+# second, about 4 MB).
+if (( VIDEO )) && [[ $status == 0 ]]; then
+  list="$work/frames.txt"; : >"$list"
+  grep -o "FRAME .*" "$work/qs.$LEAD.log" | awk '{print $2, $3}' >"$work/times"
+  prev_name=""; prev_t=0
+  while read -r name t; do
+    [[ -n $prev_name ]] && printf "file '%s'\nduration %s\n" "$work/frames/$prev_name" "$(awk -v a="$prev_t" -v b="$t" 'BEGIN{printf "%.3f", (b-a)/1000}')" >>"$list"
+    prev_name=$name; prev_t=$t
+  done <"$work/times"
+  printf "file '%s'\nduration 0.5\nfile '%s'\n" "$work/frames/$prev_name" "$work/frames/$prev_name" >>"$list"
+  ffmpeg -loglevel error -y -f concat -safe 0 -i "$list" -vf "fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos:out_color_matrix=bt709:out_range=tv,format=yuv420p" \
+    -c:v libx264 -preset slow -crf 14 -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv \
+    -movflags +faststart "$OUT/demo.mp4" || status=1
+  ffmpeg -loglevel error -y -i "$OUT/demo.mp4" -vf "fps=10,scale=720:-2:flags=lanczos" \
+    -c:v libwebp -lossless 0 -q:v 50 -loop 0 -an "$OUT/demo.webp" || status=1
+  # Kept for review: look at every distinct frame before a video is committed.
+  [[ -n ${DEMO_KEEP_FRAMES:-} ]] && { mkdir -p "$DEMO_KEEP_FRAMES" && cp "$work"/frames/*.bmp "$work/times" "$DEMO_KEEP_FRAMES/"; }
+  [[ $status == 0 ]] && echo "  saved demo.mp4 and demo.webp"
+  exit $status
+fi
 # When writing into the repository: the hero picture lives at the root (the
 # marketplace reads preview.png there), and a theme's pictures are kept only
 # where the README shows them.

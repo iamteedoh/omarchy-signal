@@ -39,6 +39,10 @@ answer in place, a tabbed conversation window you can park in the scratchpad,
 and a bar widget with your unread count. Everything follows the active
 Omarchy theme.
 
+![A short tour: Trinity types and a message arrives, a reply is sent, a popup from Morpheus slides in, then Trinity calls and both sides of the call show as waveforms that swell and shrink with each voice](docs/media/demo.webp)
+
+[Watch it in full quality (MP4)](docs/media/demo.mp4)
+
 ```
  ◢ SIGNAL // OMARCHY  ◉ SECURE                       3 unread ▸ lumon-dark ▸ IMG
  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -72,9 +76,13 @@ above; Catppuccin Latte and Gruvbox below.
 | ![A popup, at rest](docs/media/notification.png) | ![The reply dialog on Lumon](docs/media/reply-dialog.png) |
 | ![The bar panel: every conversation, unread counts, search](docs/media/chat-list.png) | ![The conversation menu: one click sets the disappearing messages timer](docs/media/timer.png) |
 
-A voice call in the chat window: the two sides as waveforms, and the call's telemetry above them.
+A voice call in the chat window: the call's telemetry, and a waveform for each side that swells and shrinks in place with that voice.
 
 ![A voice call with Trinity: connected for 3:12, a waveform for each side, and chips for state, time, link, setup and how much each side talked](docs/media/call.png)
+
+An incoming call rings in the conversation and pops up with Answer and Decline, wherever you are.
+
+![Trinity calling: the call panel ringing in the chat window, and a popup with Answer and Decline](docs/media/incoming-call.png)
 
 The terminal client, in Ghostty with the same theme:
 
@@ -84,10 +92,16 @@ The terminal client, in Ghostty with the same theme:
 |---|---|
 | ![Attaching a file: the path prompt lists the folder and previews the highlighted picture](docs/media/tui-attach.png) | ![The settings screen, grouped like Signal's own client](docs/media/tui-settings.png) |
 
+A voice call in the terminal client: the line under the title carries the call's state and clock, and a waveform for each side.
+
+![The terminal client during a voice call with Trinity: connected for 3:15, with a waveform for you and one for them](docs/media/tui-call.png)
+
 Every contact, message and file in these pictures is fictional: they come
 from the fake `signal-cli` in `scripts/demo-env.sh`, in a throwaway home
 directory. `make screenshots` renders the popups, the chat window and the bar
-panel offscreen. `make tui-screenshots` photographs the terminal client in a
+panel offscreen, and `make demo-video` plays a scripted scene through them for
+the video at the top, saving every frame from the app itself.
+`make tui-screenshots` photographs the terminal client in a
 private nested Hyprland that runs nothing but one Ghostty, so nothing from
 the real desktop can end up in a picture.
 
@@ -485,6 +499,7 @@ from a stranger do anything to your terminal, your shell or your files.
 make test          # python unit + integration tests (fake signal-cli), node tests, shell checks, QML load check
 make screenshots      # re-render preview.png and docs/media offscreen, from the demo bridge
 make tui-screenshots  # re-take the terminal client pictures in a private nested Hyprland
+make demo-video       # re-render docs/media/demo.mp4 and demo.webp offscreen, from the demo bridge
 make security      # the adversarial subset: terminal injection, path traversal, protocol abuse
 ```
 
