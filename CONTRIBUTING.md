@@ -47,7 +47,7 @@ make qml           # node tests for Model.js
 make bash          # static checks: syntax, systemd unit, manifest, QML hygiene
 make qmlcheck      # loads Service.qml in a throwaway Quickshell (needs Omarchy)
 make security      # the adversarial subset
-gitleaks git . --config .gitleaks.toml --redact --no-banner
+make secrets       # gitleaks over the full Git history, as CI runs it
 ```
 
 Anything visual (the terminal client, the popups, the chat window) should be

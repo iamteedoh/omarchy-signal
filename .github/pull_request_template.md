@@ -16,7 +16,7 @@
 
 - [ ] `make test` passes (python, node and bash suites; the QML load check on an Omarchy machine)
 - [ ] `yamllint .` passes
-- [ ] gitleaks reports no secrets in Git history
+- [ ] `make secrets` (gitleaks) reports no secrets in Git history
 - [ ] Source files include a GPL-3.0-or-later SPDX header
 - [ ] No secrets, tokens, phone numbers, message history, or private infrastructure details are committed
 - [ ] Anything a remote sender controls still goes through `sanitize.py` / `Model.cleanText`
