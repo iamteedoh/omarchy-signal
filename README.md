@@ -6,33 +6,6 @@
 [![Patreon](https://img.shields.io/badge/Patreon-support-f96854?logo=patreon)](https://patreon.com/iamteedoh)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/iamteedoh)
 
-> [!WARNING]
-> **Known issue: Omarchy opens your default agent in the Quake console.**
-> When the Quake console (`SUPER+grave`) is created, Omarchy starts your
-> default coding agent on it, even when you created it by sending a window
-> there with `SUPER+SHIFT+grave`. So sending the Signal chat window to an empty
-> console also opens the agent beside it. This comes from Omarchy
-> (`default/hypr/qconsole.lua`), not from this plugin, and Omarchy has no
-> setting to turn it off.
->
-> To keep the console for what you send there, add this to
-> `~/.config/hypr/hyprland.lua`, just above `require("default.hypr.omarchy")`,
-> then run `hyprctl reload`:
->
-> ```lua
-> -- Keep the Quake console empty: skip Omarchy's agent seed.
-> if not _G.qconsole_seed_blocked then
->   _G.qconsole_seed_blocked = true
->   local exec_cmd = hl.exec_cmd
->   hl.exec_cmd = function(cmd, rules)
->     if cmd == "omarchy-agent" and rules and tostring(rules.workspace):find("qconsole", 1, true) then return end
->     return exec_cmd(cmd, rules)
->   end
-> end
-> ```
->
-> Your agent key and the Omarchy menu still open the agent as usual.
-
 Signal messenger for the [Omarchy](https://omarchy.org) desktop: a terminal
 client that renders images and links inline, popup notifications you can
 answer in place, a tabbed conversation window you can park in the scratchpad,
@@ -512,6 +485,33 @@ receiving, attachments, receipts, reactions, the popups and the chat
 window). Install it with `omarchy plugin add` as described above; it is
 listed on [plugins.omarchy.org](https://plugins.omarchy.org/plugin.html?id=iamteedoh.signal). Known issues live in [`docs/STATUS.md`](docs/STATUS.md); bugs and
 ideas go in the [issues](https://github.com/iamteedoh/omarchy-signal/issues).
+
+### Known issue: Omarchy opens your agent in the Quake console
+
+When the Quake console (`SUPER+grave`) is created, Omarchy starts your default
+coding agent on it, even when you created it by sending a window there with
+`SUPER+SHIFT+grave`. So sending the Signal chat window to an empty console
+also opens the agent beside it. That comes from Omarchy
+(`default/hypr/qconsole.lua`), not from this plugin, which works the same
+either way, and Omarchy has no setting to turn it off.
+
+To keep the console for what you send there, add this to
+`~/.config/hypr/hyprland.lua`, just above `require("default.hypr.omarchy")`,
+then run `hyprctl reload`:
+
+```lua
+-- Keep the Quake console empty: skip Omarchy's agent seed.
+if not _G.qconsole_seed_blocked then
+  _G.qconsole_seed_blocked = true
+  local exec_cmd = hl.exec_cmd
+  hl.exec_cmd = function(cmd, rules)
+    if cmd == "omarchy-agent" and rules and tostring(rules.workspace):find("qconsole", 1, true) then return end
+    return exec_cmd(cmd, rules)
+  end
+end
+```
+
+Your agent key and the Omarchy menu still open the agent as usual.
 
 ## Contributing
 
