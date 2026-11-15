@@ -153,6 +153,8 @@ if command -v systemd-analyze >/dev/null; then
 fi
 check grep -q "ExecStart=%h/.local/bin/omarchy-signal bridge" "$ROOT/systemd/omarchy-signal.service"
 check grep -q "NoNewPrivileges=yes" "$ROOT/systemd/omarchy-signal.service"
+# Calls: the media engine asks the kernel for the network interfaces over netlink.
+check grep -q "^RestrictAddressFamilies=.*AF_NETLINK" "$ROOT/systemd/omarchy-signal.service"
 
 echo "no shell-string execution in QML"
 # One vetted exception: the vendored execArgv helper. It hands argv to bash as
@@ -222,6 +224,25 @@ echo "the theme singleton is always named through Commons"
 bare=$(sed 's|//.*||' "${PLUGIN_QML[@]}" | grep -nE '(^|[^.A-Za-z_])Color\.[a-z]' || true)
 if [[ -n $bare ]]; then echo "$bare" | head -5; echo "  FAIL bare Color. found; write Commons.Color."; fail=1
 else echo "  ok   every palette reference is Commons.Color"; fi
+
+echo "a chat window nobody is looking at marks nothing as read"
+# OMSIG-2026-1114-0002: the chat window's open tab marked every message read as
+# it arrived, and swallowed its popup, even while the window was parked in the
+# scratchpad. The bar then never counted anything. Reading needs the focus.
+check grep -q 'seen: Window.active' "$ROOT/Service.qml"
+check grep -q 'if (root.chatSeen && toast.key === root.activeTab) return' "$ROOT/Service.qml"
+check grep -q '(view.seen || certain === true)' "$ROOT/ConversationView.qml"
+if grep -q 'if (root.chatView && toast.key === root.activeTab) return' "$ROOT/Service.qml"; then
+  echo "  FAIL a popup is suppressed for a chat window that may be hidden"; fail=1
+fi
+
+echo "the chat window tiles into the Quake console and floats again off it"
+# A floating window sent to the console keeps its old place and hangs over the
+# panel, because the console only lays out tiled windows.
+check grep -q 'ws.name == "special:qconsole"' "$ROOT/config/bindings.lua"
+check grep -q 'hl.dsp.window.float({ action = "disable"' "$ROOT/config/bindings.lua"
+check grep -q 'hl.dsp.window.float({ action = "enable"' "$ROOT/config/bindings.lua"
+if command -v luac >/dev/null 2>&1; then check luac -p "$ROOT/config/bindings.lua"; fi
 
 echo "the shell starts no process to talk to the bridge"
 # Opening a conversation used to start five or six Python interpreters. The

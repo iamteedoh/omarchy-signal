@@ -52,8 +52,11 @@ def event_pump():
                     params = json.loads(line)
                 except ValueError:
                     continue
-                params.setdefault("account", ACCOUNT)
-                emit({"jsonrpc": "2.0", "method": "receive", "params": params})
+                # A line may name another notification (a call event) instead.
+                method = params.pop("__method", "receive") if isinstance(params, dict) else "receive"
+                if method == "receive":
+                    params.setdefault("account", ACCOUNT)
+                emit({"jsonrpc": "2.0", "method": method, "params": params})
         time.sleep(0.05)
 
 
@@ -111,6 +114,26 @@ def handle(req):
              "isMember": True, "isBlocked": False, "members": [{"number": "+15550002222"}, {"number": ACCOUNT}]},
             {"id": "bad", "name": "Broken"},
         ], "id": rid}
+    if method == "subscribeCallEvents":
+        if os.environ.get("FAKE_SIGNAL_NO_CALLS"):
+            return {"jsonrpc": "2.0", "error": {"code": -32601, "message": "Method not implemented", "data": None}, "id": rid}
+        log_sent(method, params)
+        return {"jsonrpc": "2.0", "result": 0, "id": rid}
+    if method == "startCall":
+        log_sent(method, params)
+        # As signal-cli does: the ringing event goes out before the answer.
+        call_id = int(os.environ.get("FAKE_SIGNAL_CALL_ID", "-42"))
+        emit({"jsonrpc": "2.0", "method": "callEvent", "params": {"subscription": 0, "result": {
+            "callId": call_id, "state": "RINGING_OUTGOING", "number": (params.get("recipient") or [""])[0],
+            "isOutgoing": True}}})
+        return {"jsonrpc": "2.0", "result": {"callId": call_id, "state": "RINGING_OUTGOING",
+                                             "inputDeviceName": "signal_input_1", "outputDeviceName": "signal_output_1"}, "id": rid}
+    if method in ("acceptCall", "rejectCall", "hangupCall"):
+        log_sent(method, params)
+        if params.get("callId") == 404:
+            return {"jsonrpc": "2.0", "error": {"code": -1, "message": "No active call with id 404", "data": None}, "id": rid}
+        return {"jsonrpc": "2.0", "result": {"callId": params.get("callId"), "state": "CONNECTING",
+                                             "inputDeviceName": "signal_input_1", "outputDeviceName": "signal_output_1"}, "id": rid}
     if method == "startLink":
         return {"jsonrpc": "2.0", "result": {"deviceLinkUri": "sgnl://linkdevice?uuid=abc&pub_key=def"}, "id": rid}
     if method == "finishLink":

@@ -35,6 +35,8 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, emoji, protocol
+from .audio import AudioError
+from .calls import CallManager
 from .config import Config, Paths
 from .envelope import Attachment, Event, parse_receive
 from .rpc import JsonRpcClient, RpcClosed, RpcError
@@ -82,7 +84,20 @@ class SignalCliSupervisor:
         self._restarts = 0
         self.ready = asyncio.Event()
         self.last_error = ""
+        self.version = ""                  # what signal-cli says it is, once it has answered
+        self.call_tunnel = ""              # path of signal-call-tunnel, when calls are possible
+        self.generation = 0                # counts starts, so a quick restart is not mistaken for "still running"
+        self.on_exit = None                # awaited as soon as the process is gone
         self._task: asyncio.Task | None = None
+
+    def environment(self) -> dict[str, str]:
+        """signal-cli looks for the call tunnel next to itself and on PATH; a
+        user unit's PATH seldom has it, so the path the bridge found is passed
+        explicitly."""
+        env = dict(os.environ)
+        if self.call_tunnel:
+            env["SIGNAL_CALL_TUNNEL_BIN"] = self.call_tunnel
+        return env
 
     def command(self) -> list[str]:
         exe = self.cfg.signal_cli
@@ -128,7 +143,7 @@ class SignalCliSupervisor:
         self.proc = await asyncio.create_subprocess_exec(
             *cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, limit=protocol.MAX_EVENT_BYTES * 4,
-            start_new_session=True)
+            start_new_session=True, env=self.environment())
         assert self.proc.stdout and self.proc.stdin and self.proc.stderr
         self.rpc = JsonRpcClient(self.proc.stdout, self.proc.stdin, on_notification=self.on_notification)
         reader = self.rpc.start()
@@ -136,12 +151,19 @@ class SignalCliSupervisor:
         started = time.monotonic()
         try:
             version = await self.rpc.call("version", timeout=30)
-            log.info("signal-cli %s ready", (version or {}).get("version", "?") if isinstance(version, dict) else "?")
+            self.version = str(version.get("version", "")) if isinstance(version, dict) else ""
+            log.info("signal-cli %s ready", self.version or "?")
+            self.generation += 1
             self.ready.set()
             self.last_error = ""
             await reader
         finally:
             self.ready.clear()
+            if self.on_exit is not None:
+                # A call cannot outlive the process that carried it: let go of
+                # the microphone now, not when the next start is noticed.
+                with contextlib.suppress(Exception):
+                    await self.on_exit()
             self.rpc.close()
             stderr_task.cancel()
             if self.proc.returncode is None:
@@ -215,6 +237,8 @@ class Bridge:
         self._typing_tasks: dict[str, asyncio.Task] = {}
         self._contacts_refreshed = 0.0
         self.started_at = time.time()
+        self.calls = CallManager(self)
+        self.supervisor.on_exit = self.calls.on_stopped
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -236,6 +260,7 @@ class Bridge:
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self._shutdown.set)
 
+        self.supervisor.call_tunnel = self.calls.refresh_tunnel()
         sup_task = asyncio.create_task(self.supervisor.run(), name="signal-cli")
         boot_task = asyncio.create_task(self._bootstrap_loop(), name="bootstrap")
         prune_task = asyncio.create_task(self._prune_loop(), name="prune")
@@ -246,6 +271,8 @@ class Bridge:
             log.info("shutting down")
             for t in (boot_task, prune_task, expire_task):
                 t.cancel()
+            with contextlib.suppress(Exception):
+                await self.calls.shutdown()
             await self.supervisor.stop()
             sup_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -271,16 +298,21 @@ class Bridge:
         """After every signal-cli (re)start: discover accounts, refresh contacts."""
         while True:
             await self.supervisor.ready.wait()
+            generation = self.supervisor.generation
             try:
                 await self._discover_accounts()
+                await self.calls.on_ready(self.supervisor.version)
                 if self.account:
                     await self.refresh_directory()
                     await self._broadcast("status", self.status())
             except (RpcError, RpcClosed) as exc:
                 log.warning("bootstrap: %s", exc)
-            # Wait for a restart (ready cleared) or the periodic refresh.
-            while self.supervisor.ready.is_set():
-                await asyncio.sleep(5)
+            # Wait for a restart or the periodic refresh. The generation is
+            # compared as well as the flag: signal-cli can exit and be back
+            # within one sleep, and that start needs its accounts and its call
+            # subscription like any other.
+            while self.supervisor.ready.is_set() and self.supervisor.generation == generation:
+                await asyncio.sleep(1)
                 if self.account and time.monotonic() - self._contacts_refreshed > CONTACT_REFRESH_S:
                     with contextlib.suppress(RpcError, RpcClosed):
                         await self.refresh_directory()
@@ -376,17 +408,34 @@ class Bridge:
             "account": self.account,
             "notificationTimeoutMs": self.cfg.notification_timeout_ms,
             "linking": self._link_task is not None and not self._link_task.done(),
+            "calls": self.calls.status(),
+            "ringtone": self._sound_file(self.cfg.ringtone) or self._sound_file(self.cfg.notification_sound),
             "error": self.supervisor.last_error, "uptime": int(time.time() - self.started_at),
         }
+
+    @staticmethod
+    def _sound_file(configured: str) -> str:
+        path = os.path.expanduser(configured) if configured else ""
+        return path if path and os.path.isfile(path) else ""
 
     # -- signal-cli notifications ----------------------------------------------
 
     async def _on_notification(self, method: str, params: Any) -> None:
+        if method == "callEvent":
+            try:
+                await self.calls.on_call_event(params)
+            except Exception:  # pragma: no cover - defensive
+                log.exception("failed to handle a call event")
+            return
         if method != "receive":
             return
         if isinstance(params, dict) and isinstance(params.get("account"), str):
             if self.account and params["account"] != self.account:
                 return
+        try:
+            await self.calls.on_receive(params)
+        except Exception:  # pragma: no cover - defensive
+            log.exception("failed to handle a call message")
         for ev in parse_receive(params, self.account):
             try:
                 await self._handle_event(ev)
@@ -599,6 +648,8 @@ class Bridge:
             return protocol.reply(req_id, result)
         except (InvalidRecipient, InvalidAttachment, protocol.ProtocolError, ValueError) as exc:
             return protocol.error(req_id, str(exc), code="invalid")
+        except AudioError as exc:
+            return protocol.error(req_id, str(exc), code="audio")
         except RpcError as exc:
             log.warning("%s failed: %s", op, exc.message)
             return protocol.error(req_id, exc.message, code="signal")
@@ -1156,6 +1207,35 @@ class Bridge:
         self.store.clear_history()
         await self._broadcast("unread", {"total": 0})
         return {"cleared": True}
+
+    # -- calls --------------------------------------------------------------------
+
+    async def op_calls(self, p: dict) -> list[dict]:
+        return self.calls.list()
+
+    async def op_callStart(self, p: dict) -> dict:
+        self._require_account()
+        return await self.calls.start(p["conversation"])
+
+    async def op_callAccept(self, p: dict) -> dict:
+        self._require_account()
+        return await self.calls.accept(p["call"])
+
+    async def op_callReject(self, p: dict) -> dict:
+        self._require_account()
+        return await self.calls.reject(p["call"])
+
+    async def op_callHangup(self, p: dict) -> dict:
+        return await self.calls.hangup(p["call"])
+
+    async def op_callMute(self, p: dict) -> dict:
+        return await self.calls.mute(p["call"], p["muted"])
+
+    async def op_callDevices(self, p: dict) -> dict:
+        return await self.calls.devices()
+
+    async def op_callSetDevice(self, p: dict) -> dict:
+        return await self.calls.set_device(p["kind"], p.get("name", ""))
 
     async def op_shutdown(self, p: dict) -> dict:
         self._shutdown.set()

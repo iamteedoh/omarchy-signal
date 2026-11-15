@@ -33,3 +33,29 @@ o.bind("SUPER + W", "Close window", function()
   end
   hl.dispatch(hl.dsp.window.close())
 end)
+-- The chat window floats, and the Quake console (SUPER+grave) only lays out
+-- tiled windows: a floating one sent there with SUPER+SHIFT+grave keeps the
+-- place and size it had on the workspace and hangs over the console instead
+-- of sitting in it. So the chat window is tiled while it is on the console,
+-- and floats again when it is moved back off.
+local signal_docked = {}
+local function signal_chat(window)
+  return window and window.class == "org.quickshell" and (window.title or ""):find("Signal · ", 1, true) == 1
+end
+hl.on("window.move_to_workspace", function(window, ws)
+  if not ws or not signal_chat(window) then return end
+  local on_console = ws.name == "special:qconsole"
+  if on_console and window.floating then
+    signal_docked[window.address] = true
+    hl.dispatch(hl.dsp.window.float({ action = "disable", window = "address:" .. window.address }))
+  elseif not on_console and signal_docked[window.address] then
+    signal_docked[window.address] = nil
+    if not window.floating then
+      hl.dispatch(hl.dsp.window.float({ action = "enable", window = "address:" .. window.address }))
+      hl.dispatch(hl.dsp.window.center({ window = "address:" .. window.address }))
+    end
+  end
+end)
+hl.on("window.destroy", function(window)
+  if window then signal_docked[window.address] = nil end
+end)

@@ -120,6 +120,9 @@ class Config:
     terminal: str = "auto"                 # terminal for `omarchy-signal open`: auto (system default) | ghostty | kitty | wezterm | foot | alacritty
     window_opacity: int = 0                # how solid the popup and chat window are, in percent; 0 = what the Omarchy theme uses
     telemetry: bool = True                 # the readings beside a conversation (link, traffic, delivery, reply times)
+    calls: bool = True                     # place and answer voice calls (needs signal-call-tunnel)
+    call_tunnel: str = "signal-call-tunnel"  # binary name or absolute path of signal-cli's call helper
+    ringtone: str = ""                     # sound file repeated while a call rings (empty = the notification sound, else silent)
     image_max_rows: int = 14
     qr_rows: int = 9                       # height of the linking QR code in terminal rows (image mode)
     qr_style: str = "auto"                 # auto (shell popup, else image, else text) | shell | image | half | quad | braille
@@ -208,6 +211,10 @@ SETTINGS: list[dict] = [
      "help": "No popups while Omarchy's Do Not Disturb is on (unread counts still update)"},
     {"section": "Notifications", "key": "notification_sound", "label": "Notification sound", "type": "path",
      "help": "A .wav/.ogg/.oga file played with each popup (pw-play); empty for silence"},
+    {"section": "Calls", "key": "calls", "label": "Voice calls", "type": "bool", "restart": True,
+     "help": "Place and answer one-to-one voice calls from this computer; needs signal-call-tunnel (README, Calls). Off: calls ring only on your phone"},
+    {"section": "Calls", "key": "ringtone", "label": "Ringtone", "type": "path",
+     "help": "A .wav/.ogg/.oga file repeated while a call rings (pw-play); empty uses the notification sound"},
     {"section": "Privacy", "key": "send_read_receipts", "label": "Read receipts", "type": "bool",
      "help": "Tell senders you read their messages; the same receipt clears the notification on your phone"},
     {"section": "Privacy", "key": "typing_indicators", "label": "Typing indicators", "type": "bool",
@@ -251,7 +258,7 @@ SETTINGS: list[dict] = [
      "help": "Asks the git remote the plugin was installed from for new release tags, once a day; nothing else is sent. Update with: omarchy plugin update iamteedoh.signal"},
 ]
 
-RESTART_REQUIRED = {s["key"] for s in SETTINGS if s.get("restart")} | {"account", "signal_cli", "log_level"}
+RESTART_REQUIRED = {s["key"] for s in SETTINGS if s.get("restart")} | {"account", "signal_cli", "log_level", "call_tunnel"}
 LIVE_KEYS = {s["key"] for s in SETTINGS if not s.get("restart")}
 
 
