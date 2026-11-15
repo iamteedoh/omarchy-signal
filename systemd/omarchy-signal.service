@@ -31,7 +31,10 @@ RestrictRealtime=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
 SystemCallArchitectures=native
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# AF_NETLINK: a call's media engine (signal-call-tunnel, started by signal-cli)
+# lists the network interfaces to find a path to the other side, and that is
+# a netlink query. Without it a call rings and never connects.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 UMask=0077
 
 [Install]

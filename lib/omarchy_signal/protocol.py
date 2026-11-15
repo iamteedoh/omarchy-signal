@@ -89,6 +89,15 @@ OPS: dict[str, dict[str, tuple[type | tuple[type, ...], bool]]] = {
     "leaveGroup": {"conversation": (str, True)},
     "createGroup": {"name": (str, True), "members": (list, True)},
     "renameGroup": {"conversation": (str, True), "name": (str, True)},
+    # A call is named by "call", never "id": that is the request's own id.
+    "calls": {},
+    "callStart": {"conversation": (str, True)},
+    "callAccept": {"call": (str, True)},
+    "callReject": {"call": (str, True)},
+    "callHangup": {"call": (str, True)},
+    "callMute": {"call": (str, True), "muted": (bool, True)},
+    "callDevices": {},
+    "callSetDevice": {"kind": (str, True), "name": (str, False)},
     "shutdown": {},
 }
 

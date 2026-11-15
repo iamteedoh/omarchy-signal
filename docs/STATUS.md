@@ -21,7 +21,47 @@ verified with burst screenshot captures of real sends, not by inspection.
   and at several widths, and their figures are unit tested. They have not yet
   been run against a real account in the live shell.
 
+- **Voice calls** (OMSIG-2026-1113-0005): the whole flow (placing, answering,
+  declining, a call answered on another device, a second caller while you
+  talk, muting, switching devices, signal-cli dying mid-call) is tested
+  against the fake `signal-cli` with a fake sound server. The audio routing
+  and both level meters were run against the real PipeWire and the real
+  `signal-call-tunnel` devices on this machine, with no call behind them. The
+  call panel was rendered offscreen with drawn levels. **No real call has been
+  placed or answered yet**: that needs a second person, and it is the first
+  thing to check, together with whether the systemd unit's sandbox lets the
+  tunnel connect (`AF_NETLINK` was added for it; `RestrictRealtime=yes` is
+  still on and may cost audio thread priority).
+
 ## Known issues and gotchas
+
+- **Omarchy seeds the Quake console with the default agent** every time the
+  console is created, including when a window is moved onto an empty console
+  (checked on Hyprland 0.56; Omarchy's comment says it should not). Sending the
+  chat window there therefore brings the agent along. Not ours to fix; the
+  README's top warning has a `hyprland.lua` wrap that skips that one launch.
+- **The chat window floats, and the Quake console only lays out tiled
+  windows.** `config/bindings.lua` tiles it when it lands on
+  `special:qconsole` and floats it again when it leaves. A Hyprland reload
+  forgets which window it tiled, so one moved off after a reload stays tiled
+  (`SUPER+T`).
+- **Calls are voice only, one person at a time.** `signal-cli` sends every
+  offer as an audio call and `signal-call-tunnel` has no video path, so video,
+  group calls, screen sharing and call links are not possible without a
+  different media engine. An incoming video call is answered as a voice call.
+- **A call answered on your phone keeps signal-cli's side alive for up to a
+  minute.** signal-cli ignores the "answered elsewhere" message and waits for
+  its own ring timeout. The bridge stops ringing at once and does not hang up,
+  because a hangup from here would go to the caller. A new call cannot be
+  placed from this computer until that timeout has passed.
+- **Call telemetry is what can be measured outside the tunnel**: state, times,
+  drops, and levels read from the call's two audio devices. Packet loss,
+  jitter, bitrate and round trip are inside RingRTC and the tunnel does not
+  report them.
+- **The level meters and the waveforms come from `parec`** at 8 kHz in 50 ms
+  frames; the clients are sent fifteen readings a second.
+- **A device name is shown as PipeWire's node name** in the call panel's
+  footer; the picker shows the readable description.
 
 - **Telemetry looks at the newest 240 messages of a conversation.** Reply times,
   delivery counts and the busiest hour describe that window, not the whole
@@ -71,4 +111,4 @@ verified with burst screenshot captures of real sends, not by inspection.
 
 ## Not done
 
-- Calls, stories, link previews, voice-note recording, stickers sending.
+- Video calls, group calls, screen sharing, stories, link previews, voice-note recording, stickers sending.

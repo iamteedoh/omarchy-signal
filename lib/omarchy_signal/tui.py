@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import __version__, clipboard, emoji, kitty, links, pathcomplete, protocol, qr, telemetry
+from . import __version__, calls, clipboard, emoji, kitty, links, pathcomplete, protocol, qr, telemetry
 from .bridge import _guess_mime
 from .client import BridgeClient, BridgeError, BridgeUnavailable
 from .config import RESTART_REQUIRED, SETTINGS, Config, Paths, coerce_setting, save_config
@@ -36,6 +36,9 @@ MIN_COLS = 70
 MIN_ROWS = 14
 # Overlays with a text field that a paste types into.
 TEXT_OVERLAYS = ("contacts", "search", "attach", "saveas", "react", "setting-text", "prompt", "members", "forward")
+
+
+CALL_WAVE_KEEP = 64        # levels kept for each side's waveform
 
 
 @dataclass
@@ -156,6 +159,12 @@ class App:
         self.toast = ""
         self.toast_until = 0.0
         self.typing: dict[str, tuple[str, float]] = {}
+        self.call: dict | None = None    # the bridge's record of the live (or just ended) call
+        self.call_tx: list[float] = []   # levels being sent, oldest first
+        self.call_rx: list[float] = []
+        self.call_drawn = 0.0            # when the call line was last redrawn for a level
+        self.call_until = 0.0            # an ended call stays on the line until then
+        self.call_second = 0             # the second the call clock was last drawn for
         self.images: dict[str, ImageSlot] = {}
         self.placed: dict[int, tuple[int, int, int, int]] = {}   # image id -> (row, col, cols, rows) currently on screen
         self.preview: tuple[int, int, int, int, int] | None = None   # (image_id, row, col, cols, rows) for the attach prompt
@@ -222,6 +231,7 @@ class App:
             self.status = await self.client.connect()
             self.connected = True
             await self.client.request("subscribe")
+            self._adopt_call()
         except BridgeUnavailable as exc:
             self.client = None
             self.connected = False
@@ -281,6 +291,14 @@ class App:
             if self.toast and now > self.toast_until:
                 self.toast = ""
                 self.dirty = True
+            if self.call:
+                # The call's clock ticks once a second; an ended call leaves the line after a few seconds.
+                if not self._call_live() and now > self.call_until:
+                    self.call = None
+                    self.dirty = True
+                elif int(now) != self.call_second:
+                    self.call_second = int(now)
+                    self.dirty = True
             if self.typing:
                 expired = [k for k, (_, until) in self.typing.items() if until < now]
                 for k in expired:
@@ -370,6 +388,22 @@ class App:
             return
         if not isinstance(data, dict):
             data = {}
+        if name == "callLevels":
+            # Fifteen a second: keep them all for the waveform, redraw five times a second.
+            if self.call and data.get("id") == self.call.get("id"):
+                for side, history in (("tx", self.call_tx), ("rx", self.call_rx)):
+                    value = data.get(side)
+                    history.append(float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0)
+                    del history[:-CALL_WAVE_KEEP]
+                self.call["levels"] = {k: data.get(k, 0) for k in ("tx", "rx", "txPeak", "rxPeak", "txTalkMs", "rxTalkMs")}
+                if time.monotonic() - self.call_drawn >= 0.2:
+                    self.call_drawn = time.monotonic()
+                    self.dirty = True
+            return
+        if name == "call":
+            self._on_call(data)
+            self.dirty = True
+            return
         if name == "message":
             key = data.get("conversation", "")
             masked = data.get("senderName") == "Signal" and data.get("conversationName") == "New message"
@@ -476,6 +510,7 @@ class App:
         elif name == "status":
             was_unknown = not self.status.get("accountsKnown")
             self.status.update(data)
+            self._adopt_call()
             self.connected = bool(data.get("connected"))
             # signal-cli has just come up and there is genuinely no account: now we know.
             if was_unknown and not self.overlay and self._needs_linking():
@@ -494,6 +529,123 @@ class App:
                 self.conversations = await self.client.request("conversations")
                 self._select_key(self.active_key)
         self.dirty = True
+
+    # -- calls ---------------------------------------------------------------
+
+    def _adopt_call(self) -> None:
+        """A call that was already going when this client started (or when the
+        bridge came back) is in the bridge's status."""
+        info = self.status.get("calls")
+        active = info.get("active") if isinstance(info, dict) else None
+        if isinstance(active, list) and active and isinstance(active[0], dict) and not self._call_live():
+            self._on_call(active[0])
+
+    def _call_live(self) -> bool:
+        return bool(self.call) and self.call.get("state") != calls.ENDED
+
+    def _on_call(self, data: dict) -> None:
+        if not isinstance(data.get("id"), str):
+            return
+        ended = data.get("state") == calls.ENDED
+        if self._call_live() and self.call.get("id") != data["id"]:
+            if ended:                       # somebody rang while you were talking: it is in their history
+                self.show_toast(f"missed a call from {clean_name(data.get('name')) or 'someone'}", 5)
+            return
+        if not self.call or self.call.get("id") != data["id"]:
+            self.call_tx, self.call_rx = [], []
+        was_ringing = bool(self.call) and self.call.get("state") == calls.RINGING
+        self.call = data
+        who = clean_name(data.get("name")) or "someone"
+        if ended:
+            self.call_until = time.monotonic() + 6
+            self.show_toast(f"{calls.end_label(data)}: {who}", 4)
+        elif data.get("state") == calls.RINGING and not data.get("outgoing") and not was_ringing:
+            self.show_toast(f"{who} is calling: Alt-A answers, Alt-H declines", 8)
+
+    def _call_request(self, op: str, **params) -> None:
+        async def go() -> None:
+            if not self.client:
+                return
+            try:
+                await self.client.request(op, timeout=60, **params)
+            except BridgeError as exc:
+                self.show_toast(clean_text(str(exc), max_length=200, single_line=True), 6)
+        asyncio.ensure_future(go())
+
+    def call_start(self) -> None:
+        conv = self.active()
+        info = self.status.get("calls") if isinstance(self.status.get("calls"), dict) else {}
+        if self._call_live():
+            self.show_toast("you are already in a call (Alt-H hangs up)")
+        elif conv is None:
+            self.show_toast("pick a conversation to call")
+        elif conv.get("kind") == "group":
+            self.show_toast("group calls are not supported; call one person")
+        elif not info.get("available"):
+            self.show_toast("calls are not available: " + str(info.get("reason") or "the bridge did not say why"), 6)
+        else:
+            self._call_request("callStart", conversation=conv["key"])
+
+    def call_answer(self) -> None:
+        if self._call_live() and self.call.get("state") == calls.RINGING and not self.call.get("outgoing"):
+            self._call_request("callAccept", call=self.call["id"])
+        else:
+            self.show_toast("no call is ringing")
+
+    def call_hangup(self) -> None:
+        if not self._call_live():
+            self.show_toast("you are not in a call")
+        elif self.call.get("state") == calls.RINGING and not self.call.get("outgoing"):
+            self._call_request("callReject", call=self.call["id"])
+        else:
+            self._call_request("callHangup", call=self.call["id"])
+
+    def call_mute(self) -> None:
+        if not self._call_live() or (self.call.get("state") == calls.RINGING and not self.call.get("outgoing")):
+            self.show_toast("you are not in a call")
+        else:
+            self._call_request("callMute", call=self.call["id"], muted=not self.call.get("muted"))
+
+    def _call_line(self, width: int) -> str:
+        """The row under the title while a call is on (and for a few seconds
+        after): state and clock, a waveform for each side, how to hang up. It
+        takes the telemetry line's place, so nothing below it moves."""
+        th = self.theme
+        call = self.call or {}
+        now = int(time.time() * 1000)
+        state = call.get("state")
+        alarm = state == calls.RECONNECTING or (state == calls.ENDED and not call.get("connectedAt"))
+        tone = th.red if alarm else th.accent
+        head = calls.state_label(call).upper()
+        if call.get("connectedAt"):
+            head += " " + calls.clock(calls.duration_ms(call, now))
+        who = truncate(clean_name(call.get("name")) or "", 18)
+        ringing_in = state == calls.RINGING and not call.get("outgoing")
+        if state == calls.ENDED:
+            hint = ""
+        elif ringing_in:
+            hint = "Alt-A answer · Alt-H decline"
+        elif state == calls.RINGING:
+            hint = "Alt-H cancel"
+        else:
+            hint = "Alt-M " + ("unmute" if call.get("muted") else "mute") + " · Alt-H hang up"
+        lead = f"◢ 📞 {head}" + (f" · {who}" if who else "")
+        fixed = str_width(lead) + 2 + (str_width(hint) + 3 if hint else 0)
+        talking = state in (calls.CONNECTED, calls.RECONNECTING)
+        # Whatever is left is split between the two waveforms: "YOU " + bars + " ╌ THEM " + bars.
+        wave = (width - fixed - 16) // 2 if talking else 0
+        out = T.fg(th.border) + "╌" + T.fg(tone) + T.BOLD + lead + T.RESET
+        used = 1 + str_width(lead)
+        if wave >= 6:
+            wave = min(wave, 32)
+            mine = T.fg(th.red) + "MUTED".center(wave, "╌") if call.get("muted") else T.fg(th.accent) + calls.waveform(self.call_tx, wave)
+            out += (T.fg(th.border) + " ╌ " + T.fg(th.dim) + "YOU " + mine
+                    + T.fg(th.border) + " ╌ " + T.fg(th.dim) + "THEM " + T.fg(th.foreground) + calls.waveform(self.call_rx, wave))
+            used += 3 + 4 + wave + 3 + 5 + wave
+        if hint and used + 3 + str_width(hint) <= width:
+            out += T.fg(th.border) + " ╌ " + T.fg(th.dim) + hint
+            used += 3 + str_width(hint)
+        return out + T.fg(th.border) + " " + "╌" * max(0, width - used - 1) + T.RESET
 
     @staticmethod
     def _event_to_message(data: dict) -> dict:
@@ -1218,6 +1370,9 @@ class App:
             return
         if key.alt and key.name == "char" and key.char == "t":
             self.toggle_telemetry()
+            return
+        if key.alt and key.name == "char" and key.char in ("c", "a", "h", "m"):
+            {"c": self.call_start, "a": self.call_answer, "h": self.call_hangup, "m": self.call_mute}[key.char]()
             return
         if key.ctrl and key.char == "a":
             self.open_overlay("attach")
@@ -2439,7 +2594,10 @@ class App:
             sub += " · blocked"
         out.append(T.move(top, left) + T.fg(self._hue(conv["key"])) + T.BOLD + truncate(title, width // 2) + T.RESET
                    + T.fg(th.dim) + "  " + truncate(sub, width // 2 - 4) + T.RESET)
-        out.append(T.move(top + 1, left) + self._telemetry_line(conv["key"], width - 1))
+        if self.call and (self._call_live() or time.monotonic() < self.call_until):
+            out.append(T.move(top + 1, left) + self._call_line(width - 1))
+        else:
+            out.append(T.move(top + 1, left) + self._telemetry_line(conv["key"], width - 1))
         lines = self._render_lines()
         area = rows - 2
         max_scroll = max(0, len(lines) - area)
@@ -2838,6 +2996,8 @@ class App:
                     ("Ctrl-T", "conversation: open in a window (detach), timers, mute, archive, block, safety number, groups"),
                     ("Alt-D (w in the list)", "detach this chat into the shell's chat window"),
                     ("Alt-T", "telemetry line on or off"),
+                    ("Alt-C", "voice call with this person"), ("Alt-A", "answer a ringing call"),
+                    ("Alt-H", "hang up, cancel or decline"), ("Alt-M", "mute or unmute your microphone"),
                     ("Ctrl-E / m", "mute conversation"), ("Ctrl-S / F2", "settings"), ("Ctrl-L", "redraw"), ("Ctrl-X", "clear composer"),
                     ("Ctrl-Z", "put a failed message back in the composer"), (":smile:", "emoji shortcodes; a picker opens as you type"),
                     ("drag", "select text; it is copied when you let go"), ("Ctrl-V, right-click", "paste; a picture attaches (SUPER+V pastes text only)"),

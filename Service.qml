@@ -9,6 +9,7 @@ import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 import "Hub.js" as Hub
+import "Calls.js" as Calls
 
 // Headless service: holds the plugin's connection to the bridge, turns
 // incoming messages into a popup you can answer without leaving what you are
@@ -96,6 +97,68 @@ Item {
 
   readonly property var chatWindow: chatLoader.item      // null while no tab is open
   readonly property var chatView: chatLoader.item ? chatLoader.item.view : null
+
+  // ---- calls: the one live call (the bridge allows one at a time), kept for a
+  // few seconds after it ends so the window can say how it ended.
+  property var activeCall: null
+  property var callTx: []
+  property var callRx: []
+  property bool callsAvailable: false
+  property string callsReason: ""
+  property string ringtone: ""
+  readonly property int callWaveSlots: 48
+
+  function applyCall(d) {
+    if (!d || typeof d.id !== "string" || !Model.isConversationKey(d.conversation)) return
+    var ringKey = "call:" + d.id
+    if (root.activeCall && root.activeCall.id !== d.id && Calls.isLive(root.activeCall) && !Calls.isLive(d)) return   // a busy caller's missed call
+    if (!root.activeCall || root.activeCall.id !== d.id) { root.callTx = []; root.callRx = [] }
+    root.activeCall = d
+    if (Calls.isRingingIn(d)) {
+      // Rings until it is answered, declined or given up on; Do Not Disturb
+      // silences the ringtone, never the card: a call you cannot see is a missed call.
+      root.pushToast({ key: ringKey, kind: "call", sticky: true, convName: d.name || "",
+                       title: Model.singleLine(d.name || "Signal", 80),
+                       body: d.media === "video" ? "Incoming video call (voice only on this computer)" : "Incoming voice call" })
+      if (!ringer.running) { ringer.restart(); root.ring() }
+    } else {
+      root.dismissKey(ringKey)
+      ringer.stop()
+    }
+    if (!Calls.isLive(d)) callLinger.restart()
+    else callLinger.stop()
+  }
+  function applyCallLevels(d) {
+    if (!d || !root.activeCall || d.id !== root.activeCall.id) return
+    root.callTx = Calls.pushLevel(root.callTx, d.tx, root.callWaveSlots)
+    root.callRx = Calls.pushLevel(root.callRx, d.rx, root.callWaveSlots)
+    // The record's own figures (talk time, peaks) ride along with the levels.
+    var c = Object.assign({}, root.activeCall)     // a new object: QML only notices an assignment that changes the value
+    c.levels = { tx: d.tx, rx: d.rx, txPeak: d.txPeak, rxPeak: d.rxPeak, txTalkMs: d.txTalkMs, rxTalkMs: d.rxTalkMs }
+    root.activeCall = c
+  }
+  function ring() {
+    if (root.respectDnd && root.dnd) return
+    if (root.ringtone && /^\/[^\0]+\.(wav|ogg|oga|mp3|flac)$/i.test(root.ringtone)) root.execArgv(["pw-play", root.ringtone])
+  }
+  function answerCall(id, accept) {
+    var call = root.activeCall
+    if (!call || call.id !== id) return
+    link.request(accept ? "callAccept" : "callReject", { call: id }, function(ok, result, err) {
+      if (!ok) root.pushToast({ key: "call-error", kind: "notice", title: "Signal call", body: Model.singleLine(err || "that did not work", 200) })
+    }, 45000)
+    // Answering opens the conversation, where the call's controls are.
+    if (accept) root.openWindow(call.conversation, call.name || "")
+  }
+  Timer { id: ringer; interval: 3000; repeat: true; onTriggered: root.ring() }
+  Timer { id: callLinger; interval: 6000; onTriggered: if (root.activeCall && !Calls.isLive(root.activeCall)) { root.activeCall = null; root.callTx = []; root.callRx = [] } }
+  // The chat window is open and has the focus, so its active tab is being read.
+  readonly property bool chatSeen: root.chatView !== null && root.chatView.seen
+  function clearTabUnread(key) {
+    if (root.tabUnread[key] !== true) return
+    var u = root.tabUnread; delete u[key]; root.tabUnread = u
+    root.refreshTabs()
+  }
 
   function showTab(key) {
     if (root.windows.indexOf(key) < 0) return false
@@ -320,6 +383,13 @@ Item {
     if (typeof d.scrollSpeed === "number") root.scrollSpeed = Math.max(0, Math.min(20, d.scrollSpeed))
     if (typeof d.windowOpacity === "number") root.windowOpacity = Math.max(0, Math.min(100, d.windowOpacity))
     if ("telemetry" in d) root.telemetry = d.telemetry !== false
+    if (d.calls && typeof d.calls === "object") {
+      root.callsAvailable = d.calls.available === true
+      root.callsReason = Model.singleLine(d.calls.reason || "", 160)
+      // After a shell restart the bridge still has the call: pick it up again.
+      if (Array.isArray(d.calls.active) && d.calls.active.length > 0 && !Calls.isLive(root.activeCall)) root.applyCall(d.calls.active[0])
+    }
+    if (typeof d.ringtone === "string") root.ringtone = d.ringtone
     if ("updateCheck" in d) root.updateCheck = d.updateCheck !== false
     if (typeof d.version === "string") root.bridgeVersion = Model.singleLine(d.version, 20)
     root.lastError = Model.singleLine(d.error || "", 200)
@@ -342,19 +412,22 @@ Item {
       root.closeWindow(d.conversation)
       return
     }
+    if (name === "call") { root.applyCall(d); return }
+    if (name === "callLevels") { root.applyCallLevels(d); return }
     // Conversation views (popup and the chat window) follow their own thread.
     if (root.replyOpen) replyView.onEvent(name, d)
     if (root.chatView) root.chatView.onEvent(name, d)
     if (name !== "message") return
     if (typeof d.conversation === "string" && d.outgoing !== true
-        && root.windows.indexOf(d.conversation) >= 0 && d.conversation !== root.activeTab) {
+        && root.windows.indexOf(d.conversation) >= 0 && (d.conversation !== root.activeTab || !root.chatSeen)) {
       var u = root.tabUnread; u[d.conversation] = true; root.tabUnread = u
       root.refreshTabs()
     }
+    if (d.call === true) return                    // a call's own line in the history: the call already announced itself
     var toast = Model.toastFromMessage(d, root.previewEnabled)
     if (!toast) return
     if (root.replyOpen && root.replyKey === toast.key) return
-    if (root.chatView && toast.key === root.activeTab) return   // the chat window is showing it
+    if (root.chatSeen && toast.key === root.activeTab) return   // the chat window is showing it, and has the focus
     if (root.respectDnd && root.dnd) return
     if (root.notificationMode === "system") {
       root.execArgv(["omarchy-notification-send", "--app-name", "Signal", "-g", "󰭹", toast.title, toast.body,
@@ -569,9 +642,10 @@ Item {
         required convName
         required attachments
         width: ListView.view.width
-        onDismissed: root.dismissToast(card.tid)
+        onDismissed: { if (card.kind === "call") ringer.stop(); root.dismissToast(card.tid) }   // dismissing a ringing card silences it
         onDeed: function(id) {
-          if (id === "window") root.openWindow(card.key, card.convName)
+          if (card.kind === "call") root.answerCall(card.key.slice(5), id === "act")
+          else if (id === "window") root.openWindow(card.key, card.convName)
           else if (id === "terminal") root.openTerminal(card.key)
           else root.activateToast({ key: card.key, kind: card.kind, convName: card.convName })
         }
@@ -636,6 +710,11 @@ Item {
           telemetry: root.telemetry
           active: root.replyOpen
           totalUnread: root.unread
+          activeCall: root.activeCall
+          callTx: root.callTx
+          callRx: root.callRx
+          callsAvailable: root.callsAvailable
+          callsReason: root.callsReason
           bridgeVersion: root.bridgeVersion
           onRequestTelemetry: function(on) { root.setTelemetry(on) }
           onRequestClose: root.closeReply()
@@ -707,10 +786,18 @@ Item {
         scrollSpeed: root.scrollSpeed
         telemetry: root.telemetry
         totalUnread: root.unread
+          activeCall: root.activeCall
+          callTx: root.callTx
+          callRx: root.callRx
+          callsAvailable: root.callsAvailable
+          callsReason: root.callsReason
         bridgeVersion: root.bridgeVersion
         onRequestTelemetry: function(on) { root.setTelemetry(on) }
         detached: true
         siblings: root.windowTabs
+        // Focused, not merely open: see ConversationView.seen.
+        seen: Window.active
+        onSeenChanged: if (seen && root.activeTab) root.clearTabUnread(root.activeTab)
         // The window's content eases in once, when the window first maps.
         opacity: 0
         Component.onCompleted: opacity = 1

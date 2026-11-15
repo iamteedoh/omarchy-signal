@@ -1,0 +1,1366 @@
+{
+  "_": "Shared by tests/qml/calls.test.js (Calls.js) and tests/python/test_calls.py (lib/omarchy_signal/calls.py). SPDX-License-Identifier: GPL-3.0-or-later",
+  "clock": [
+    [
+      0,
+      "0:00"
+    ],
+    [
+      999,
+      "0:00"
+    ],
+    [
+      7000,
+      "0:07"
+    ],
+    [
+      59999,
+      "0:59"
+    ],
+    [
+      60000,
+      "1:00"
+    ],
+    [
+      192000,
+      "3:12"
+    ],
+    [
+      3599000,
+      "59:59"
+    ],
+    [
+      3600000,
+      "1:00:00"
+    ],
+    [
+      3723000,
+      "1:02:03"
+    ],
+    [
+      36000000,
+      "10:00:00"
+    ],
+    [
+      -1,
+      ""
+    ]
+  ],
+  "labels": [
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "ringing",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Calling",
+      "end": "No answer",
+      "history": "📞 Outgoing voice call · no answer"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": false,
+        "state": "ringing",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Incoming call",
+      "end": "Missed call",
+      "history": "📞 Missed voice call"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "connecting",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Connecting",
+      "end": "No answer",
+      "history": "📞 Outgoing voice call · no answer"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "connected",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 1800000002400,
+        "endedAt": 0,
+        "reason": "",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Connected",
+      "end": "Call ended",
+      "history": "📞 Outgoing voice call · 0:00"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "reconnecting",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 1800000002400,
+        "endedAt": 0,
+        "reason": "",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Reconnecting",
+      "end": "Call ended",
+      "history": "📞 Outgoing voice call · 0:00"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "local_hangup",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Cancelled",
+      "end": "Cancelled",
+      "history": "📞 Outgoing voice call · cancelled"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": false,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "local_hangup",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Declined",
+      "end": "Declined",
+      "history": "📞 Incoming voice call · declined"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "remote_hangup",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Declined",
+      "end": "Declined",
+      "history": "📞 Outgoing voice call · declined"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": false,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "remote_hangup",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Missed call",
+      "end": "Missed call",
+      "history": "📞 Missed voice call"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "ring_timeout",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "No answer",
+      "end": "No answer",
+      "history": "📞 Outgoing voice call · no answer"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": false,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "ring_timeout",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Missed call",
+      "end": "Missed call",
+      "history": "📞 Missed voice call"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "remote_busy",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Busy",
+      "end": "Busy",
+      "history": "📞 Outgoing voice call · busy"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": false,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "rejected",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Declined",
+      "end": "Declined",
+      "history": "📞 Incoming voice call · declined"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": false,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "elsewhere",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Answered on another device",
+      "end": "Answered on another device",
+      "history": "📞 Incoming voice call · answered on another device"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": false,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "busy_here",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Missed call",
+      "end": "Missed call",
+      "history": "📞 Missed voice call"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "tunnel_spawn_error",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Call failed",
+      "end": "Call failed",
+      "history": "📞 Outgoing voice call · call failed"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 1800000001000,
+        "endedAt": 1800000009000,
+        "reason": "tunnel_exit",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Call dropped",
+      "end": "Call dropped",
+      "history": "📞 Outgoing voice call · 0:08"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 1800000002400,
+        "endedAt": 1800000194400,
+        "reason": "remote_hangup",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Call ended",
+      "end": "Call ended",
+      "history": "📞 Outgoing voice call · 3:12"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": false,
+        "state": "ended",
+        "media": "video",
+        "startedAt": 1800000000000,
+        "connectedAt": 1800000002400,
+        "endedAt": 1800003725400,
+        "reason": "local_hangup",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Call ended",
+      "end": "Call ended",
+      "history": "📞 Incoming video call (voice only here) · 1:02:03"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": false,
+        "state": "ended",
+        "media": "video",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "ring_timeout",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "Missed call",
+      "end": "Missed call",
+      "history": "📞 Missed video call (voice only here)"
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "unknown",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "state": "",
+      "end": "No answer",
+      "history": "📞 Outgoing voice call · no answer"
+    }
+  ],
+  "share": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      5,
+      0,
+      0
+    ],
+    [
+      0,
+      10,
+      0
+    ],
+    [
+      1,
+      3,
+      33
+    ],
+    [
+      2,
+      3,
+      67
+    ],
+    [
+      30000,
+      192000,
+      16
+    ],
+    [
+      90000,
+      192000,
+      47
+    ],
+    [
+      500,
+      100,
+      100
+    ],
+    [
+      -5,
+      100,
+      0
+    ],
+    [
+      1,
+      200,
+      1
+    ],
+    [
+      1,
+      201,
+      0
+    ]
+  ],
+  "waveform": [
+    [
+      [],
+      4,
+      "▁▁▁▁"
+    ],
+    [
+      [
+        0,
+        0
+      ],
+      6,
+      "▁▁▁▁▁▁"
+    ],
+    [
+      [
+        0.5
+      ],
+      0,
+      ""
+    ],
+    [
+      [
+        0.5
+      ],
+      9,
+      "▁▂▄▄▄▅▃▂▁"
+    ],
+    [
+      [
+        0.2,
+        0.9
+      ],
+      16,
+      "▁▁▂▃▅▅▇▅▅▇▆▃▄▂▁▁"
+    ],
+    [
+      [
+        0.9,
+        0.1,
+        0.05
+      ],
+      16,
+      "▁▁▁▂▃▂▄▅▄▃▄▃▂▁▁▁"
+    ],
+    [
+      [
+        0.3,
+        0.45,
+        0.62
+      ],
+      24,
+      "▁▁▁▂▃▃▅▅▇▆▇▅▄▆▅▆▅▄▃▂▂▁▁▁"
+    ],
+    [
+      [
+        1.5,
+        -1,
+        1
+      ],
+      12,
+      "▁▂▂▃▅▅▇▅▅▂▁▁"
+    ],
+    [
+      [
+        0.4,
+        0.41,
+        0.39,
+        0.7
+      ],
+      32,
+      "▁▁▁▁▂▃▄▄▂▅▆▅▅▇▇█▇█▆▆▄▃▄▃▄▂▂▁▁▁▁▁"
+    ]
+  ],
+  "readings": [
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "ringing",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "now": 1800000007000,
+      "rows": [
+        [
+          "STATE",
+          "CALLING",
+          ""
+        ],
+        [
+          "RINGING",
+          "0:07",
+          ""
+        ],
+        [
+          "LINK",
+          "E2E SRTP",
+          "accent"
+        ],
+        [
+          "CODEC",
+          "OPUS 48K",
+          ""
+        ]
+      ]
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": false,
+        "state": "ringing",
+        "media": "video",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "now": 1800000012000,
+      "rows": [
+        [
+          "STATE",
+          "INCOMING CALL",
+          ""
+        ],
+        [
+          "RINGING",
+          "0:12",
+          ""
+        ],
+        [
+          "LINK",
+          "E2E SRTP",
+          "accent"
+        ],
+        [
+          "CODEC",
+          "OPUS 48K",
+          ""
+        ]
+      ]
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "connected",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 1800000002400,
+        "endedAt": 0,
+        "reason": "",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 2400,
+        "audioError": "",
+        "levels": {
+          "tx": 0.5,
+          "rx": 0.2,
+          "txPeak": 0.9,
+          "rxPeak": 0.7,
+          "txTalkMs": 30000,
+          "rxTalkMs": 90000
+        }
+      },
+      "now": 1800000194400,
+      "rows": [
+        [
+          "STATE",
+          "CONNECTED",
+          "accent"
+        ],
+        [
+          "TIME",
+          "3:12",
+          ""
+        ],
+        [
+          "LINK",
+          "E2E SRTP",
+          "accent"
+        ],
+        [
+          "SETUP",
+          "2.4s",
+          ""
+        ],
+        [
+          "YOU",
+          "16% talking",
+          ""
+        ],
+        [
+          "THEM",
+          "47% talking",
+          ""
+        ],
+        [
+          "CODEC",
+          "OPUS 48K",
+          ""
+        ]
+      ]
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "reconnecting",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 1800000002400,
+        "endedAt": 0,
+        "reason": "",
+        "muted": true,
+        "reconnects": 2,
+        "encrypted": true,
+        "setupMs": 2400,
+        "audioError": "no microphone found",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "now": 1800000060000,
+      "rows": [
+        [
+          "STATE",
+          "RECONNECTING",
+          "alarm"
+        ],
+        [
+          "TIME",
+          "0:57",
+          ""
+        ],
+        [
+          "LINK",
+          "E2E SRTP",
+          "accent"
+        ],
+        [
+          "SETUP",
+          "2.4s",
+          ""
+        ],
+        [
+          "YOU",
+          "0% talking",
+          ""
+        ],
+        [
+          "THEM",
+          "0% talking",
+          ""
+        ],
+        [
+          "MIC",
+          "MUTED",
+          "alarm"
+        ],
+        [
+          "DROPS",
+          "2",
+          "alarm"
+        ],
+        [
+          "CODEC",
+          "OPUS 48K",
+          ""
+        ],
+        [
+          "AUDIO",
+          "NOT CONNECTED",
+          "alarm"
+        ]
+      ]
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 1800000002400,
+        "endedAt": 1800000062400,
+        "reason": "remote_hangup",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 2400,
+        "audioError": "",
+        "levels": {
+          "txTalkMs": 15000,
+          "rxTalkMs": 0
+        }
+      },
+      "now": 1800000999999,
+      "rows": [
+        [
+          "STATE",
+          "CALL ENDED",
+          ""
+        ],
+        [
+          "TIME",
+          "1:00",
+          ""
+        ],
+        [
+          "LINK",
+          "E2E SRTP",
+          "accent"
+        ],
+        [
+          "SETUP",
+          "2.4s",
+          ""
+        ],
+        [
+          "YOU",
+          "25% talking",
+          ""
+        ],
+        [
+          "THEM",
+          "0% talking",
+          ""
+        ],
+        [
+          "CODEC",
+          "OPUS 48K",
+          ""
+        ]
+      ]
+    },
+    {
+      "call": {
+        "id": "1",
+        "conversation": "number:+15550002222",
+        "name": "Trinity",
+        "outgoing": true,
+        "state": "ended",
+        "media": "audio",
+        "startedAt": 1800000000000,
+        "connectedAt": 0,
+        "endedAt": 0,
+        "reason": "ring_timeout",
+        "muted": false,
+        "reconnects": 0,
+        "encrypted": true,
+        "setupMs": 0,
+        "audioError": "",
+        "levels": {
+          "tx": 0,
+          "rx": 0,
+          "txPeak": 0,
+          "rxPeak": 0,
+          "txTalkMs": 0,
+          "rxTalkMs": 0
+        }
+      },
+      "now": 1800000061000,
+      "rows": [
+        [
+          "STATE",
+          "NO ANSWER",
+          ""
+        ],
+        [
+          "LINK",
+          "E2E SRTP",
+          "accent"
+        ],
+        [
+          "CODEC",
+          "OPUS 48K",
+          ""
+        ]
+      ]
+    }
+  ],
+  "burst": [
+    [
+      [],
+      4,
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    ],
+    [
+      [
+        0,
+        0
+      ],
+      6,
+      [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    ],
+    [
+      [
+        0.5
+      ],
+      0,
+      []
+    ],
+    [
+      [
+        0.5
+      ],
+      9,
+      [
+        0.0001522902356781224,
+        0.12899946681248303,
+        0.39975603548890204,
+        0.4156959702205054,
+        0.4644941965174104,
+        0.5999897698104898,
+        0.3478821560576723,
+        0.1523661344802279,
+        0.0001184363458744178
+      ]
+    ],
+    [
+      [
+        0.2,
+        0.9
+      ],
+      16,
+      [
+        0.00850478636003057,
+        0.06443359865477045,
+        0.2224651911401932,
+        0.3300137594856991,
+        0.57315661526221,
+        0.5790751958920882,
+        0.7539941690080936,
+        0.5683862093463768,
+        0.5952529950485099,
+        0.8296165786459916,
+        0.6893126854616018,
+        0.304791627904169,
+        0.4438954635864364,
+        0.13844184160196543,
+        0.10508890219545161,
+        0.014460722013952121
+      ]
+    ],
+    [
+      [
+        0.9,
+        0.1,
+        0.05
+      ],
+      16,
+      [
+        0.0,
+        0.0,
+        0.02787736623611187,
+        0.1596162771458829,
+        0.2825773506900312,
+        0.1982780994801317,
+        0.49551926584881795,
+        0.5959188504236341,
+        0.4128451190851489,
+        0.3683072329886326,
+        0.4186619421474875,
+        0.2548530447779583,
+        0.15577001410804248,
+        0.0292019919433744,
+        0.0,
+        0.0
+      ]
+    ],
+    [
+      [
+        0.3,
+        0.45,
+        0.62
+      ],
+      24,
+      [
+        0.004531359314752096,
+        0.04188555793707619,
+        0.07086062141456712,
+        0.1288147829904504,
+        0.29457611763883457,
+        0.36541158277217206,
+        0.5832057760927893,
+        0.591978316838487,
+        0.7807310975286885,
+        0.6661103599148452,
+        0.7629449377276868,
+        0.5091826569620599,
+        0.49698993999565066,
+        0.7273775331017758,
+        0.6101297011062429,
+        0.7090368891882812,
+        0.5106545080755382,
+        0.4992249230729642,
+        0.28599760062928054,
+        0.22642542170029742,
+        0.2261359610988923,
+        0.12206734510016863,
+        0.027771508482349553,
+        0.006652573804334894
+      ]
+    ],
+    [
+      [
+        1.5,
+        -1,
+        1
+      ],
+      12,
+      [
+        0.015938092569595767,
+        0.13263594115467656,
+        0.18511709704068413,
+        0.28810200365309396,
+        0.5999206221131337,
+        0.5990436502552375,
+        0.7854692159496053,
+        0.5710275447298658,
+        0.5238524443184386,
+        0.23877886530885153,
+        0.11375913059760821,
+        0.023067509491530195
+      ]
+    ],
+    [
+      [
+        0.4,
+        0.41,
+        0.39,
+        0.7
+      ],
+      32,
+      [
+        0.0026388500414805762,
+        0.02510346529858238,
+        0.04473661961628251,
+        0.0844495660520892,
+        0.19572124474926014,
+        0.25383847096196593,
+        0.41618563319244434,
+        0.44649871162080845,
+        0.24637885913708135,
+        0.5625174263841451,
+        0.6790533979136588,
+        0.5120174707171496,
+        0.5425462391825715,
+        0.8159603738054325,
+        0.7666816547995103,
+        0.9656447062492461,
+        0.8172973181329174,
+        0.9180723289338768,
+        0.6796788471601671,
+        0.6871804631397019,
+        0.39520822941132255,
+        0.34077215482892126,
+        0.470291413489468,
+        0.3501452551792781,
+        0.38115172183070795,
+        0.23839483954494306,
+        0.21449114464035088,
+        0.0978903923592108,
+        0.06684704491250906,
+        0.06023864817676329,
+        0.021574709713775217,
+        0.0033664882695613753
+      ]
+    ]
+  ]
+}

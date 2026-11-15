@@ -11,6 +11,9 @@ notification_content = "name-and-message"   # What a popup reveals: sender and t
 notification_timeout_ms = 8000   # How long a popup stays on screen
 respect_dnd = true   # No popups while Omarchy's Do Not Disturb is on (unread counts still update)
 notification_sound = ""   # A .wav/.ogg/.oga file played with each popup (pw-play); empty for silence
+# ── Calls ──
+calls = true   # Place and answer one-to-one voice calls from this computer; needs signal-call-tunnel (README, Calls). Off: calls ring only on your phone (restart)
+ringtone = ""   # A .wav/.ogg/.oga file repeated while a call rings (pw-play); empty uses the notification sound
 # ── Privacy ──
 send_read_receipts = true   # Tell senders you read their messages; the same receipt clears the notification on your phone
 typing_indicators = true   # Send and show typing indicators

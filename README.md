@@ -6,6 +6,33 @@
 [![Patreon](https://img.shields.io/badge/Patreon-support-f96854?logo=patreon)](https://patreon.com/iamteedoh)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/iamteedoh)
 
+> [!WARNING]
+> **Known issue: Omarchy opens your default agent in the Quake console.**
+> When the Quake console (`SUPER+grave`) is created, Omarchy starts your
+> default coding agent on it, even when you created it by sending a window
+> there with `SUPER+SHIFT+grave`. So sending the Signal chat window to an empty
+> console also opens the agent beside it. This comes from Omarchy
+> (`default/hypr/qconsole.lua`), not from this plugin, and Omarchy has no
+> setting to turn it off.
+>
+> To keep the console for what you send there, add this to
+> `~/.config/hypr/hyprland.lua`, just above `require("default.hypr.omarchy")`,
+> then run `hyprctl reload`:
+>
+> ```lua
+> -- Keep the Quake console empty: skip Omarchy's agent seed.
+> if not _G.qconsole_seed_blocked then
+>   _G.qconsole_seed_blocked = true
+>   local exec_cmd = hl.exec_cmd
+>   hl.exec_cmd = function(cmd, rules)
+>     if cmd == "omarchy-agent" and rules and tostring(rules.workspace):find("qconsole", 1, true) then return end
+>     return exec_cmd(cmd, rules)
+>   end
+> end
+> ```
+>
+> Your agent key and the Omarchy menu still open the agent as usual.
+
 Signal messenger for the [Omarchy](https://omarchy.org) desktop: a terminal
 client that renders images and links inline, popup notifications you can
 answer in place, a tabbed conversation window you can park in the scratchpad,
@@ -44,6 +71,10 @@ above; Catppuccin Latte and Gruvbox below.
 | ![A group chat with sender names](docs/media/group-chat.png) | ![Every shortcut, behind the ? button](docs/media/shortcuts.png) |
 | ![A popup, at rest](docs/media/notification.png) | ![The reply dialog on Lumon](docs/media/reply-dialog.png) |
 | ![The bar panel: every conversation, unread counts, search](docs/media/chat-list.png) | ![The conversation menu: one click sets the disappearing messages timer](docs/media/timer.png) |
+
+A voice call in the chat window: the two sides as waveforms, and the call's telemetry above them.
+
+![A voice call with Trinity: connected for 3:12, a waveform for each side, and chips for state, time, link, setup and how much each side talked](docs/media/call.png)
 
 The terminal client, in Ghostty with the same theme:
 
@@ -101,7 +132,9 @@ the real desktop can end up in a picture.
 - **Detach** it, or pick a chat from the bar, and it lives in the **chat
   window**: one real window with a tab per conversation, so Hyprland can float
   it, tile it, or park it in the scratchpad (`SUPER+ALT+S`, back with
-  `SUPER+S`). Tabs show unread dots and keep their own draft; `Ctrl+Tab`
+  `SUPER+S`). Sent to the Quake console (`SUPER+SHIFT+grave`) it tiles
+  into the console instead of floating over it, and floats again when it
+  leaves. Tabs show unread dots and keep their own draft; `Ctrl+Tab`
   cycles them.
 - Delete a message for you or for everyone (within Signal's 24 hours), or a
   whole chat from this computer. Day separators, delivery and read ticks.
@@ -135,6 +168,33 @@ says how many chats there are, how much is unread and what is open in the
 chat window.
 
 **Command line**: send, react, list, history, status, doctor, settings.
+
+**Voice calls** (chat window and terminal client)
+- Call a contact from the phone button in the chat window's header
+  (`Ctrl+Shift+C`) or with `Alt-C` in the terminal client. An incoming call
+  rings as a popup with Answer and Decline, and in the terminal client's
+  footer.
+- While a call is on, the conversation carries a call panel: state and clock,
+  mute and hang up, and two waveforms side by side, what you send on the left
+  and what arrives on the right. They do not scroll: each one swells and
+  shrinks in place with the voice. They are measured from the call's own audio,
+  so a muted microphone draws flat.
+- Call telemetry sits with them: state, time, how long the call took to set
+  up, how much of the call each side spent talking, drops and reconnects, the
+  codec, and whether the audio is connected. The terminal client shows the
+  same call on the line under the conversation's title.
+- The microphone and speaker are the system's defaults; the headphones button
+  in the call panel picks others, during a call too, and the choice is kept.
+  The microphone is attached only while a call is connected, and muting takes
+  it off the call instead of muting it for the whole desktop.
+- Calls are end-to-end encrypted by RingRTC, the calling library Signal's own
+  apps use, with keys derived from both sides' identity keys.
+- A finished call leaves a line in the conversation ("Outgoing voice call ·
+  3:12", "Missed voice call"); a call answered on your phone stops ringing
+  here.
+- Needs one extra program, see [Calls](#calls). Video, group calls and screen
+  sharing are not supported: a video call rings here and is answered as a
+  voice call.
 
 ## How it works
 
@@ -240,6 +300,34 @@ systemd service, lives under `$HOME`, `$XDG_RUNTIME_DIR` and
 bindings or menu files; it appends clearly marked blocks that
 `uninstall.sh` removes again.
 
+### Calls
+
+Voice calls use `signal-cli`'s calling support (0.14.3 or newer), which starts
+a helper named [`signal-call-tunnel`](https://github.com/visigoth/signal-call-tunnel)
+for each call. The helper wraps RingRTC, Signal's calling library, and is the
+only program that touches the call's audio or its keys. Its author publishes
+no binaries, so it is built from source once:
+
+```bash
+~/.config/omarchy/plugins/iamteedoh.signal/scripts/install-call-tunnel.sh
+systemctl --user restart omarchy-signal
+```
+
+That needs Rust (`mise use -g rust` on Omarchy), builds a pinned commit,
+downloads Signal's prebuilt WebRTC library (about 100 MB) during the build,
+and installs one binary to `~/.local/share/omarchy-signal/bin`. Nothing is
+installed system-wide. Without it everything else works and calls ring only
+on your phone; the call button says why.
+
+Audio goes through PipeWire's PulseAudio server (`pactl` and `parec`, both
+part of a stock Omarchy). The bridge's systemd unit allows `AF_NETLINK` so the
+helper can find a network path to the other side; `./install.sh` installs the
+updated unit.
+
+What is not there, because neither `signal-cli` nor the helper carries it:
+video, group calls, screen sharing and call links. `signal-cli` marks its
+calling support experimental.
+
 ## Keyboard shortcuts
 
 ### Desktop (Hyprland)
@@ -268,6 +356,9 @@ bindings or menu files; it appends clearly marked blocks that
 | `Ctrl-T` | conversation: detach into the chat window, disappearing messages, mute, archive, block, message request, safety number (`v` verifies), group members/rename/leave, new group, archived chats |
 | `Alt-D` | detach this chat into the chat window |
 | `Alt-T` | telemetry line on or off |
+| `Alt-C` | voice call with this person |
+| `Alt-A` / `Alt-H` | answer a ringing call / hang up, cancel or decline |
+| `Alt-M` | mute or unmute your microphone during a call |
 | `Ctrl-E` | mute conversation |
 | `:smile:` / `:D` | emoji shortcodes and emoticons convert after the space (setting); a picker opens as you type |
 | `Ctrl-S` / `F2` | settings (`u` there installs an available update, `r` restarts the bridge after a restart-only change) |
@@ -295,9 +386,12 @@ bindings or menu files; it appends clearly marked blocks that
 | `Ctrl+O` / `Ctrl+Shift+A` / 󰁦 | attachment picker: arrows move, `Enter` attaches, `Backspace` on an empty filter goes up a folder |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab`, click a tab | switch conversation tab; ✕ closes a tab |
 | `Ctrl+T`, or the pulse button in the header | telemetry on or off (the setting is kept, and the terminal client follows it) |
+| `Ctrl+Shift+C`, or the phone button in the header | voice call with this person |
+| `Ctrl+Shift+A` while a call rings | answer it (otherwise it opens the attachment picker) |
+| `Ctrl+Shift+H` / `Ctrl+Shift+M` | hang up or decline / mute your microphone |
 | `Esc` | closes one layer at a time: shortcut list → picker → menus → text selection → message actions → quote → window (`SUPER+W` closes the popup at once) |
 | `?` | every shortcut |
-| header buttons | telemetry · conversation menu (disappearing messages timer, delete chat) · open the terminal client · move the popup into the chat window · close |
+| header buttons | voice call · telemetry · conversation menu (disappearing messages timer, delete chat) · open the terminal client · move the popup into the chat window · close |
 
 ### Bar panel
 

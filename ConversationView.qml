@@ -10,6 +10,7 @@ import qs.Ui
 import "Model.js" as Model
 import "Emoji.js" as Emoji
 import "Telemetry.js" as Telemetry
+import "Calls.js" as Calls
 
 // One conversation: thread, composer, attachments, quote, reactions. Used by
 // the click-to-reply popup and, unchanged, by the tabs of the chat window, so
@@ -168,11 +169,55 @@ Item {
 
   function toggleTelemetry() { view.requestTelemetry(!view.telemetry) }
 
+  // ---- calls. The owner (Service.qml) follows the bridge's "call" and
+  // "callLevels" events and hands the one live call down; this view draws it
+  // and sends what the person asks for.
+  property var activeCall: null          // the bridge's record of the live (or just ended) call, whoever it is with
+  property var callTx: []                // levels being sent, oldest first
+  property var callRx: []                // levels arriving
+  property bool callsAvailable: false
+  property string callsReason: ""        // why not, in the bridge's words
+  property var callDevices: null
+  readonly property bool callLive: Calls.isLive(view.activeCall)
+  readonly property bool canCall: view.conversationKey.length > 0 && !view.isGroup && !view.noteToSelf
+
+  function callFailed(err, fallback) {
+    view.error = Model.singleLine(err || fallback, 200)
+  }
+  function startCall() {
+    if (!view.canCall || !view.bridge) return
+    if (view.callLive) { view.notice = "you are already in a call"; noticeTimer.restart(); return }
+    if (!view.callsAvailable) { view.callFailed("Calls are not available: " + (view.callsReason || "the bridge did not say why"), ""); return }
+    view.error = ""
+    view.bridge.request("callStart", { conversation: view.conversationKey }, function(ok, result, err) {
+      if (!ok) view.callFailed(err, "could not start the call")
+    }, 60000)
+  }
+  function callOp(op, extra) {
+    if (!view.activeCall || !view.bridge) return
+    var params = { call: String(view.activeCall.id) }
+    for (var k in (extra || {})) params[k] = extra[k]
+    view.bridge.request(op, params, function(ok, result, err) {
+      if (!ok) view.callFailed(err, "that did not work")
+    }, 45000)
+  }
+  function fetchCallDevices() {
+    if (!view.bridge) return
+    view.bridge.request("callDevices", {}, function(ok, result) { if (ok && result) view.callDevices = result })
+  }
+  function pickCallDevice(kind, name) {
+    if (!view.bridge) return
+    view.bridge.request("callSetDevice", { kind: kind, name: name }, function(ok, result, err) {
+      if (ok && result) view.callDevices = result
+      else view.callFailed(err, "could not switch the device")
+    })
+  }
+
   // The running counters ("last in T+00:03:12") move once a second.
   Timer {
     interval: 1000
     repeat: true
-    running: view.teleOn && view.active
+    running: (view.teleOn || view.activeCall !== null) && view.active
     onTriggered: view.now = Date.now()
   }
 
@@ -258,6 +303,8 @@ Item {
     { title: "Window", rows: [
       { key: "Ctrl+Tab", does: "next chat (Shift: previous)" }, { key: "Esc", does: "close one layer, then the chat" },
       { key: "Ctrl+T", does: "telemetry on or off" },
+      { key: "Ctrl+Shift+C", does: "call this person" }, { key: "Ctrl+Shift+A", does: "answer a ringing call" },
+      { key: "Ctrl+Shift+H", does: "hang up or decline" }, { key: "Ctrl+Shift+M", does: "mute your microphone" },
       { key: "Super+Alt+S", does: "park the chat window in the scratchpad" }, { key: "Super+Ctrl+G", does: "new conversation" },
       { key: "Super+Shift+G", does: "the terminal client" } ] }
   ]
@@ -382,8 +429,18 @@ Item {
     })
   }
 
-  function markRead() {
-    if (view.conversationKey) view.bridge.request("markRead", { conversation: view.conversationKey }, null)
+  // Whether anyone can be looking at this view. The chat window sets it to
+  // "this window has the focus": a window parked in the scratchpad or sitting
+  // on another workspace must not mark what arrives as read, or the bar never
+  // counts it and no popup announces it.
+  property bool seen: true
+  onSeenChanged: if (view.seen) view.markRead()
+
+  // `certain`: the person just did something here (sent a message), so they
+  // have seen the thread whatever the window manager says about focus.
+  function markRead(certain) {
+    if (view.conversationKey && view.bridge && (view.seen || certain === true))
+      view.bridge.request("markRead", { conversation: view.conversationKey }, null)
   }
 
   property real savedY: 0
@@ -491,6 +548,7 @@ Item {
         view.quote = null
         view.attachments = []
         view.stickToBottom = true
+        view.markRead(true)
         view.reload()
       } else {
         view.error = ok ? "Signal could not deliver that message" : Model.singleLine(err || "send failed", 160)
@@ -719,6 +777,17 @@ Item {
         }
       }
       Button {
+        objectName: "callButton"
+        iconText: "\u{F03F2}"
+        visible: view.canCall
+        selected: view.callLive
+        opacity: view.callsAvailable ? 1 : 0.5
+        tooltipText: view.callLive ? "You are in a call"
+                   : view.callsAvailable ? "Voice call (Ctrl+Shift+C)"
+                   : "Calls are not available: " + (view.callsReason || "the bridge is not connected")
+        onClicked: view.startCall()
+      }
+      Button {
         objectName: "telemetryToggle"
         iconText: "\u{F0430}"
         tooltipText: view.telemetry ? "Hide telemetry (Ctrl+T)" : "Show telemetry (Ctrl+T)"
@@ -829,6 +898,29 @@ Item {
           Button { bordered: true; text: "Cancel"; visible: view.confirmDeleteChat; onClicked: { view.confirmDeleteChat = false; view.chatMenuOpen = false } }
           Item { Layout.fillWidth: true }
         }
+      }
+    }
+
+    // A call, while there is one (and for a few seconds after, to say how it ended).
+    Loader {
+      id: callLoader
+      Layout.fillWidth: true
+      active: view.activeCall !== null
+      visible: active
+      sourceComponent: CallPanel {
+        call: view.activeCall
+        tx: view.callTx
+        rx: view.callRx
+        now: view.now
+        fg: view.fg
+        telemetry: view.telemetry
+        devices: view.callDevices
+        onAccept: view.callOp("callAccept")
+        onDecline: view.callOp("callReject")
+        onHangup: view.callOp("callHangup")
+        onMute: function(muted) { view.callOp("callMute", { muted: muted }) }
+        onWantDevices: view.fetchCallDevices()
+        onPickDevice: function(kind, name) { view.pickCallDevice(kind, name) }
       }
     }
 
@@ -1867,12 +1959,25 @@ Item {
                   event.accepted = true
                 } else if (composerPaste.handleKey(event)) {
                   // Ctrl+V and friends: files and pictures are attached, text is typed in (PasteGuard.qml).
+                } else if (event.key === Qt.Key_A && ctrl && (event.modifiers & Qt.ShiftModifier) && Calls.isRingingIn(view.activeCall)) {
+                  // While a call rings this answers it; otherwise it attaches, as before.
+                  view.callOp("callAccept")
+                  event.accepted = true
                 } else if ((event.key === Qt.Key_O && ctrl)
                            || (event.key === Qt.Key_A && ctrl && (event.modifiers & Qt.ShiftModifier))) {
                   view.pickAttachment()
                   event.accepted = true
                 } else if (event.key === Qt.Key_T && ctrl && !(event.modifiers & (Qt.ShiftModifier | Qt.AltModifier))) {
                   view.toggleTelemetry()
+                  event.accepted = true
+                } else if (ctrl && (event.modifiers & Qt.ShiftModifier) && event.key === Qt.Key_C) {
+                  view.startCall()
+                  event.accepted = true
+                } else if (ctrl && (event.modifiers & Qt.ShiftModifier) && view.callLive
+                           && (event.key === Qt.Key_H || event.key === Qt.Key_M)) {
+                  var ringing = Calls.isRingingIn(view.activeCall)
+                  if (event.key === Qt.Key_H) view.callOp(ringing ? "callReject" : "callHangup")
+                  else if (!ringing) view.callOp("callMute", { muted: view.activeCall.muted !== true })
                   event.accepted = true
                 }
               }

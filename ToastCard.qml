@@ -14,7 +14,7 @@ import qs.Ui
 Item {
   id: card
 
-  property string kind: "message"        // message | setup | updated | update
+  property string kind: "message"        // message | setup | updated | update | call | notice
   property string title: ""
   property string body: ""
   property string convName: ""
@@ -42,6 +42,8 @@ Item {
   readonly property var deeds: card.kind === "setup" ? [{ id: "act", label: "Finish setup" }]
                              : card.kind === "updated" ? [{ id: "act", label: "Restart shell" }, { id: "dismiss", label: "Later" }]
                              : card.kind === "update" ? [{ id: "act", label: "Update" }, { id: "dismiss", label: "Later" }]
+                             : card.kind === "call" ? [{ id: "act", label: "Answer" }, { id: "decline", label: "Decline" }]
+                             : card.kind === "notice" ? [{ id: "dismiss", label: "OK" }]
                              : [{ id: "act", label: "Reply" }, { id: "window", label: "Open chat" }, { id: "terminal", label: "Terminal" }]
 
   implicitWidth: Style.space(380)
@@ -85,7 +87,8 @@ Item {
       onClicked: function(mouse) {
         if (mouse.button === Qt.RightButton) card.dismissed()
         else if (mouse.button === Qt.MiddleButton && card.isMessage) card.deed("terminal")
-        else card.deed("act")
+        // A ringing call is only answered by its Answer button, never by a stray click on the card.
+        else if (card.kind !== "call" && card.kind !== "notice") card.deed("act")
       }
     }
 

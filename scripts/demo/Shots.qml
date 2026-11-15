@@ -59,6 +59,17 @@ ShellRoot {
 
   function sp(px) { return Commons.Style.space(px) }
 
+  // Levels shaped like speech: bursts with pauses, the two sides out of step.
+  function speech(n, side) {
+    var out = []
+    for (var i = 0; i < n; i++) {
+      var turn = Math.sin((i + side * 9) / 5.5) > (side ? 0.05 : -0.25)
+      var syllable = 0.5 + 0.5 * Math.sin(i * 1.9 + side * 2.1) * Math.cos(i * 0.71 + side)
+      out.push(turn ? Math.max(0.08, Math.min(1, 0.3 + 0.62 * syllable)) : 0.03 + 0.03 * Math.abs(Math.sin(i * 3.3)))
+    }
+    return out
+  }
+
   Bridge {
     id: link
     onEvent: function(name, data) {
@@ -86,7 +97,22 @@ ShellRoot {
     { wait: 1400, name: "group-chat", run: function() { chat.pickerOpen = false; chat.load(shots.crew, "Nebuchadnezzar crew") } },
     { wait: 1400, name: "", run: function() { chat.load(shots.trinity, "Trinity") } },
     { wait: 900, name: "timer", run: function() { chat.expiration = 3600; chat.chatMenuOpen = true } },
-    { wait: 700, name: "notification", run: function() { chat.chatMenuOpen = false; chat.expiration = 0; toast.visible = true } },
+    { wait: 900, name: "call", run: function() {
+        chat.chatMenuOpen = false; chat.expiration = 0
+        // A call in progress, as the bridge would report it. No audio device is
+        // touched: the levels are drawn here, shaped like two people taking turns.
+        var now = Date.now()
+        chat.callsAvailable = true
+        chat.callTx = shots.speech(48, 0).concat([0.58, 0.66])
+        chat.callRx = shots.speech(48, 1).concat([0.44, 0.5])
+        chat.activeCall = { id: "42", conversation: shots.trinity, name: "Trinity", outgoing: true, state: "connected",
+                            media: "audio", startedAt: now - 194400, connectedAt: now - 192000, endedAt: 0, reason: "",
+                            muted: false, reconnects: 0, encrypted: true, setupMs: 2400, audioError: "",
+                            mic: "alsa_input.usb-desk-microphone", speaker: "alsa_output.usb-headphones",
+                            levels: { tx: 0.58, rx: 0.22, txPeak: 0.91, rxPeak: 0.84, txTalkMs: 71000, rxTalkMs: 93000 } }
+        chat.now = now
+      } },
+    { wait: 700, name: "notification", run: function() { chat.activeCall = null; chat.callTx = []; chat.callRx = []; toast.visible = true } },
     { wait: 700, name: "chat-list", run: function() { toast.visible = false; shots.listShown = true } },
     { wait: 700, name: "preview", run: function() { toast.visible = true; toast.forceHover = true } },
     { wait: 1400, name: "", run: function() {
