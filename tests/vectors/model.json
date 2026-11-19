@@ -375,5 +375,100 @@
       "now": 1702592000000,
       "out": "that message is already deleted"
     }
+  ],
+  "findUrls": [
+    {
+      "in": "see https://example.com/a.",
+      "out": [
+        "https://example.com/a"
+      ]
+    },
+    {
+      "in": "(https://en.wikipedia.org/wiki/Foo_(bar))",
+      "out": [
+        "https://en.wikipedia.org/wiki/Foo_(bar)"
+      ]
+    },
+    {
+      "in": "x https://a.b/c), y",
+      "out": [
+        "https://a.b/c"
+      ]
+    },
+    {
+      "in": "mailto:neo@example.org!",
+      "out": [
+        "mailto:neo@example.org"
+      ]
+    },
+    {
+      "in": "user@https://evil.example",
+      "out": []
+    },
+    {
+      "in": "nohttps://example.com",
+      "out": []
+    },
+    {
+      "in": "https://",
+      "out": []
+    },
+    {
+      "in": "https://x",
+      "out": [
+        "https://x"
+      ]
+    },
+    {
+      "in": "two http://one.example and HTTPS://TWO.example/p?q=1&r=2",
+      "out": [
+        "http://one.example",
+        "HTTPS://TWO.example/p?q=1&r=2"
+      ]
+    },
+    {
+      "in": "quoted \"https://q.example/x\" ok",
+      "out": [
+        "https://q.example/x"
+      ]
+    },
+    {
+      "in": "line1\nhttps://l.example/path\nline3",
+      "out": [
+        "https://l.example/path"
+      ]
+    },
+    {
+      "in": "<https://angle.example>",
+      "out": [
+        "https://angle.example"
+      ]
+    },
+    {
+      "in": "ftp://no.example",
+      "out": []
+    },
+    {
+      "in": "javascript:alert(1)",
+      "out": []
+    },
+    {
+      "in": "émoji🎉https://u.example",
+      "out": [
+        "https://u.example"
+      ]
+    },
+    {
+      "in": "https://example.com/über?x=1",
+      "out": [
+        "https://example.com/über?x=1"
+      ]
+    },
+    {
+      "in": "https://e.example/a’",
+      "out": [
+        "https://e.example/a"
+      ]
+    }
   ]
 }
