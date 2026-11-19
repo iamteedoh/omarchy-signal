@@ -20,6 +20,7 @@ from unittest import mock
 
 import _helpers  # noqa: F401
 from omarchy_signal import cli, update
+from omarchy_signal.sanitize import contains_control
 
 GIT = shutil.which("git")
 GIT_ENV = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid", GIT_COMMITTER_NAME="t",
@@ -186,6 +187,43 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(result.error, f"could not list the releases at {origin}: Could not read from remote repository.")
         self.assertEqual(update.git_error("warning: x\nerror: bad thing\nhint: y\n"), "bad thing")
         self.assertEqual(update.git_error(""), "git failed")
+
+    def test_remote_diagnostics_are_terminal_safe_and_remain_readable(self):
+        payload = "\x1b]52;c;Y2xpcGJvYXJk\x07\x9b31m\x9c\u202e"
+        origin = f"https://example.invalid/repo{payload}.git"
+
+        def run(argv, **kw):
+            return subprocess.CompletedProcess(argv, 128, "", f"fatal: permission denied {payload}\n")
+
+        info = update.InstallInfo(self.plugin, "git", origin)
+        result = update.check(info, current="0.1.0", run=run)
+        self.assertFalse(contains_control(result.error))
+        self.assertNotIn("\u202e", result.error)
+        self.assertIn("https://example.invalid/repo", result.error)
+        self.assertIn("permission denied", result.error)
+
+        with mock.patch.object(update, "check", return_value=result):
+            rc, _, err = self.run_update(info, check=True)
+        self.assertEqual(rc, 1)
+        self.assertFalse(contains_control(err))
+        self.assertNotIn("\u202e", err)
+
+        with mock.patch.object(update, "check", return_value=result):
+            rc, out, _ = self.run_update(info, check=True, json=True)
+        encoded_error = json.loads(out)["error"]
+        self.assertEqual(rc, 1)
+        self.assertFalse(contains_control(encoded_error))
+        self.assertNotIn("\u202e", encoded_error)
+
+    def test_cached_remote_diagnostics_are_sanitized_on_read(self):
+        self.state.mkdir(parents=True)
+        unsafe = "permission denied \x1b]52;c;Y2xpcGJvYXJk\x07\x9c\u202e"
+        update.cache_file(self.state).write_text(json.dumps({"checkedAt": 1, "error": unsafe}))
+        result = update.cached(self.state, current="0.1.0")
+        self.assertIsNotNone(result)
+        self.assertFalse(contains_control(result.error))
+        self.assertNotIn("\u202e", result.error)
+        self.assertIn("permission denied", result.error)
 
     def test_check_before_any_release_exists(self):
         empty = self.root / "empty.git"

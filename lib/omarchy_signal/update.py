@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import __version__, bounded
+from .sanitize import clean_text
 
 PLUGIN_ID = "iamteedoh.signal"
 DEFAULT_ORIGIN = "https://github.com/iamteedoh/omarchy-signal.git"
@@ -99,12 +100,20 @@ def _git(args: list[str], cwd: Path | None = None, *, run: Runner = _bounded_run
 def git_error(stderr: str) -> str:
     """The line of git's complaint that says what went wrong: its ``fatal:`` or
     ``error:`` line, not whatever advice it printed last."""
+    # A remote controls this text.  Strip terminal controls before selecting a
+    # line so C0/C1 separators and bidi formatting cannot affect the result.
+    stderr = clean_text(stderr, max_length=GIT_OUTPUT_LIMIT)
     lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
     for prefix in ("fatal:", "error:"):
         for ln in lines:
             if ln.lower().startswith(prefix):
                 return ln[len(prefix):].strip()[:200] or "git failed"
     return (lines[-1] if lines else "git failed")[:200]
+
+
+def _diagnostic_text(value: object) -> str:
+    """A short, single-line value safe to include in terminal diagnostics."""
+    return clean_text(value, max_length=200, single_line=True).strip()
 
 
 def anonymous_url(url: str) -> str:
@@ -220,7 +229,9 @@ def check(info: InstallInfo, *, current: str = __version__, run: Runner = _bound
         try:
             listing = _git(["ls-remote", "--tags", "--refs", "--", info.origin], run=run, timeout=30)
         except UpdateError as exc:
-            return CheckResult(current, None, False, now, f"could not list the releases at {info.origin}: {exc}")
+            return CheckResult(current, None, False, now,
+                               f"could not list the releases at {_diagnostic_text(info.origin)}: "
+                               f"{_diagnostic_text(exc)}")
     tag = newest_tag(listing)
     if tag is None:
         return CheckResult(current, None, False, now)
@@ -240,7 +251,8 @@ def cached(state_dir: Path, *, current: str = __version__) -> CheckResult | None
         latest = data.get("latest")
         if latest is not None and parse_version(str(latest)) is None:
             return None
-        result = CheckResult(current, latest, False, float(data.get("checkedAt", 0)), str(data.get("error", ""))[:200])
+        result = CheckResult(current, latest, False, float(data.get("checkedAt", 0)),
+                             _diagnostic_text(data.get("error", "")))
     except (OSError, ValueError, TypeError, AttributeError):
         return None
     # Recomputed against the running version: after an update the old answer must not linger.
