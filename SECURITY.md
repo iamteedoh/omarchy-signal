@@ -88,11 +88,15 @@ rendered as rich text or markup.
 
 ### Images (remote sender → image decoder)
 
-Dimensions are read from file headers without decoding. Anything over 40 Mpx
-is refused. Non-PNG images are converted by ImageMagick in a subprocess with
-memory, map, time and dimension limits and `-strip` (EXIF/GPS is dropped
-before the bytes reach the terminal). PNGs that are already small are passed
-through without any decoder running. The kitty protocol is used in quiet mode
+Dimensions are read from file headers before decoding and anything claiming
+over 40 Mpx is refused. Every image, including PNG, is then decoded and
+re-encoded as 8-bit RGBA by ImageMagick in a subprocess with memory, map, area,
+disk, thread, time and dimension limits and `-strip` (EXIF/GPS is dropped
+before the bytes reach the terminal). The terminal client permits two
+conversions at once and keeps image slots and retained image bytes in bounded
+LRU budgets. It releases converted bytes after transmission and deletes
+terminal-side image data when an image leaves the cache or screen. The kitty
+protocol is used in quiet mode
 (`q=2`) so the terminal never answers into our input stream.
 
 ### Command injection (any input → subprocess)

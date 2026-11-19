@@ -17,6 +17,7 @@ import os
 import shutil
 import subprocess
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,9 @@ TEXT_OVERLAYS = ("contacts", "search", "attach", "saveas", "react", "setting-tex
 
 
 CALL_WAVE_KEEP = 64        # levels kept for each side's waveform
+IMAGE_CACHE_SLOTS = 32
+IMAGE_CACHE_BYTES = 32 * 1024 * 1024
+IMAGE_CONVERSIONS = 2
 
 
 @dataclass
@@ -46,7 +50,7 @@ class Line:
     """One rendered screen line of the message pane."""
     text: str                 # with escape codes
     width: int                # visible width
-    image: tuple[int, int, int] | None = None   # (image_id, cols, rows) anchored at this line
+    image: tuple[str, int, int, int] | None = None   # (path, image_id, cols, rows) anchored at this line
     right: bool = False
 
 
@@ -60,6 +64,7 @@ class ImageSlot:
     failed: bool = False
     png: bytes | None = None       # converted data, filled in by a worker thread
     converting: bool = False
+    terminal_bytes: int = 0        # compressed-plus-decoded bytes charged to the terminal budget
 
 
 @dataclass
@@ -165,9 +170,12 @@ class App:
         self.call_drawn = 0.0            # when the call line was last redrawn for a level
         self.call_until = 0.0            # an ended call stays on the line until then
         self.call_second = 0             # the second the call clock was last drawn for
-        self.images: dict[str, ImageSlot] = {}
+        self.images: OrderedDict[str, ImageSlot] = OrderedDict()
+        self._image_deletes: set[int] = set()
+        self._image_conversions = asyncio.Semaphore(IMAGE_CONVERSIONS)
         self.placed: dict[int, tuple[int, int, int, int]] = {}   # image id -> (row, col, cols, rows) currently on screen
-        self.preview: tuple[int, int, int, int, int] | None = None   # (image_id, row, col, cols, rows) for the attach prompt
+        # (path, image_id, row, col, cols, rows) for the attach prompt
+        self.preview: tuple[str, int, int, int, int, int] | None = None
         self.reset_images = False
         self.graphics = False
         self.dirty = True
@@ -321,7 +329,7 @@ class App:
         # Cell geometry changed: recompute every image box and re-place.
         self.clear_selection()
         self.press = None
-        self.images.clear()
+        self._clear_image_cache()
         self.reset_images = True
         self.dirty = True
 
@@ -1315,7 +1323,7 @@ class App:
             self.open_overlay("quit")
             return
         if key.ctrl and key.char == "l":
-            self.images.clear()
+            self._clear_image_cache()
             self.reset_images = True
             self.dirty = True
             return
@@ -2129,6 +2137,7 @@ class App:
             self.placed.clear()
             for slot in self.images.values():
                 slot.transmitted = False
+                slot.terminal_bytes = 0
             self.reset_images = False
         self.preview = (self._attach_preview() if self.graphics and self.cfg.attachment_thumbnails
                         and self.overlay in ("attach", "saveas") else None)
@@ -2510,7 +2519,7 @@ class App:
             if slot and not slot.failed:
                 for r in range(slot.rows):
                     out.append(Line(indent + " " * slot.cols, slot.cols + 2, right=right,
-                                    image=(slot.image_id, slot.cols, slot.rows) if r == 0 else None))
+                                    image=(path, slot.image_id, slot.cols, slot.rows) if r == 0 else None))
         text = f"{icon} {truncate(label, bubble_w - 6)}"
         href = links.file_href(path) if path else None
         shown = T.fg(th.cyan) + T.UNDERLINE + links.osc8(href, text) + T.RESET if href else T.fg(th.dim) + text + T.RESET
@@ -2540,8 +2549,80 @@ class App:
                 cols, rows = kitty.fit_cells(info.width, info.height, max_cols=bubble_w - 4, max_rows=max_rows,
                                              cell_w=self.term.cell_w, cell_h=self.term.cell_h)
                 slot = ImageSlot(path, kitty.image_id_for(path), cols, rows)
-            self.images[path] = slot
+            self._remember_image_slot(slot)
+        else:
+            self.images.move_to_end(path)
         return slot
+
+    def _image_slot_from_layout(self, path: str, image_id: int, cols: int, rows: int) -> ImageSlot:
+        """Restore an evicted slot from immutable line-layout metadata."""
+        slot = self.images.get(path)
+        if slot is None:
+            slot = ImageSlot(path, image_id, cols, rows)
+            self._remember_image_slot(slot)
+        else:
+            slot.cols, slot.rows = cols, rows
+            self.images.move_to_end(path)
+        return slot
+
+    def _remember_image_slot(self, slot: ImageSlot) -> None:
+        previous = self.images.pop(slot.path, None)
+        if previous is not None and previous is not slot:
+            self._forget_image_slot(previous)
+        self.images[slot.path] = slot
+        while len(self.images) > IMAGE_CACHE_SLOTS:
+            _, victim = self.images.popitem(last=False)
+            self._forget_image_slot(victim)
+
+    def _forget_image_slot(self, slot: ImageSlot) -> None:
+        slot.png = None
+        if slot.transmitted or slot.terminal_bytes or slot.image_id in self.placed:
+            self._image_deletes.add(slot.image_id)
+        self.placed.pop(slot.image_id, None)
+        slot.transmitted = False
+        slot.terminal_bytes = 0
+
+    def _clear_image_cache(self) -> None:
+        self.images.clear()
+        self._image_deletes.clear()
+
+    def _cache_png(self, slot: ImageSlot, png: bytes) -> bool:
+        """Retain a conversion result without exceeding the process byte budget."""
+        if self.images.get(slot.path) is not slot or len(png) > IMAGE_CACHE_BYTES:
+            return False
+        slot.png = None
+        retained = sum(len(item.png) for item in self.images.values() if item.png is not None)
+        for victim in self.images.values():
+            if retained + len(png) <= IMAGE_CACHE_BYTES:
+                break
+            if victim is slot or victim.png is None:
+                continue
+            retained -= len(victim.png)
+            victim.png = None
+        if retained + len(png) > IMAGE_CACHE_BYTES:
+            return False
+        slot.png = png
+        self.images.move_to_end(slot.path)
+        return True
+
+    def _reserve_terminal_bytes(self, slot: ImageSlot, size: int) -> list[int] | None:
+        """Evict least-recent terminal data until ``size`` fits the byte budget."""
+        if size > IMAGE_CACHE_BYTES:
+            return None
+        retained = sum(item.terminal_bytes for item in self.images.values()) - slot.terminal_bytes
+        slot.terminal_bytes = 0
+        deleted: list[int] = []
+        for victim in self.images.values():
+            if retained + size <= IMAGE_CACHE_BYTES:
+                break
+            if victim is slot or not victim.terminal_bytes:
+                continue
+            retained -= victim.terminal_bytes
+            victim.terminal_bytes = 0
+            victim.transmitted = False
+            self.placed.pop(victim.image_id, None)
+            deleted.append(victim.image_id)
+        return deleted if retained + size <= IMAGE_CACHE_BYTES else None
 
     def _convert_async(self, slot: ImageSlot) -> None:
         if slot.converting or slot.failed:
@@ -2553,22 +2634,25 @@ class App:
             png = kitty.to_png(Path(slot.path))
             if png is None:
                 slot.failed = True
-            else:
-                slot.png = png
+            elif not self._cache_png(slot, png):
+                slot.failed = True
             return
         slot.converting = True
 
         async def work():
             try:
-                png = await asyncio.to_thread(kitty.to_png, Path(slot.path))
+                async with self._image_conversions:
+                    if self.images.get(slot.path) is not slot:
+                        return
+                    png = await asyncio.to_thread(kitty.to_png, Path(slot.path))
             except Exception:
                 png = None
-            slot.converting = False
-            if png is None:
-                slot.failed = True
-            else:
-                slot.png = png
-            self.dirty = True
+            finally:
+                slot.converting = False
+            if self.images.get(slot.path) is slot:
+                if png is None or not self._cache_png(slot, png):
+                    slot.failed = True
+                self.dirty = True
         asyncio.ensure_future(work())
 
     def _draw_messages(self) -> str:
@@ -2615,32 +2699,38 @@ class App:
             self._record_links(y, col, line.text)
             if line.image and self.graphics:
                 placements.append((y, col + 2, line.image))
-                image_id, icols, irows = line.image
-                slot = next((sl for sl in self.images.values() if sl.image_id == image_id), None)
-                if slot is not None:
-                    # Clicking anywhere on the picture opens its menu, like the name line.
-                    for r in range(irows):
-                        self.link_map.setdefault(y + r, []).append((col + 2, col + 2 + icols, "file://" + slot.path))
+                path, image_id, icols, irows = line.image
+                self._image_slot_from_layout(path, image_id, icols, irows)
+                # Clicking anywhere on the picture opens its menu, like the name line.
+                for r in range(irows):
+                    self.link_map.setdefault(y + r, []).append((col + 2, col + 2 + icols, "file://" + path))
             y += 1
         if self.scroll:
             out.append(T.move(top + 2, left + width - 8) + T.fg(th.accent) + f"↑ {self.scroll}" + T.RESET)
-        wanted: dict[int, tuple[int, int, int, int]] = {}
+        wanted: dict[int, tuple[int, int, int, int, str]] = {}
         # Kitty placements sit above the text, so anything drawn over them
         # (an overlay box, the emoji completion list) would show the picture
         # through it. Hide the pictures such a box would cover; they come
         # back on the frame after it closes.
         covered = self._covered_rows()
-        for y, col, (image_id, cols, irows) in placements:
+        for y, col, (path, image_id, cols, irows) in placements:
             if covered is not None and y <= covered[1] and y + irows - 1 >= covered[0]:
                 continue
-            wanted[image_id] = (y, col, cols, irows)
+            wanted[image_id] = (y, col, cols, irows, path)
         if self.preview:
-            pid, prow, pcol, pcols, prows = self.preview
-            wanted[pid] = (prow, pcol, pcols, prows)
+            ppath, pid, prow, pcol, pcols, prows = self.preview
+            wanted[pid] = (prow, pcol, pcols, prows, ppath)
         if self.graphics:
+            # Message rendering and preview discovery can traverse more paths
+            # than the LRU holds. Restore only the slots wanted on this frame.
+            for image_id, (_, _, cols, irows, path) in wanted.items():
+                self._image_slot_from_layout(path, image_id, cols, irows)
+            for image_id in sorted(self._image_deletes):
+                out.append(kitty.encode_delete(image_id))
+            self._image_deletes.clear()
             # Images that scrolled away or were hidden: drop their placement.
-            # Some terminals also free the data then, so mark them for a fresh
-            # upload the next time they are shown.
+            # The delete command also frees terminal data, so mark them for a
+            # fresh conversion and upload the next time they are shown.
             for image_id in list(self.placed):
                 if image_id not in wanted:
                     out.append(kitty.encode_delete(image_id))
@@ -2648,8 +2738,10 @@ class App:
                     for slot in self.images.values():
                         if slot.image_id == image_id:
                             slot.transmitted = False
-            for image_id, (y, col, cols, irows) in wanted.items():
-                slot = next((sl for sl in self.images.values() if sl.image_id == image_id), None)
+                            slot.terminal_bytes = 0
+                            slot.png = None
+            for image_id, (y, col, cols, irows, path) in wanted.items():
+                slot = self.images.get(path)
                 if slot is None or slot.failed:
                     continue
                 if not slot.transmitted:
@@ -2659,8 +2751,18 @@ class App:
                         self._convert_async(slot)
                         if slot.png is None:
                             continue
-                    out.append(kitty.encode_transmit_only(slot.png, image_id))
+                    png = slot.png
+                    terminal_size = kitty.png_memory_cost(png)
+                    deleted = self._reserve_terminal_bytes(slot, terminal_size)
+                    if deleted is None:
+                        slot.failed = True
+                        slot.png = None
+                        continue
+                    out.extend(kitty.encode_delete(victim_id) for victim_id in deleted)
+                    out.append(kitty.encode_transmit_only(png, image_id))
                     slot.transmitted = True
+                    slot.terminal_bytes = terminal_size
+                    slot.png = None
                 if self.placed.get(image_id) != (y, col, cols, irows):
                     # Same placement id: the terminal moves the picture instead of stacking a copy.
                     out.append(T.move(y, col) + kitty.encode_place(image_id, cols=cols, rows=irows))
@@ -2840,9 +2942,8 @@ class App:
         cols, rows = kitty.fit_cells(info.width, info.height, max_cols=box_cols, max_rows=box_rows,
                                      cell_w=self.term.cell_w, cell_h=self.term.cell_h)
         image_id = kitty.image_id_for(cand.path)
-        if cand.path not in self.images:
-            self.images[cand.path] = ImageSlot(cand.path, image_id, cols, rows)
-        return image_id, top + 3, left + w - box_cols - 2, cols, rows
+        self._image_slot_from_layout(cand.path, image_id, cols, rows)
+        return cand.path, image_id, top + 3, left + w - box_cols - 2, cols, rows
 
     def _draw_overlay(self) -> str:
         assert self.term

@@ -2,11 +2,10 @@
 """Kitty graphics protocol: show images inline in terminals that support it
 (kitty, Ghostty, WezTerm, Konsole, ...).
 
-Images are transmitted as PNG in base64 chunks with the *direct* medium
-(``t=d``), which works over SSH and inside sandboxes, unlike file/shm
-mediums. Anything that is not already PNG is converted with ImageMagick in a
-subprocess with hard resource limits: a decoder bomb from a stranger must not
-take the terminal down with it.
+Images are normalized to PNG with ImageMagick, then transmitted in base64
+chunks with the *direct* medium (``t=d``), which works over SSH and inside
+sandboxes, unlike file/shm mediums. The decoder subprocess has hard resource
+limits: a decoder bomb from a stranger must not take the terminal down with it.
 """
 
 from __future__ import annotations
@@ -27,8 +26,10 @@ from pathlib import Path
 from . import bounded
 
 CHUNK = 4096
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_PIXELS = 40_000_000       # 40 Mpx ≈ the ceiling of anything a phone produces
-MAX_PNG_BYTES = 32 * 1024 * 1024
+MAX_PNG_BYTES = 16 * 1024 * 1024
+MAX_SOURCE_BYTES = 100 * 1024 * 1024
 CONVERT_TIMEOUT = 20
 
 _SUPPORTED_TERMS = ("kitty", "ghostty", "wezterm", "konsole", "warp")
@@ -48,7 +49,7 @@ def probe_dimensions(path: Path) -> ImageInfo | None:
             head = fh.read(64 * 1024)
     except OSError:
         return None
-    if head.startswith(b"\x89PNG\r\n\x1a\n") and len(head) >= 24 and head[12:16] == b"IHDR":
+    if head.startswith(PNG_SIGNATURE) and len(head) >= 24 and head[12:16] == b"IHDR":
         w, h = struct.unpack(">II", head[16:24])
         return ImageInfo(w, h, "png")
     if head.startswith(b"GIF8") and len(head) >= 10:
@@ -91,6 +92,22 @@ def probe_dimensions(path: Path) -> ImageInfo | None:
             i += 2 + seg_len
         return ImageInfo(0, 0, "jpeg")
     return None
+
+
+def probe_dimensions_bytes(png: bytes) -> tuple[int, int] | None:
+    """Read dimensions from normalized PNG bytes produced by ImageMagick."""
+    if len(png) < 24 or not png.startswith(PNG_SIGNATURE) or png[12:16] != b"IHDR":
+        return None
+    return struct.unpack(">II", png[16:24])
+
+
+def png_memory_cost(png: bytes) -> int:
+    """Charge compressed bytes plus the normalized four-byte decoded pixels."""
+    dimensions = probe_dimensions_bytes(png)
+    if dimensions is None:
+        return len(png)
+    width, height = dimensions
+    return len(png) + width * height * 4
 
 
 def terminal_supports_graphics(*, probe: bool = True, timeout: float = 0.25) -> bool:
@@ -143,34 +160,32 @@ def _probe_terminal(timeout: float) -> bool:
 
 
 def to_png(path: Path, *, max_side: int = 1600) -> bytes | None:
-    """Return PNG bytes for ``path``, converting and downscaling if needed.
+    """Validate, normalize and downscale ``path`` into bounded PNG bytes.
 
-    A PNG that is already small enough is passed through untouched, so no
-    decoder runs on it at all. Everything else goes through ImageMagick with
-    memory/time/pixel limits and ``-strip`` (drops EXIF, including GPS)."""
+    Every supported input, including PNG, goes through ImageMagick so a remote
+    file can never reach the terminal based only on its header. ``-strip`` also
+    drops EXIF metadata, including GPS coordinates.
+    """
     info = probe_dimensions(path)
     if info is None:
         return None
     if info.width * info.height > MAX_PIXELS:
         return None
     try:
-        size = path.stat().st_size
+        if path.stat().st_size > MAX_SOURCE_BYTES:
+            return None
     except OSError:
         return None
-    if info.format == "png" and size <= MAX_PNG_BYTES and max(info.width, info.height) <= max_side:
-        try:
-            return path.read_bytes()
-        except OSError:
-            return None
     magick = shutil.which("magick") or shutil.which("convert")
     if not magick:
-        return path.read_bytes() if info.format == "png" and size <= MAX_PNG_BYTES else None
+        return None
     fmt = {"png": "PNG", "jpeg": "JPEG", "gif": "GIF", "webp": "WEBP"}.get(info.format, "")
     src = f"{fmt}:{path}" if fmt else str(path)
-    cmd = [magick, "-limit", "memory", "256MiB", "-limit", "map", "512MiB", "-limit", "time", str(CONVERT_TIMEOUT),
-           "-limit", "width", "16000", "-limit", "height", "16000",
+    cmd = [magick, "-limit", "memory", "256MiB", "-limit", "map", "512MiB",
+           "-limit", "disk", "0", "-limit", "thread", "1", "-limit", "area", str(MAX_PIXELS),
+           "-limit", "time", str(CONVERT_TIMEOUT), "-limit", "width", "16000", "-limit", "height", "16000",
            src + ("[0]" if info.format == "gif" else ""), "-auto-orient", "-strip",
-           "-resize", f"{max_side}x{max_side}>", "PNG:-"]
+           "-resize", f"{max_side}x{max_side}>", "-colorspace", "sRGB", "-depth", "8", "PNG32:-"]
     try:
         # Its output is read with a ceiling and one deadline (bounded.py): the
         # picture came from somebody else.
@@ -179,7 +194,9 @@ def to_png(path: Path, *, max_side: int = 1600) -> bytes | None:
                                 "MAGICK_TEMPORARY_PATH": os.environ.get("TMPDIR", "/tmp")})
     except (subprocess.SubprocessError, OSError):
         return None
-    if proc.returncode != 0 or not proc.stdout.startswith(b"\x89PNG") or len(proc.stdout) > MAX_PNG_BYTES:
+    dimensions = probe_dimensions_bytes(proc.stdout)
+    if (proc.returncode != 0 or dimensions is None or not all(dimensions) or len(proc.stdout) > MAX_PNG_BYTES
+            or dimensions[0] * dimensions[1] > MAX_PIXELS or max(dimensions) > max_side):
         return None
     return proc.stdout
 
@@ -228,8 +245,8 @@ def encode_delete_placements() -> str:
 
 
 def encode_delete(image_id: int) -> str:
-    """Remove the placements of one image (its data may stay cached)."""
-    return f"\x1b_Ga=d,d=i,i={image_id},q=2\x1b\\"
+    """Remove every placement and the terminal's stored data for one image."""
+    return f"\x1b_Ga=d,d=I,i={image_id},q=2\x1b\\"
 
 
 def encode_delete_all() -> str:

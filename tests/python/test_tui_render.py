@@ -9,8 +9,10 @@ which all start with ESC followed by '[', ']8;', '_G' or a known SGR).
 
 import asyncio
 import re
+import struct
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 from unittest import mock
 
@@ -20,6 +22,17 @@ from omarchy_signal.config import Config, Paths
 from omarchy_signal.term import Key, str_width
 from omarchy_signal.theme import Theme
 tui.str_width = str_width
+
+
+def png_bytes(width: int, height: int) -> bytes:
+    """Small valid RGB PNG fixture, independent of an image-generation helper."""
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        checksum = zlib.crc32(kind + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", checksum)
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    pixels = b"".join(b"\x00" + b"\x00\x00\x00" * width for _ in range(height))
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b"")
 
 
 class FakeTerminal:
@@ -572,7 +585,7 @@ class FooterAndImageLifecycleTests(unittest.TestCase):
         from pathlib import Path
         with tempfile.TemporaryDirectory(dir=Path.home()) as d:
             img = Path(d) / "a.png"
-            img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + (64).to_bytes(4, "big") + (48).to_bytes(4, "big") + b"\x08\x06\x00\x00\x00" + b"0" * 50)
+            img.write_bytes(png_bytes(64, 48))
             app = make_app(cols=120, rows=40)
             seed(app)
             app.graphics = True
@@ -597,6 +610,9 @@ class FooterAndImageLifecycleTests(unittest.TestCase):
             first = app.term.text()
             self.assertEqual(first.count("\x1b_Ga=t,"), 1)
             self.assertEqual(first.count("\x1b_Ga=p,"), 1)
+            slot = app.images[str(img)]
+            self.assertIsNone(slot.png)                       # converted bytes released after encoding
+            self.assertGreater(slot.terminal_bytes, 0)       # terminal retention remains charged to the budget
             self.assertNotIn("a=d,d=a", first)            # no blanket delete
             self.assertNotIn("\x1b[2J", first)            # a full clear would destroy the image in Ghostty
             self.assertEqual(first.count("\x1b[2K"), 40)   # per-line erase instead
@@ -611,7 +627,7 @@ class FooterAndImageLifecycleTests(unittest.TestCase):
             app.term.out.clear()
             app.draw()
             third = app.term.text()
-            self.assertIn("\x1b_Ga=d,d=i,", third)
+            self.assertIn("\x1b_Ga=d,d=I,", third)
             self.assertNotIn("\x1b_Ga=p,", third)
             app.toggle_inline(str(img))
             app.term.out.clear()
@@ -624,7 +640,7 @@ class FooterAndImageLifecycleTests(unittest.TestCase):
             app.term.out.clear()
             app.draw()
             fifth = app.term.text()
-            self.assertIn("\x1b_Ga=d,d=i,", fifth)
+            self.assertIn("\x1b_Ga=d,d=I,", fifth)
             self.assertNotIn("\x1b_Ga=p,", fifth)
             app.close_overlay()
             app.term.out.clear()
@@ -638,7 +654,75 @@ class FooterAndImageLifecycleTests(unittest.TestCase):
             app.draw()
             fifth = app.term.text()
             self.assertNotIn("\x1b_Ga=p,", fifth)
-            self.assertIn("\x1b_Ga=d,d=i,", fifth)
+            self.assertIn("\x1b_Ga=d,d=I,", fifth)
+
+    def test_image_slots_and_bytes_are_lru_bounded(self):
+        app = make_app()
+        first = tui.ImageSlot("first", 1, 1, 1)
+        second = tui.ImageSlot("second", 2, 1, 1)
+        third = tui.ImageSlot("third", 3, 1, 1)
+        with mock.patch.object(tui, "IMAGE_CACHE_SLOTS", 2):
+            app._remember_image_slot(first)
+            app._remember_image_slot(second)
+            first.transmitted = True
+            first.terminal_bytes = 2
+            app.placed[first.image_id] = (1, 1, 1, 1)
+            app._remember_image_slot(third)
+        self.assertEqual(list(app.images), ["second", "third"])
+        self.assertIn(first.image_id, app._image_deletes)
+        self.assertNotIn(first.image_id, app.placed)
+
+        with mock.patch.object(tui, "IMAGE_CACHE_BYTES", 4):
+            self.assertTrue(app._cache_png(second, b"1234"))
+            self.assertTrue(app._cache_png(third, b"5"))
+            self.assertIsNone(second.png)
+            self.assertEqual(third.png, b"5")
+            second.transmitted = True
+            second.terminal_bytes = 4
+            app.placed[second.image_id] = (1, 1, 1, 1)
+            self.assertEqual(app._reserve_terminal_bytes(third, 2), [second.image_id])
+        self.assertFalse(second.transmitted)
+        self.assertNotIn(second.image_id, app.placed)
+
+    def test_image_conversions_share_one_limit(self):
+        async def go():
+            app = make_app()
+            slots = [tui.ImageSlot(str(i), i + 1, 1, 1) for i in range(tui.IMAGE_CONVERSIONS + 1)]
+            for slot in slots:
+                app._remember_image_slot(slot)
+            active = peak = 0
+            full = asyncio.Event()
+            release = asyncio.Event()
+
+            async def fake_to_thread(_func, _path):
+                nonlocal active, peak
+                active += 1
+                peak = max(peak, active)
+                if active == tui.IMAGE_CONVERSIONS:
+                    full.set()
+                try:
+                    await release.wait()
+                    return b"\x89PNG\r\n\x1a\nnormalized"
+                finally:
+                    active -= 1
+
+            with mock.patch.object(tui.asyncio, "to_thread", new=fake_to_thread):
+                for slot in slots:
+                    app._convert_async(slot)
+                await asyncio.wait_for(full.wait(), 1)
+                await asyncio.sleep(0)
+                self.assertEqual(peak, tui.IMAGE_CONVERSIONS)
+                self.assertTrue(slots[-1].converting)
+                release.set()
+
+                async def wait_until_finished():
+                    while any(slot.converting for slot in slots):
+                        await asyncio.sleep(0)
+
+                await asyncio.wait_for(wait_until_finished(), 1)
+                self.assertTrue(all(slot.png is not None for slot in slots))
+
+        asyncio.run(go())
 
 
 class SettingsOverlayTests(unittest.TestCase):
@@ -691,7 +775,7 @@ class AttachmentFlowTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         (self.root / "Pictures").mkdir()
         self.img = self.root / "Pictures" / "cat.png"
-        self.img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + (64).to_bytes(4, "big") + (48).to_bytes(4, "big") + b"\x08\x06\x00\x00\x00" + b"0" * 50)
+        self.img.write_bytes(png_bytes(64, 48))
         (self.root / "notes.txt").write_bytes(b"hi")
         self.app = make_app(cols=120, rows=40)
         seed(self.app)
@@ -796,7 +880,7 @@ class AttachmentFlowTests(unittest.TestCase):
         app.term.out.clear()
         app.draw()
         self.assertIsNone(app.preview)
-        self.assertIn("\x1b_Ga=d,d=i,", app.term.text())
+        self.assertIn("\x1b_Ga=d,d=I,", app.term.text())
         asyncio.run(app.handle_key(Key("escape")))
 
     def test_attachment_menu_open_save_saveas(self):

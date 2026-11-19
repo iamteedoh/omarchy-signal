@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import _helpers  # noqa: F401
 from omarchy_signal import kitty, links, term
@@ -108,6 +109,8 @@ class KittyTests(unittest.TestCase):
             png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + (640).to_bytes(4, "big") + (480).to_bytes(4, "big") + b"\x08\x06\x00\x00\x00")
             info = kitty.probe_dimensions(png)
             self.assertEqual((info.width, info.height, info.format), (640, 480, "png"))
+            self.assertEqual(kitty.probe_dimensions_bytes(png.read_bytes()), (640, 480))
+            self.assertEqual(kitty.png_memory_cost(png.read_bytes()), len(png.read_bytes()) + 640 * 480 * 4)
             gif = Path(d) / "a.gif"
             gif.write_bytes(b"GIF89a" + (12).to_bytes(2, "little") + (34).to_bytes(2, "little"))
             info = kitty.probe_dimensions(gif)
@@ -115,6 +118,32 @@ class KittyTests(unittest.TestCase):
             txt = Path(d) / "a.txt"
             txt.write_bytes(b"hello")
             self.assertIsNone(kitty.probe_dimensions(txt))
+
+    def test_png_is_always_normalized_with_decoder_limits(self):
+        with tempfile.TemporaryDirectory() as d:
+            png = Path(d) / "header-only.png"
+            original = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR"
+                        + (64).to_bytes(4, "big") + (48).to_bytes(4, "big") + b"trailing data")
+            png.write_bytes(original)
+            normalized = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR"
+                          + (64).to_bytes(4, "big") + (48).to_bytes(4, "big"))
+            result = kitty.bounded.Result(0, normalized, b"")
+            with mock.patch.object(kitty.shutil, "which", side_effect=lambda name: "/usr/bin/magick"), \
+                    mock.patch.object(kitty.bounded, "run", return_value=result) as convert:
+                self.assertEqual(kitty.to_png(png), normalized)
+            self.assertNotEqual(normalized, original)
+            command = convert.call_args.args[0]
+            limits = {command[i + 1]: command[i + 2]
+                      for i, arg in enumerate(command[:-2]) if arg == "-limit"}
+            self.assertEqual(limits["area"], str(kitty.MAX_PIXELS))
+            self.assertEqual(limits["disk"], "0")
+            self.assertEqual(limits["thread"], "1")
+            self.assertIn("PNG:" + str(png), command)
+            self.assertEqual(command[-5:], ["-colorspace", "sRGB", "-depth", "8", "PNG32:-"])
+            with mock.patch.object(kitty.shutil, "which", return_value=None), \
+                    mock.patch.object(kitty.bounded, "run") as convert:
+                self.assertIsNone(kitty.to_png(png))
+                convert.assert_not_called()
 
     @unittest.skipUnless(shutil.which("magick"), "ImageMagick not installed")
     def test_convert_jpeg_and_bomb_limits(self):
@@ -139,7 +168,7 @@ class KittyTests(unittest.TestCase):
         self.assertIn("m=0", seq.split("\x1b_G")[-1])
         self.assertEqual(kitty.encode_place(7, cols=3, rows=2), "\x1b_Ga=p,i=7,p=1,c=3,r=2,C=1,q=2\x1b\\")
         self.assertRaises(ValueError, kitty.encode_transmit, b"", 0, cols=1, rows=1)
-        self.assertEqual(kitty.encode_delete(7), "\x1b_Ga=d,d=i,i=7,q=2\x1b\\")
+        self.assertEqual(kitty.encode_delete(7), "\x1b_Ga=d,d=I,i=7,q=2\x1b\\")
 
     def test_fit_cells(self):
         self.assertEqual(kitty.fit_cells(1000, 500, max_cols=40, max_rows=10, cell_w=10, cell_h=20), (40, 10))
