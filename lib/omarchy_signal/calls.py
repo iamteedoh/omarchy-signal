@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any
 
 from . import protocol
-from .audio import METER_FRAME_MS, SPEECH_LEVEL, AudioError, CallAudio, Pactl, valid_device
+from .audio import AudioDisconnectError, METER_FRAME_MS, SPEECH_LEVEL, AudioError, CallAudio, Pactl, valid_device
 from .envelope import Event
 from .rpc import RpcClosed, RpcError
 from .sanitize import E164, UUID, InvalidRecipient, Recipient, parse_conversation_key
@@ -129,7 +129,7 @@ def end_label(call: dict) -> str:
     if reason == "busy_here":                 # it rang while you were on another call
         return "Missed call"
     if answered:
-        return "Call dropped" if reason in ("tunnel_exit", "tunnel_error", "shutdown") else "Call ended"
+        return "Call dropped" if reason in ("tunnel_exit", "tunnel_error", "shutdown", "audio_error") else "Call ended"
     if reason == "remote_busy":
         return "Busy"
     if reason == "rejected":
@@ -485,11 +485,6 @@ class CallManager:
             found = await self.pactl.devices()
             if name not in {d["name"] for d in found["inputs" if kind == "input" else "outputs"]}:
                 raise ValueError("unknown audio device")
-        if kind == "input":
-            self.mic = name
-        else:
-            self.speaker = name
-        self._save_prefs()
         for call in self.calls.values():
             if call.audio is not None and call.state != ENDED:
                 try:
@@ -497,7 +492,17 @@ class CallManager:
                     call.audio_error = ""
                 except AudioError as exc:
                     call.audio_error = str(exc)
+                    if kind == "input" and isinstance(exc, AudioDisconnectError):
+                        await self._fail_closed_audio(call)
+                    else:
+                        await self._announce(call)
+                    raise
                 await self._announce(call)
+        if kind == "input":
+            self.mic = name
+        else:
+            self.speaker = name
+        self._save_prefs()
         return await self.devices()
 
     # -- requests from clients --------------------------------------------------
@@ -580,13 +585,18 @@ class CallManager:
 
     async def mute(self, call_id: str, muted: bool) -> dict:
         call = self._get(call_id)
-        call.muted = muted
         if call.audio is not None:
             try:
                 await call.audio.set_muted(muted)
                 call.audio_error = ""
             except AudioError as exc:
                 call.audio_error = str(exc)
+                if isinstance(exc, AudioDisconnectError):
+                    await self._fail_closed_audio(call)
+                else:
+                    await self._announce(call)
+                raise
+        call.muted = muted
         await self._announce(call)
         return call.to_json()
 
@@ -714,6 +724,15 @@ class CallManager:
                 if call.audio is not None and call.state != ENDED:
                     await self.bridge._broadcast("callLevels", {"id": call.id, **call.levels()})
             await asyncio.sleep(LEVELS_INTERVAL_S)
+
+    async def _fail_closed_audio(self, call: Call) -> None:
+        """End a call whose live microphone loopback could not be removed."""
+        try:
+            await self._rpc("hangupCall", call, timeout=5)
+        except (RpcError, RpcClosed, asyncio.TimeoutError):
+            # Losing signal-cli also stops the media session it carries.
+            await self.bridge.supervisor.restart()
+        await self._end(call, "audio_error")
 
     # -- ending -----------------------------------------------------------------------
 

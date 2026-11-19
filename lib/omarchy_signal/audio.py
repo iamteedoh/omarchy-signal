@@ -62,6 +62,10 @@ class AudioError(RuntimeError):
     pass
 
 
+class AudioDisconnectError(AudioError):
+    """A live microphone connection could not be confirmed detached."""
+
+
 def valid_device(name: object) -> bool:
     return isinstance(name, str) and bool(_DEVICE_NAME.match(name))
 
@@ -177,8 +181,12 @@ class Pactl:
             raise AudioError("the sound server did not create the connection") from None
 
     async def unload(self, module: int) -> None:
+        await self.run("unload-module", str(module))
+
+    async def unload_best_effort(self, module: int) -> None:
+        """Try to remove a module while tearing down an already-ended call."""
         with contextlib.suppress(AudioError):
-            await self.run("unload-module", str(module))
+            await self.unload(module)
 
     async def record(self, source: str) -> asyncio.subprocess.Process:
         """A parec process writing raw 16-bit mono at :data:`METER_RATE` to its stdout."""
@@ -249,36 +257,52 @@ class CallAudio:
                     with contextlib.suppress(ProcessLookupError):
                         proc.kill()
             self._procs = []
-            await self._disconnect_mic()
+            if self._mic_module:
+                await self.pactl.unload_best_effort(self._mic_module)
+                self._mic_module = 0
             if self._speaker_module:
-                await self.pactl.unload(self._speaker_module)
+                await self.pactl.unload_best_effort(self._speaker_module)
                 self._speaker_module = 0
 
     async def set_muted(self, muted: bool) -> None:
         async with self._lock:
-            self.muted = muted
             if not self.started:
+                self.muted = muted
                 return
             if muted:
                 await self._disconnect_mic()
             elif not self._mic_module:
                 await self._connect_mic()
+            self.muted = muted
 
     async def set_mic(self, name: str) -> None:
         async with self._lock:
-            self.mic = name
             if self.started and not self.muted:
                 await self._disconnect_mic()
-                await self._connect_mic()
+                old_mic, self.mic = self.mic, name
+                try:
+                    await self._connect_mic()
+                except AudioError:
+                    self.mic = old_mic
+                    raise
+            else:
+                self.mic = name
 
     async def set_speaker(self, name: str) -> None:
         async with self._lock:
-            self.speaker = name
             if self.started:
                 if self._speaker_module:
                     await self.pactl.unload(self._speaker_module)
                     self._speaker_module = 0
-                await self._connect_speaker()
+                    self.speaker_in_use = ""
+                old_speaker, self.speaker = self.speaker, name
+                try:
+                    await self._connect_speaker()
+                except AudioError:
+                    self.speaker = old_speaker
+                    raise
+            else:
+                self.speaker = name
 
     async def _connect_mic(self) -> None:
         source = self.mic or await self.pactl.default("input")
@@ -289,8 +313,12 @@ class CallAudio:
 
     async def _disconnect_mic(self) -> None:
         if self._mic_module:
-            await self.pactl.unload(self._mic_module)
+            try:
+                await self.pactl.unload(self._mic_module)
+            except AudioError as exc:
+                raise AudioDisconnectError(str(exc)) from exc
             self._mic_module = 0
+            self.mic_in_use = ""
 
     async def _connect_speaker(self) -> None:
         sink = self.speaker or await self.pactl.default("output")

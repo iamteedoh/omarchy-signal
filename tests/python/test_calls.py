@@ -122,6 +122,19 @@ class AudioTests(unittest.TestCase):
         self.assertTrue(audio.valid_device("bluez_output.AA_BB_CC:1.monitor"))
 
 
+class PactlTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unload_is_strict_and_shutdown_cleanup_is_best_effort(self):
+        pactl = audio.Pactl()
+        pactl.run = mock.AsyncMock(side_effect=audio.AudioError("module stayed loaded"))
+
+        with self.assertRaises(audio.AudioError):
+            await pactl.unload(42)
+        await pactl.unload_best_effort(42)
+
+        self.assertEqual(pactl.run.await_args_list,
+                         [mock.call("unload-module", "42"), mock.call("unload-module", "42")])
+
+
 class FakePactl(audio.Pactl):
     """Records what would be asked of the sound server."""
 
@@ -129,6 +142,7 @@ class FakePactl(audio.Pactl):
         super().__init__()
         self.loaded: dict[int, tuple[str, str]] = {}
         self.unloaded: list[int] = []
+        self.fail_unload: set[int] = set()
         self.recording: list[str] = []
         self.next = 100
         self.inputs = [{"name": "mic.desk", "description": "Desk mic", "default": True, "muted": False},
@@ -155,11 +169,30 @@ class FakePactl(audio.Pactl):
 
     async def unload(self, module):
         self.unloaded.append(module)
+        if module in self.fail_unload:
+            raise audio.AudioError("the microphone connection stayed loaded")
         self.loaded.pop(module, None)
 
     async def record(self, source):
         self.recording.append(source)
         raise audio.AudioError("no meter in tests")
+
+
+class CallAudioTests(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_mute_retains_live_module_identity(self):
+        pactl = FakePactl()
+        call_audio = audio.CallAudio(pactl, "signal_input_1", "signal_output_1")
+        await call_audio.start()
+        mic_module = next(module for module, route in pactl.loaded.items() if route[0] == "mic.desk")
+        pactl.fail_unload.add(mic_module)
+
+        with self.assertRaises(audio.AudioDisconnectError):
+            await call_audio.set_muted(True)
+
+        self.assertEqual(call_audio._mic_module, mic_module)
+        self.assertFalse(call_audio.muted)
+        self.assertIn(mic_module, pactl.loaded)
+        await call_audio.stop()
 
 
 def call_event(state, call_id=-42, outgoing=False, number="+15550002222", reason=None, devices=True):
@@ -318,6 +351,47 @@ class CallFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Incoming video call (voice only here) · 0:0", history[-1]["body"])
             convs = {x["key"]: x for x in await c.request("conversations")}
             self.assertEqual(convs[TRINITY]["unread"], 0)    # an answered call is not unread
+            await c.close()
+
+    async def test_mute_failure_ends_call_without_reporting_muted(self):
+        async with CallHarness() as h:
+            c, events = await self._client(h)
+            await c.request("callStart", conversation=TRINITY)
+            h.inject(call_event("CONNECTED", outgoing=True))
+            await self._until(events, lambda n, d: n == "call" and d["state"] == "connected")
+            mic_module = next(module for module, route in h.pactl.loaded.items() if route[0] == "mic.desk")
+            h.pactl.fail_unload.add(mic_module)
+
+            with self.assertRaises(BridgeError) as ctx:
+                await c.request("callMute", call=ID, muted=True)
+            ended = await self._until(events, lambda n, d: n == "call" and d["state"] == "ended")
+
+            self.assertEqual(ctx.exception.code, "audio")
+            self.assertFalse(ended["muted"])
+            self.assertEqual((ended["reason"], ended["label"]), ("audio_error", "Call dropped"))
+            self.assertIn(mic_module, h.pactl.loaded)
+            self.assertGreaterEqual(h.pactl.unloaded.count(mic_module), 2)  # strict attempt, then shutdown retry
+            self.assertIn({"method": "hangupCall", "params": {"account": "+15550001111", "callId": -42}}, h.sent())
+            await c.close()
+
+    async def test_microphone_switch_failure_keeps_old_preference_and_ends_call(self):
+        async with CallHarness() as h:
+            c, events = await self._client(h)
+            await c.request("callStart", conversation=TRINITY)
+            h.inject(call_event("CONNECTED", outgoing=True))
+            await self._until(events, lambda n, d: n == "call" and d["state"] == "connected")
+            mic_module = next(module for module, route in h.pactl.loaded.items() if route[0] == "mic.desk")
+            h.pactl.fail_unload.add(mic_module)
+
+            with self.assertRaises(BridgeError):
+                await c.request("callSetDevice", kind="input", name="mic.headset")
+            ended = await self._until(events, lambda n, d: n == "call" and d["state"] == "ended")
+
+            self.assertEqual(ended["reason"], "audio_error")
+            self.assertEqual(h.bridge.calls.mic, "")
+            self.assertFalse((h.paths.data_dir / "calls.json").exists())
+            self.assertIn(("mic.desk", "sink_for_signal_input_1"), h.pactl.loaded.values())
+            self.assertNotIn(("mic.headset", "sink_for_signal_input_1"), h.pactl.loaded.values())
             await c.close()
 
     async def test_missed_declined_and_answered_elsewhere(self):
