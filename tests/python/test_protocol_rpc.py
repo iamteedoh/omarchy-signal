@@ -6,7 +6,7 @@ from pathlib import Path
 
 import _helpers  # noqa: F401
 from omarchy_signal import protocol
-from omarchy_signal.rpc import JsonRpcClient, RpcClosed, RpcError
+from omarchy_signal.rpc import MAX_PENDING_NOTIFICATIONS, JsonRpcClient, RpcClosed, RpcError
 
 
 class ProtocolTests(unittest.TestCase):
@@ -96,8 +96,76 @@ class RpcTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RpcError) as ctx:
             await t
         self.assertEqual(ctx.exception.code, -32601)
+        await asyncio.sleep(0)
         self.assertEqual(notes, [("receive", {"k": 1})])
         client.close()
+
+    async def test_notifications_are_ordered_without_blocking_responses(self):
+        reader = asyncio.StreamReader()
+        sent = []
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        second_finished = asyncio.Event()
+        seen = []
+
+        class W:
+            def write(self, data):
+                sent.append(data)
+
+            async def drain(self):
+                pass
+
+        async def handle(_method, params):
+            seen.append(("start", params["n"]))
+            if params["n"] == 1:
+                first_started.set()
+                await release_first.wait()
+            seen.append(("end", params["n"]))
+            if params["n"] == 2:
+                second_finished.set()
+
+        client = JsonRpcClient(reader, W(), on_notification=handle, timeout=1)
+        client.start()
+        call = asyncio.create_task(client.call("while-notifying"))
+        await asyncio.sleep(0)
+        request_id = json.loads(sent[0])["id"]
+        for n in (1, 2):
+            reader.feed_data(json.dumps({"jsonrpc": "2.0", "method": "receive", "params": {"n": n}}).encode() + b"\n")
+        reader.feed_data(json.dumps({"jsonrpc": "2.0", "result": "ok", "id": request_id}).encode() + b"\n")
+
+        await first_started.wait()
+        self.assertEqual(await asyncio.wait_for(call, 1), "ok")
+        self.assertEqual(seen, [("start", 1)])
+        release_first.set()
+        await second_finished.wait()
+        self.assertEqual(seen, [("start", 1), ("end", 1), ("start", 2), ("end", 2)])
+        client.close()
+        await client.wait_closed()
+
+    async def test_notification_overflow_closes_and_cancels_worker(self):
+        reader = asyncio.StreamReader()
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def blocked(_method, _params):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+
+        client = JsonRpcClient(reader, None, on_notification=blocked)
+        client.start()
+        line = b'{"jsonrpc":"2.0","method":"receive","params":{}}\n'
+        reader.feed_data(line)
+        await started.wait()
+        reader.feed_data(line * (MAX_PENDING_NOTIFICATIONS + 1))
+
+        await client.wait_closed()
+        self.assertTrue(client.closed)
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(client._notification_queue.qsize(), 0)
+        self.assertEqual(client._notification_bytes, 0)
 
     async def test_timeout_and_close(self):
         reader, sent, notes, client = await self._pair()

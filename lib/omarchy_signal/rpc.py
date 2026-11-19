@@ -12,7 +12,8 @@ Hardening notes:
   protocol violation and closes the stream instead of growing memory forever.
 * Responses are matched to requests by ``id`` only. ``signal-cli`` answers out
   of order (observed in 0.14.6), so positional matching would be a bug.
-* Notifications (no ``id``) are dispatched to a handler and never awaited.
+* Notifications (no ``id``) pass through one ordered, bounded worker.  The
+  connection closes on overflow instead of retaining unbounded remote input.
 * Every request has a timeout; a stuck backend can not wedge the bridge.
 """
 
@@ -26,6 +27,8 @@ from typing import Any, Awaitable, Callable
 log = logging.getLogger(__name__)
 
 MAX_LINE_BYTES = 32 * 1024 * 1024  # getAttachment can return base64 bodies.
+MAX_PENDING_NOTIFICATIONS = 64
+MAX_PENDING_NOTIFICATION_BYTES = 64 * 1024 * 1024
 DEFAULT_TIMEOUT = 60.0
 
 
@@ -56,11 +59,18 @@ class JsonRpcClient:
         self._next_id = 0
         self._closed = False
         self._reader_task: asyncio.Task | None = None
+        self._notification_task: asyncio.Task | None = None
+        self._notification_queue: asyncio.Queue[tuple[str, Any, int]] = asyncio.Queue(
+            maxsize=MAX_PENDING_NOTIFICATIONS)
+        self._notification_bytes = 0
         self._write_lock = asyncio.Lock()
 
     # -- lifecycle ---------------------------------------------------------
 
     def start(self) -> asyncio.Task:
+        if self._on_notification is not None:
+            self._notification_task = asyncio.create_task(
+                self._notification_loop(), name="jsonrpc-notifications")
         self._reader_task = asyncio.create_task(self._read_loop(), name="jsonrpc-reader")
         return self._reader_task
 
@@ -69,9 +79,12 @@ class JsonRpcClient:
         return self._closed
 
     async def wait_closed(self) -> None:
-        if self._reader_task:
+        current = asyncio.current_task()
+        for task in (self._reader_task, self._notification_task):
+            if task is None or task is current:
+                continue
             try:
-                await self._reader_task
+                await task
             except asyncio.CancelledError:
                 pass
 
@@ -83,11 +96,13 @@ class JsonRpcClient:
             if not fut.done():
                 fut.set_exception(RpcClosed("connection closed"))
         self._pending.clear()
-        # The reader closes the client from inside its own task when the
-        # stream ends; cancelling ourselves there would surface as a spurious
-        # CancelledError in whoever awaits the task.
-        if self._reader_task and not self._reader_task.done() and self._reader_task is not asyncio.current_task():
-            self._reader_task.cancel()
+        current = asyncio.current_task()
+        # Either owned task can close the client.  Do not cancel that task out
+        # from under itself; it will return after observing ``_closed``.
+        for task in (self._reader_task, self._notification_task):
+            if task is not None and not task.done() and task is not current:
+                task.cancel()
+        self._discard_notifications()
 
     # -- requests ----------------------------------------------------------
 
@@ -137,6 +152,8 @@ class JsonRpcClient:
                         self._handle_line(exc.partial)
                     break
                 self._handle_line(raw)
+                if self._closed:
+                    break
         except asyncio.CancelledError:
             raise
         except Exception:  # pragma: no cover - defensive
@@ -145,6 +162,7 @@ class JsonRpcClient:
             self.close()
 
     def _handle_line(self, raw: bytes) -> None:
+        raw_size = len(raw)
         raw = raw.strip()
         if not raw:
             return
@@ -170,12 +188,40 @@ class JsonRpcClient:
             return
         method = msg.get("method")
         if isinstance(method, str) and self._on_notification is not None:
-            try:
-                result = self._on_notification(method, msg.get("params"))
-                if asyncio.iscoroutine(result):
-                    asyncio.create_task(result)
-            except Exception:
-                log.exception("jsonrpc: notification handler failed for %s", method)
+            self._enqueue_notification(method, msg.get("params"), raw_size)
         elif "error" in msg:
             # id-less error: signal-cli reports parse errors this way.
             log.warning("jsonrpc: backend error without id: %s", msg.get("error"))
+
+    def _enqueue_notification(self, method: str, params: Any, raw_size: int) -> None:
+        if (self._notification_queue.full()
+                or self._notification_bytes + raw_size > MAX_PENDING_NOTIFICATION_BYTES):
+            log.error("jsonrpc: notification backlog exceeded its limit; closing")
+            self.close()
+            return
+        self._notification_bytes += raw_size
+        self._notification_queue.put_nowait((method, params, raw_size))
+
+    async def _notification_loop(self) -> None:
+        while not self._closed:
+            method, params, raw_size = await self._notification_queue.get()
+            try:
+                result = self._on_notification(method, params) if self._on_notification else None
+                if asyncio.iscoroutine(result):
+                    await result
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("jsonrpc: notification handler failed for %s", method)
+            finally:
+                self._notification_bytes -= raw_size
+                self._notification_queue.task_done()
+
+    def _discard_notifications(self) -> None:
+        while True:
+            try:
+                _method, _params, raw_size = self._notification_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            self._notification_bytes -= raw_size
+            self._notification_queue.task_done()

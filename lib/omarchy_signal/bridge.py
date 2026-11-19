@@ -159,12 +159,16 @@ class SignalCliSupervisor:
             await reader
         finally:
             self.ready.clear()
+            # Notification handlers belong to this process generation.  Stop
+            # and join their bounded worker before cleaning up generation state
+            # or starting another signal-cli process.
+            self.rpc.close()
+            await self.rpc.wait_closed()
             if self.on_exit is not None:
                 # A call cannot outlive the process that carried it: let go of
                 # the microphone now, not when the next start is noticed.
                 with contextlib.suppress(Exception):
                     await self.on_exit()
-            self.rpc.close()
             stderr_task.cancel()
             if self.proc.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
