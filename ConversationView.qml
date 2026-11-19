@@ -333,7 +333,8 @@ Item {
         var have = threadModel.get(k)
         if (Number(have.ts) === Number(row.ts) && !!have.outgoing === !!row.outgoing) {
           if (have.body !== row.body || have.status !== row.status || have.reactions !== row.reactions || have.edited !== row.edited
-              || have.deleted !== row.deleted || have.image !== row.image || have.filesText !== row.filesText || have.quote !== row.quote
+              || have.deleted !== row.deleted || have.image !== row.image || have.imageOpen !== row.imageOpen
+              || have.imageW !== row.imageW || have.imageH !== row.imageH || have.filesText !== row.filesText || have.quote !== row.quote
               || have.newDay !== row.newDay || have.firstOfRun !== row.firstOfRun || have.who !== row.who
               || have.tick !== row.tick || have.expiresIn !== row.expiresIn) threadModel.set(k, row)
           continue
@@ -1086,6 +1087,7 @@ Item {
             required property string body
             required property string filesText
             required property string image
+            required property string imageOpen
             required property real imageW
             required property real imageH
             required property string status
@@ -1330,9 +1332,8 @@ Item {
                         }
                       }
                     }
-                    // Photos are decoded once at thumbnail size and cached, and their
-                    // box is sized from Signal's metadata before the decode finishes,
-                    // so scrolling never re-decodes or re-lays out the thread.
+                    // The bridge has already probed and re-encoded this private,
+                    // bounded thumbnail. The original is retained only for xdg-open.
                     Item {
                       visible: row.image.length > 0
                       readonly property real boxW: Math.min(Style.space(360), list.width * 0.66)
@@ -1350,9 +1351,15 @@ Item {
                           fillMode: Image.PreserveAspectFit
                           horizontalAlignment: Image.AlignLeft
                           sourceSize.width: 480
+                          sourceSize.height: 480
                           opacity: status === Image.Ready ? 1 : 0
                           Behavior on opacity { NumberAnimation { duration: view.ms(160) } }
-                          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: view.execArgv(["xdg-open", row.image]) }
+                          MouseArea {
+                            anchors.fill: parent
+                            enabled: row.imageOpen.length > 0
+                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: view.execArgv(["xdg-open", row.imageOpen])
+                          }
                           // Brackets on the picture as drawn, not on the box it was given.
                           HudFrame {
                             x: -Style.space(3)

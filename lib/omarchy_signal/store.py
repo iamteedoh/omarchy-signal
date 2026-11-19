@@ -405,6 +405,27 @@ class Store:
             self.db.execute("UPDATE messages SET attachments = ? WHERE conversation = ? AND ts = ? AND sender = ?",
                             (json.dumps(atts), conversation_key, ts, row["sender"]))
 
+    def set_attachment_thumbnail(self, conversation_key: str, ts: int, attachment_id: str,
+                                 path: str, width: int, height: int) -> None:
+        row = self.db.execute("SELECT attachments, sender FROM messages WHERE conversation = ? AND ts = ?",
+                              (conversation_key, ts)).fetchone()
+        if not row:
+            return
+        try:
+            atts = json.loads(row["attachments"])
+        except ValueError:
+            return
+        changed = False
+        for a in atts:
+            if isinstance(a, dict) and a.get("id") == attachment_id:
+                a["thumbnailPath"] = path
+                a["width"] = width
+                a["height"] = height
+                changed = True
+        if changed:
+            self.db.execute("UPDATE messages SET attachments = ? WHERE conversation = ? AND ts = ? AND sender = ?",
+                            (json.dumps(atts), conversation_key, ts, row["sender"]))
+
     def history(self, conversation_key: str, *, before_ts: int = 0, limit: int = 50) -> list[Message]:
         limit = max(1, min(500, int(limit)))
         if before_ts > 0:

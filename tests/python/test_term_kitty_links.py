@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import _helpers  # noqa: F401
 from omarchy_signal import kitty, links, term
@@ -130,6 +131,50 @@ class KittyTests(unittest.TestCase):
             bomb = Path(d) / "bomb.png"
             bomb.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + (100000).to_bytes(4, "big") + (100000).to_bytes(4, "big") + b"\x08\x06\x00\x00\x00")
             self.assertIsNone(kitty.to_png(bomb))
+
+    def test_shell_thumbnail_is_bounded_and_reencoded(self):
+        def png_header(width, height):
+            return (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR"
+                    + width.to_bytes(4, "big") + height.to_bytes(4, "big") + b"\x08\x06\x00\x00\x00")
+
+        with tempfile.TemporaryDirectory() as d:
+            source = Path(d) / "remote.png"
+            destination = Path(d) / "private" / "thumbnail.png"
+            source.write_bytes(png_header(640, 400))
+            rendered = png_header(480, 300)
+            result = kitty.bounded.Result(0, rendered, b"")
+            with mock.patch.object(kitty.shutil, "which", return_value="/usr/bin/magick"), \
+                    mock.patch.object(kitty.bounded, "run", return_value=result) as run:
+                info = kitty.make_thumbnail(source, destination)
+            self.assertEqual((info.width, info.height, info.format), (480, 300, "png"))
+            self.assertEqual(destination.read_bytes(), rendered)
+            self.assertEqual(destination.stat().st_mode & 0o777, 0o600)
+            command = run.call_args.args[0]
+            self.assertEqual(command[-1], "PNG32:-")
+            self.assertIn("480x480>", command)
+            self.assertEqual(run.call_args.kwargs["limit"], kitty.MAX_THUMBNAIL_BYTES)
+            for resource in ("thread", "memory", "map", "disk", "time", "width", "height"):
+                self.assertIn(resource, command)
+
+            hostile = Path(d) / "extreme.png"
+            hostile.write_bytes(png_header(16000, 1))
+            with mock.patch.object(kitty.bounded, "run") as rejected:
+                self.assertIsNone(kitty.make_thumbnail(hostile, destination))
+                rejected.assert_not_called()
+
+            oversized = Path(d) / "oversized.png"
+            oversized.write_bytes(png_header(640, 400))
+            with oversized.open("r+b") as fh:
+                fh.truncate(kitty.MAX_THUMBNAIL_SOURCE_BYTES + 1)
+            with mock.patch.object(kitty.bounded, "run") as rejected:
+                self.assertIsNone(kitty.make_thumbnail(oversized, destination))
+                rejected.assert_not_called()
+
+            svg = Path(d) / "vector.svg"
+            svg.write_text("<svg xmlns='http://www.w3.org/2000/svg'/>")
+            with mock.patch.object(kitty.bounded, "run") as rejected:
+                self.assertIsNone(kitty.make_thumbnail(svg, destination))
+                rejected.assert_not_called()
 
     def test_encode(self):
         seq = kitty.encode_transmit(b"\x89PNG" + b"x" * 5000, 7, cols=10, rows=4)

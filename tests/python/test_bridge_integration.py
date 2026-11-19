@@ -14,9 +14,10 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import _helpers  # noqa: F401
-from omarchy_signal import protocol
+from omarchy_signal import kitty, protocol
 from omarchy_signal.bridge import Bridge
 from omarchy_signal.client import BridgeClient, BridgeError
 from omarchy_signal.config import Config, Paths
@@ -153,6 +154,41 @@ class BridgeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(receipt["params"]["recipient"], "+15550002222")   # a string: this is what syncs the read to the phone
             self.assertEqual(receipt["params"]["targetTimestamp"], [1700000000001])
             self.assertEqual((await c.request("status"))["unread"], 0)
+            await c.close()
+
+    async def test_remote_image_uses_bridge_thumbnail(self):
+        async with BridgeHarness() as h:
+            events = []
+            c, _ = await self._client(h, on_event=lambda n, d: events.append((n, d)))
+            await c.request("subscribe")
+            source_dir = h.paths.signal_cli_data / "attachments"
+            source_dir.mkdir(parents=True, exist_ok=True)
+            source = source_dir / "remote-image"
+            source.write_bytes(b"remote image bytes")
+
+            def make_thumbnail(path, destination):
+                self.assertEqual(path, source)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(b"trusted thumbnail")
+                return kitty.ImageInfo(480, 300, "png")
+
+            attachment = {"id": source.name, "contentType": "image/png", "filename": "photo.png",
+                          "size": source.stat().st_size, "width": 640, "height": 400}
+            with mock.patch("omarchy_signal.bridge.kitty.make_thumbnail", side_effect=make_thumbnail):
+                h.inject(incoming("", 1700000000002, attachments=[attachment]))
+                for _ in range(100):
+                    messages = [d for n, d in events if n == "message"]
+                    if messages:
+                        break
+                    await asyncio.sleep(0.05)
+                else:
+                    self.fail("no image message event")
+            received = messages[0]["attachments"][0]
+            self.assertEqual(received["path"], str(source))
+            self.assertNotEqual(received["thumbnailPath"], received["path"])
+            self.assertTrue(Path(received["thumbnailPath"]).is_relative_to(h.paths.attachments_dir / "thumbnails"))
+            history = await c.request("history", conversation="number:+15550002222")
+            self.assertEqual(history[0]["attachments"][0]["thumbnailPath"], received["thumbnailPath"])
             await c.close()
 
     async def test_send_and_group_and_react(self):

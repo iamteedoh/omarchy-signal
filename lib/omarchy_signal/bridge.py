@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -34,7 +35,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import __version__, emoji, protocol
+from . import __version__, emoji, kitty, protocol
 from .audio import AudioError
 from .calls import CallManager
 from .config import Config, Paths
@@ -235,6 +236,9 @@ class Bridge:
         self._link_uri = ""
         self._link_task: asyncio.Task | None = None
         self._typing_tasks: dict[str, asyncio.Task] = {}
+        # One remote decoder at a time bounds aggregate memory as well as each
+        # helper's own limits.  Decoding runs off the bridge event loop.
+        self._thumbnail_slot = asyncio.Semaphore(1)
         self._contacts_refreshed = 0.0
         self.started_at = time.time()
         self.calls = CallManager(self)
@@ -342,6 +346,7 @@ class Bridge:
     async def expire_now(self) -> int:
         gone = self.store.expire()
         for m in gone:
+            self._remove_thumbnail_files(m.attachments)
             if not m.outgoing:
                 self._remove_received_files(m.attachments)
             conv = self.store.conversation(m.conversation)
@@ -362,6 +367,19 @@ class Bridge:
                 continue
             try:
                 real = Path(att.path).resolve(strict=True)
+            except OSError:
+                continue
+            if base in real.parents and real.is_file():
+                with contextlib.suppress(OSError):
+                    real.unlink()
+
+    def _remove_thumbnail_files(self, attachments: list[Attachment]) -> None:
+        base = (self.paths.attachments_dir / "thumbnails").resolve()
+        for att in attachments:
+            if not att.thumbnail_path:
+                continue
+            try:
+                real = Path(att.thumbnail_path).resolve(strict=True)
             except OSError:
                 continue
             if base in real.parents and real.is_file():
@@ -457,6 +475,7 @@ class Bridge:
                 await self._broadcast("conversation", {"conversation": conv.key, "expiration": ev.expires_in})
             if ev.attachments and self.cfg.download_attachments:
                 self._locate_attachments(conv.key, ev.timestamp, ev.attachments)
+                await self._prepare_thumbnail(conv.key, ev.timestamp, ev.attachments)
             if not ev.outgoing:
                 self.store.set_typing(conv.key, 0)
             payload = self._message_payload(ev, muted=bool(muted and muted.muted))
@@ -530,6 +549,28 @@ class Bridge:
                 os.chmod(real, 0o600)
             att.path = str(real)
             self.store.set_attachment_path(conv_key, ts, att.id, str(real))
+
+    async def _prepare_thumbnail(self, conv_key: str, ts: int, attachments: list[Attachment]) -> None:
+        """Create the sole GUI-decodable representation of the first image."""
+        for index, att in enumerate(attachments):
+            if not att.content_type.startswith("image/") or not att.path:
+                continue
+            identity = f"{conv_key}\0{ts}\0{index}\0{att.id}".encode("utf-8", "surrogatepass")
+            name = hashlib.sha256(identity).hexdigest() + ".png"
+            target = self.paths.attachments_dir / "thumbnails" / name
+            async with self._thumbnail_slot:
+                info = await asyncio.to_thread(kitty.make_thumbnail, Path(att.path), target)
+            if info is not None:
+                att.thumbnail_path = str(target)
+                att.width = info.width
+                att.height = info.height
+                if att.id:
+                    self.store.set_attachment_thumbnail(
+                        conv_key, ts, att.id, att.thumbnail_path, att.width, att.height,
+                    )
+            # The conversation UI has always shown at most the first located
+            # image.  Do not let one message start a helper for every attachment.
+            return
 
     # -- client connections ---------------------------------------------------
 
@@ -789,6 +830,7 @@ class Bridge:
             pth = Path(path)
             atts.append(Attachment(id="", content_type=_guess_mime(pth), filename=pth.name,
                                    size=pth.stat().st_size, path=str(pth)))
+        await self._prepare_thumbnail(rec.key, ts, atts)
         status = "failed" if failures and len(failures) >= max(1, len(result.get("results", [1]))) else "sent"
         conv = self.store.conversation(rec.key)
         self.store.add_outgoing(rec, ts, f"number:{account}", text, atts, status=status,

@@ -319,10 +319,12 @@ function threadRows(rows, limit) {
     var body = cleanText(m.body || "", 4000)
     var atts = Array.isArray(m.attachments) ? m.attachments : []
     if (m.deleted) { body = "This message was deleted"; atts = [] }
-    var image = "", imageW = 0, imageH = 0
+    var image = "", imageOpen = "", imageW = 0, imageH = 0
     for (var i = 0; i < atts.length; i++) {
-      if (atts[i] && typeof atts[i].path === "string" && atts[i].path.charAt(0) === "/" && /^image\//.test(atts[i].contentType || "")) {
-        image = atts[i].path
+      if (atts[i] && typeof atts[i].thumbnailPath === "string" && atts[i].thumbnailPath.charAt(0) === "/"
+          && /^image\//.test(atts[i].contentType || "")) {
+        image = atts[i].thumbnailPath
+        imageOpen = typeof atts[i].path === "string" && atts[i].path.charAt(0) === "/" ? atts[i].path : ""
         imageW = Number(atts[i].width) || 0
         imageH = Number(atts[i].height) || 0
         break
@@ -347,6 +349,7 @@ function threadRows(rows, limit) {
       body: body,
       filesText: filesText,
       image: image,
+      imageOpen: imageOpen,
       imageW: imageW,
       imageH: imageH,
       status: singleLine(m.status || "", 20),

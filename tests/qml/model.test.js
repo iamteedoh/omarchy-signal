@@ -188,15 +188,16 @@ test("tickText matches the terminal client", () => {
 test("threadRows normalises history rows", () => {
   const day1 = new Date(2026, 10, 11, 23, 50).getTime(), day2 = new Date(2026, 10, 12, 0, 10).getTime()
   const rows = M.threadRows([
-    { ts: day1, senderName: "Trin\x1bity", sender: "number:+2", body: "hi", attachments: [{ filename: "a.png", contentType: "image/png", path: "/p/a.png", width: 640, height: 400 }], reactions: { "number:+1": "👍" } },
+    { ts: day1, senderName: "Trin\x1bity", sender: "number:+2", body: "hi", attachments: [{ filename: "a.png", contentType: "image/png", path: "/p/a.png", thumbnailPath: "/private/thumb.png", width: 480, height: 300 }], reactions: { "number:+1": "👍" } },
     { ts: day1 + 1000, senderName: "Trinity", sender: "number:+2", body: "again" },
-    { ts: day2, senderName: "Trinity", sender: "number:+2", body: "next day", attachments: [{ filename: "x.png", contentType: "image/png", path: "relative.png" }] },
+    { ts: day2, senderName: "Trinity", sender: "number:+2", body: "next day", attachments: [{ filename: "x.png", contentType: "image/png", path: "/p/original.png" }] },
     { ts: day2 + 1000, outgoing: true, body: "x", deleted: true, status: "read", edited: true, quoteText: "hi", attachments: [{ filename: "gone.png", contentType: "image/png", path: "/p/gone.png" }] },
     "junk"
   ].filter(x => typeof x === "object"), 10)
-  assert.equal(rows[0].who, "Trinity"); assert.equal(rows[0].image, "/p/a.png"); assert.equal(rows[0].reactions, "👍"); assert.equal(rows[0].filesText, "a.png")
-  assert.deepEqual([rows[0].imageW, rows[0].imageH], [640, 400])       // the bubble is sized before the picture decodes
-  assert.equal(rows[2].image, "")                                      // only an absolute path is ever loaded
+  assert.equal(rows[0].who, "Trinity"); assert.equal(rows[0].image, "/private/thumb.png"); assert.equal(rows[0].imageOpen, "/p/a.png")
+  assert.equal(rows[0].reactions, "👍"); assert.equal(rows[0].filesText, "a.png")
+  assert.deepEqual([rows[0].imageW, rows[0].imageH], [480, 300])       // dimensions come from the generated thumbnail
+  assert.equal(rows[2].image, "")                                      // the remote original is never an Image source
   assert.equal(rows[3].body, "This message was deleted"); assert.equal(rows[3].who, "You"); assert.equal(rows[3].edited, true)
   assert.equal(rows[3].deleted, true); assert.equal(rows[0].deleted, false)
   assert.equal(rows[3].image, ""); assert.equal(rows[3].filesText, "") // a deleted message shows nothing it carried

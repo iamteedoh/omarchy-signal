@@ -18,6 +18,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 import termios
 import time
 import zlib
@@ -30,6 +31,11 @@ CHUNK = 4096
 MAX_PIXELS = 40_000_000       # 40 Mpx ≈ the ceiling of anything a phone produces
 MAX_PNG_BYTES = 32 * 1024 * 1024
 CONVERT_TIMEOUT = 20
+MAX_THUMBNAIL_SOURCE_BYTES = 32 * 1024 * 1024
+MAX_THUMBNAIL_BYTES = 4 * 1024 * 1024
+MAX_THUMBNAIL_SIDE = 480
+MAX_THUMBNAIL_ASPECT = 32
+THUMBNAIL_TIMEOUT = 8
 
 _SUPPORTED_TERMS = ("kitty", "ghostty", "wezterm", "konsole", "warp")
 
@@ -182,6 +188,85 @@ def to_png(path: Path, *, max_side: int = 1600) -> bytes | None:
     if proc.returncode != 0 or not proc.stdout.startswith(b"\x89PNG") or len(proc.stdout) > MAX_PNG_BYTES:
         return None
     return proc.stdout
+
+
+def make_thumbnail(path: Path, destination: Path, *, max_side: int = MAX_THUMBNAIL_SIDE) -> ImageInfo | None:
+    """Re-encode an untrusted image as a small private PNG for GUI decoders.
+
+    The source is selected by claimed MIME elsewhere, but is admitted here
+    only when its actual header is one of the raster formats we probe.  Every
+    admitted source goes through the bounded helper, including small PNGs; a
+    GUI must never receive the original remote bytes.
+    """
+    if not 1 <= max_side <= MAX_THUMBNAIL_SIDE:
+        return None
+    try:
+        source = path.resolve(strict=True)
+        if not source.is_file():
+            return None
+        size = source.stat().st_size
+    except OSError:
+        return None
+    if not 0 < size <= MAX_THUMBNAIL_SOURCE_BYTES:
+        return None
+    info = probe_dimensions(source)
+    if info is None or info.format not in ("png", "jpeg", "gif", "webp"):
+        return None
+    if info.width <= 0 or info.height <= 0 or info.width > 16000 or info.height > 16000:
+        return None
+    if info.width * info.height > MAX_PIXELS:
+        return None
+    if max(info.width, info.height) > min(info.width, info.height) * MAX_THUMBNAIL_ASPECT:
+        return None
+    magick = shutil.which("magick") or shutil.which("convert")
+    if not magick:
+        return None
+
+    fmt = {"png": "PNG", "jpeg": "JPEG", "gif": "GIF", "webp": "WEBP"}[info.format]
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(destination.parent, 0o700)
+        # A controlled link keeps ImageMagick's filename grammar away from the
+        # attachment id while avoiding another in-process copy of the input.
+        with tempfile.TemporaryDirectory(prefix=".thumbnail-", dir=destination.parent) as tmp:
+            tmp_path = Path(tmp)
+            controlled = tmp_path / f"source.{info.format}"
+            controlled.symlink_to(source)
+            cmd = [
+                magick,
+                "-limit", "thread", "1",
+                "-limit", "memory", "128MiB",
+                "-limit", "map", "256MiB",
+                "-limit", "disk", "64MiB",
+                "-limit", "time", str(THUMBNAIL_TIMEOUT),
+                "-limit", "width", "16000",
+                "-limit", "height", "16000",
+                f"{fmt}:{controlled}[0]",
+                "-auto-orient", "-strip",
+                "-thumbnail", f"{max_side}x{max_side}>",
+                "PNG32:-",
+            ]
+            proc = bounded.run(
+                cmd, limit=MAX_THUMBNAIL_BYTES, timeout=THUMBNAIL_TIMEOUT + 2, stderr_limit=4096,
+                env={"PATH": os.environ.get("PATH", "/usr/bin"), "HOME": os.environ.get("HOME", "/"),
+                     "MAGICK_TEMPORARY_PATH": tmp},
+            )
+            if (proc.returncode != 0 or proc.overflow or proc.timed_out
+                    or not proc.stdout.startswith(b"\x89PNG\r\n\x1a\n")
+                    or len(proc.stdout) > MAX_THUMBNAIL_BYTES):
+                return None
+            output = tmp_path / "thumbnail.png"
+            output.write_bytes(proc.stdout)
+            os.chmod(output, 0o600)
+            rendered = probe_dimensions(output)
+            if (rendered is None or rendered.format != "png" or rendered.width <= 0 or rendered.height <= 0
+                    or rendered.width > max_side or rendered.height > max_side):
+                return None
+            os.replace(output, destination)
+            os.chmod(destination, 0o600)
+            return rendered
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def encode_transmit(png: bytes, image_id: int, *, cols: int, rows: int, placement_id: int = 1) -> str:

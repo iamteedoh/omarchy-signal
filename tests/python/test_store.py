@@ -101,7 +101,10 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(conv.name, "Crew")
         self.assertEqual(conv.last_preview, "[image]")
         self.store.set_attachment_path(GROUP.key, 1, "a1", "/tmp/x.png")
-        self.assertEqual(self.store.history(GROUP.key)[0].attachments[0].path, "/tmp/x.png")
+        self.store.set_attachment_thumbnail(GROUP.key, 1, "a1", "/tmp/thumb.png", 480, 300)
+        stored = self.store.history(GROUP.key)[0].attachments[0]
+        self.assertEqual(stored.path, "/tmp/x.png")
+        self.assertEqual((stored.thumbnail_path, stored.width, stored.height), ("/tmp/thumb.png", 480, 300))
 
     def test_contacts_groups_and_display_names(self):
         self.store.replace_contacts([{"key": ALICE.key, "number": ALICE.value, "name": "", "profileName": "Trinity"},

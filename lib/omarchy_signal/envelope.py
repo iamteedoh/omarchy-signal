@@ -26,6 +26,7 @@ class Attachment:
     filename: str
     size: int
     path: str = ""          # local path signal-cli stored it at (may be empty)
+    thumbnail_path: str = ""  # bridge-generated, bounded PNG; never remote bytes
     width: int = 0
     height: int = 0
     caption: str = ""
@@ -34,7 +35,8 @@ class Attachment:
     def to_json(self) -> dict:
         return {
             "id": self.id, "contentType": self.content_type, "filename": self.filename,
-            "size": self.size, "path": self.path, "width": self.width, "height": self.height,
+            "size": self.size, "path": self.path, "thumbnailPath": self.thumbnail_path,
+            "width": self.width, "height": self.height,
             "caption": self.caption, "voiceNote": self.voice_note,
         }
 
@@ -43,7 +45,8 @@ class Attachment:
         return cls(
             id=str(d.get("id", "")), content_type=str(d.get("contentType", "")),
             filename=str(d.get("filename", "")), size=int(d.get("size", 0) or 0),
-            path=str(d.get("path", "")), width=int(d.get("width", 0) or 0),
+            path=str(d.get("path", "")), thumbnail_path=str(d.get("thumbnailPath", "")),
+            width=int(d.get("width", 0) or 0),
             height=int(d.get("height", 0) or 0), caption=str(d.get("caption", "")),
             voice_note=bool(d.get("voiceNote", False)),
         )
