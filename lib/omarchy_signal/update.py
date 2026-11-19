@@ -29,6 +29,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 
 from . import __version__, bounded
 
@@ -57,10 +58,25 @@ def parse_version(text: str) -> tuple[int, int, int] | None:
 
 def safe_remote(url: str) -> bool:
     """A remote we are willing to hand to git: https, ssh or scp-style, or a local
-    path; never something git would read as an option or a helper command."""
+    path; never URL passwords, HTTPS userinfo, something git would read as an
+    option or a helper command."""
     if not url or url.startswith("-") or any(c in url for c in "\x00\n\r ") or "::" in url:
         return False
-    return bool(re.match(r"^(https://|ssh://|git@[\w.-]+:|/)", url))
+    if not re.match(r"^(https://|ssh://|git@[\w.-]+:|/)", url):
+        return False
+    if url.startswith(("https://", "ssh://")):
+        try:
+            parsed = urlsplit(url)
+            _ = parsed.port       # also rejects non-numeric and out-of-range ports
+        except ValueError:
+            return False
+        if not parsed.hostname or parsed.password is not None:
+            return False
+        # HTTPS has no legitimate username in this updater. SSH commonly does
+        # (ssh://git@host), but its password form above is never accepted.
+        if parsed.scheme == "https" and parsed.username is not None:
+            return False
+    return True
 
 
 GIT_OUTPUT_LIMIT = 1024 * 1024    # a tag listing from the remote; ours is a few KiB
@@ -144,7 +160,7 @@ class InstallInfo:
                 origin = _git(["remote", "get-url", "origin"], directory, run=run, timeout=10).strip()
             except UpdateError:
                 origin = ""
-            return cls(directory, "git", origin)
+            return cls(directory, "git", origin if safe_remote(origin) else "")
         record = _install_record(state_dir)
         return cls(directory, "copy", _recorded_origin(record) or DEFAULT_ORIGIN, _recorded_source(record))
 

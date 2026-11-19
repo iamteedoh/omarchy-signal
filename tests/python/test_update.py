@@ -112,8 +112,29 @@ class UpdateTests(unittest.TestCase):
                      "ssh://git@example.org/x.git", "/srv/git/omarchy-signal.git", update.DEFAULT_ORIGIN):
             self.assertTrue(update.safe_remote(good), good)
         for bad in ("", "--upload-pack=touch /tmp/pwned", "-oProxyCommand=x", "ext::sh -c id", "http://insecure.example/x.git",
-                    "file:///etc", "https://x.example/a b", "https://x.example/a\nb", "git://example.org/x.git"):
+                    "file:///etc", "https://x.example/a b", "https://x.example/a\nb", "git://example.org/x.git",
+                    "https://user@example.org/x.git", "https://user:token@example.org/x.git",
+                    "https://user%40name:token%2Fvalue@example.org/x.git",
+                    "ssh://git:token@example.org/x.git", "https:///x.git", "https://[example.org/x.git"):
             self.assertFalse(update.safe_remote(bad), bad)
+
+    def test_remote_credentials_never_reach_git_errors_or_the_cache(self):
+        calls = []
+
+        def run(argv, **kw):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 128, "", "fatal: should not run")
+
+        for origin in ("https://user:secret@example.org/private.git",
+                       "https://user%40name:secret%2Fvalue@example.org/private.git",
+                       "https://user:secret@@example.org/private.git",
+                       "ssh://git:secret@example.org/private.git"):
+            with self.subTest(origin=origin):
+                result = update.check(update.InstallInfo(self.plugin, "copy", origin), current="0.1.0", run=run)
+                update.store(self.state, result)
+                self.assertEqual(calls, [])
+                self.assertIn("no usable git remote", result.error)
+                self.assertNotIn("secret", update.cache_file(self.state).read_text())
 
     # -- how it is installed -------------------------------------------------------------------
 
@@ -130,6 +151,8 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(update.InstallInfo.detect(self.plugin, self.state).origin, str(self.origin))   # a fork stays on the fork
         (self.state / "install.json").write_text(json.dumps({"origin": "--upload-pack=id"}))
         self.assertEqual(update.InstallInfo.detect(self.plugin, self.state).origin, update.DEFAULT_ORIGIN)
+        (self.state / "install.json").write_text(json.dumps({"origin": "https://user:secret@example.org/fork.git"}))
+        self.assertEqual(update.InstallInfo.detect(self.plugin, self.state).origin, update.DEFAULT_ORIGIN)
         (self.state / "install.json").write_text("not json")
         self.assertEqual(update.InstallInfo.detect(self.plugin, self.state).origin, update.DEFAULT_ORIGIN)
 
@@ -137,6 +160,15 @@ class UpdateTests(unittest.TestCase):
         link.symlink_to(self.work)
         self.assertEqual(update.InstallInfo.detect(link).kind, "link")
         self.assertEqual(update.InstallInfo.detect(self.plugins / "missing").kind, "none")
+
+    def test_detect_discards_credentials_from_a_git_origin(self):
+        origin = "https://user:secret@example.org/private.git"
+
+        def run(argv, **kw):
+            return subprocess.CompletedProcess(argv, 0, origin + "\n", "")
+
+        info = update.InstallInfo.detect(self.plugin, run=run)
+        self.assertEqual((info.kind, info.origin), ("git", ""))
 
     # -- checking ------------------------------------------------------------------------------
 
@@ -171,6 +203,19 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual((result.available, result.latest, result.error), (True, "0.9.0", ""))
         self.assertEqual(len(asked), 1, "the ssh remote is not tried when https answers")
         self.assertIn("credential.helper=", asked[0], "and no stored credential is offered")
+
+    def test_https_remote_keeps_credential_helpers_available(self):
+        asked = []
+        origin = "https://example.org/someone/private.git"
+
+        def run(argv, **kw):
+            asked.append(argv)
+            return subprocess.CompletedProcess(argv, 0, "abc\trefs/tags/v0.9.0\n", "")
+
+        result = update.check(update.InstallInfo(self.plugin, "copy", origin), current="0.1.0", run=run)
+        self.assertTrue(result.available)
+        self.assertEqual(asked[0][-1], origin)
+        self.assertNotIn("credential.helper=", asked[0])
 
     def test_a_private_remote_falls_back_to_ssh_and_a_failure_says_what_failed(self):
         asked = []
