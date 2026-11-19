@@ -340,7 +340,7 @@ class ClipboardTests(unittest.TestCase):
             bin_dir.mkdir()
             store = Path(tmp) / "store"
             # Fake wl-copy / wl-paste that keep the selection in a file.
-            (bin_dir / "wl-copy").write_text(f'#!/bin/sh\n[ "$1" = --primary ] && shift\nshift\nprintf %s "$1" > {store}\n')
+            (bin_dir / "wl-copy").write_text(f'#!/bin/sh\n[ "$1" = --primary ] && shift\n[ "$#" -eq 0 ] || exit 64\ncat > {store}\n')
             (bin_dir / "wl-paste").write_text(
                 f'#!/bin/sh\ncase "$*" in *--list-types*) echo image/png ;; *image/png*) printf PNGDATA ;; *) cat {store} ;; esac\n')
             for f in bin_dir.iterdir():

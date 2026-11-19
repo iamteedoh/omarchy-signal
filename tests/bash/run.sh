@@ -172,6 +172,17 @@ if [[ -n $shell_hits ]]; then echo "$shell_hits"; echo "  FAIL shell strings fou
 elif [[ $n_helper -ne 3 ]]; then echo "  FAIL expected the execArgv helper in all 3 components, found $n_helper"; fail=1
 else echo "  ok   argv only (execArgv helper x$n_helper)"; fi
 
+echo "clipboard text stays out of process arguments"
+if grep -qF 'execArgv(["wl-copy"' "$ROOT/ConversationView.qml"; then
+  echo "  FAIL the chat window still starts wl-copy through the argv-only helper"; fail=1
+elif ! grep -qF 'copyProc.run(["wl-copy"], text)' "$ROOT/ConversationView.qml"; then
+  echo "  FAIL the chat window does not send copied text through bounded process input"; fail=1
+elif ! grep -qF 'stdinEnabled: inputText.length > 0' "$ROOT/BoundedProcess.qml" \
+  || ! grep -qF 'proc.write(inputText)' "$ROOT/BoundedProcess.qml" \
+  || ! grep -qF 'proc.stdinEnabled = false' "$ROOT/BoundedProcess.qml"; then
+  echo "  FAIL bounded process input does not write and close stdin"; fail=1
+else echo "  ok   copied text uses bounded process stdin"; fi
+
 echo "no Omarchy API outside the supported baseline"
 # The bug this catches: a qs.Commons member that exists on the development
 # machine but not on the oldest supported Omarchy. QML resolves it at call

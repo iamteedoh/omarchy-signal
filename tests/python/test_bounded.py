@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import _helpers  # noqa: F401
 from omarchy_signal import bounded, clipboard
@@ -63,6 +64,21 @@ class ClipboardBoundsTests(unittest.TestCase):
         f = self.bin / "wl-paste"
         f.write_text("#!/bin/sh\n" + body + "\n")
         f.chmod(0o755)
+
+    def test_copy_sends_bounded_utf8_on_stdin(self):
+        secret = "héllo\nworld"
+        with mock.patch.object(clipboard, "_exe", return_value="/usr/bin/wl-copy"), \
+             mock.patch.object(clipboard.subprocess, "run") as run:
+            clipboard.copy(secret, primary=True)
+            argv = run.call_args.args[0]
+            self.assertEqual(argv, ["/usr/bin/wl-copy", "--primary"])
+            self.assertNotIn(secret, argv)
+            self.assertEqual(run.call_args.kwargs["input"], secret.encode("utf-8"))
+
+            run.reset_mock()
+            with self.assertRaises(clipboard.ClipboardError):
+                clipboard.copy("x" * (clipboard.MAX_COPY_TEXT + 1))
+            run.assert_not_called()
 
     def test_a_huge_text_offer_is_cut_to_the_limit(self):
         self.fake_wl_paste('case "$*" in *--list-types*) echo text/plain ;; *) yes ;; esac')

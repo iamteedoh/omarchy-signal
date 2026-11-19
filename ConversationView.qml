@@ -16,8 +16,8 @@ import "Calls.js" as Calls
 // the click-to-reply popup and, unchanged, by the tabs of the chat window, so
 // both look and behave the same. Everything shown is PlainText. Messages,
 // reactions and deletes go to the bridge as requests on its socket (Bridge.qml);
-// the two things that still start a program (the file listing for the
-// attachment picker and reading the clipboard) run the CLI as an argv array.
+// the helpers that still start a program (the attachment file listing and
+// clipboard access) use fixed argv arrays; copied text travels over stdin.
 //
 // Colours, spacing, rounding and fonts all come from Omarchy's Style and Color
 // singletons, so the view follows whatever theme is active. The instrument-panel
@@ -611,14 +611,26 @@ Item {
   // ---- clipboard
   property real selectionTs: 0           // the message whose text is selected; starting a selection elsewhere clears it
   property string notice: ""
+  property int copiedLines: 1
 
   function copyText(t) {
-    if (!t) return
-    view.execArgv(["wl-copy", "--", t])
-    view.notice = t.indexOf("\n") >= 0 ? "copied " + t.split("\n").length + " lines" : "copied"
-    noticeTimer.restart()
+    var text = String(t || "")
+    if (!text) return
+    if (text.length > 64 * 1024) { view.error = "too much text to copy"; return }
+    view.copiedLines = text.split("\n").length
+    copyProc.run(["wl-copy"], text)
   }
   Timer { id: noticeTimer; interval: 2500; onTriggered: view.notice = "" }
+  BoundedProcess {
+    id: copyProc
+    maxChars: 1024
+    timeoutMs: 5000
+    onFinished: function(ok, text) {
+      if (!ok) { view.error = "copy failed"; return }
+      view.notice = view.copiedLines > 1 ? "copied " + view.copiedLines + " lines" : "copied"
+      noticeTimer.restart()
+    }
+  }
 
   function addAttachments(paths) {
     var added = []

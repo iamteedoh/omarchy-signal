@@ -140,6 +140,9 @@ edited, lost focus or was hidden is dropped. Checked in a nested Hyprland with
 a 20 MB text offer delivered to the shell: an unguarded field made one
 `wl_data_offer.receive` and grew the shell by 26 MB; with the guard, none.
 
+Copied text is given to `wl-copy` as bounded UTF-8 on standard input. Message
+plaintext is never put in the selection owner's process arguments or environment.
+
 While a field has focus, Qt still reads the offer when the clipboard
 changes: that is inside Qt and needs a Qt with the formats-only `canPaste`
 fix to go away.

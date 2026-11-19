@@ -11,6 +11,8 @@ import Quickshell.Io
 // cannot start (no exec, bad path) also fails, through the same watchdog,
 // since Quickshell reports no exit for it.
 //
+// run() may also send a caller-bounded string to the process as UTF-8 stdin;
+// it closes the stream immediately afterwards so the child observes EOF.
 // run() while busy cancels the earlier run. cancel() drops a run's result:
 // callers cancel when what they asked about has changed (the text was edited,
 // the field lost focus, the window closed), so a late answer is never applied
@@ -31,14 +33,18 @@ Item {
   property int _run: 0
   property var _proc: null
 
-  function run(argv) {
+  function run(argv, input) {
     cancel()
     _buf = ""
     _settled = false
     _run += 1
     // A process per run: a killed one may still report its exit after the
     // next run has started, and must not be mistaken for it.
-    _proc = procComponent.createObject(root, { runId: _run, command: argv })
+    _proc = procComponent.createObject(root, {
+      runId: _run,
+      command: argv,
+      inputText: input === undefined ? "" : String(input)
+    })
     _proc.running = true
     watchdog.restart()
   }
@@ -74,6 +80,15 @@ Item {
     Process {
       id: proc
       property int runId: 0
+      property string inputText: ""
+      stdinEnabled: inputText.length > 0
+      onStarted: {
+        if (inputText.length > 0) {
+          proc.write(inputText)
+          proc.stdinEnabled = false     // EOF after the queued UTF-8 input
+          inputText = ""                // do not retain a second copy in the shell
+        }
+      }
       stdout: SplitParser {
         splitMarker: ""
         onRead: function(data) {

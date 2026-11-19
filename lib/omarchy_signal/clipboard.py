@@ -16,6 +16,7 @@ from pathlib import Path
 from . import bounded
 
 MAX_PASTE_TEXT = 60000
+MAX_COPY_TEXT = 64 * 1024
 MAX_PASTE_IMAGE = 100 * 1024 * 1024
 IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
 TEXT_TYPES = ("text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "TEXT", "STRING")
@@ -33,10 +34,17 @@ def _exe(name: str) -> str:
 
 
 def copy(text: str, *, primary: bool = False) -> None:
-    argv = [_exe("wl-copy")] + (["--primary"] if primary else []) + ["--", text]
+    if len(text) > MAX_COPY_TEXT:
+        raise ClipboardError(f"too much text to copy (limit {MAX_COPY_TEXT} characters)")
     try:
-        # wl-copy forks a server that owns the selection; the parent returns at once.
-        subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        data = text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ClipboardError("copy failed") from exc
+    argv = [_exe("wl-copy")] + (["--primary"] if primary else [])
+    try:
+        # stdin reaches the selection owner without exposing the text in its process arguments.
+        # wl-copy forks that owner; communicate closes stdin before the parent returns.
+        subprocess.run(argv, input=data, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=3, check=True)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ClipboardError("copy failed") from exc
