@@ -14,10 +14,11 @@ import "Calls.js" as Calls
 
 // One conversation: thread, composer, attachments, quote, reactions. Used by
 // the click-to-reply popup and, unchanged, by the tabs of the chat window, so
-// both look and behave the same. Everything shown is PlainText. Messages,
-// reactions and deletes go to the bridge as requests on its socket (Bridge.qml);
-// the two things that still start a program (the file listing for the
-// attachment picker and reading the clipboard) run the CLI as an argv array.
+// both look and behave the same. Everything shown is PlainText, except a
+// message body with a link in it (see bodyText). Messages, reactions and
+// deletes go to the bridge as requests on its socket (Bridge.qml); the two
+// things that still start a program (the file listing for the attachment
+// picker and reading the clipboard) run the CLI as an argv array.
 //
 // Colours, spacing, rounding and fonts all come from Omarchy's Style and Color
 // singletons, so the view follows whatever theme is active. The instrument-panel
@@ -614,6 +615,9 @@ Item {
 
   function copyText(t) {
     if (!t) return
+    // A selection in a message shown as rich text (one with a link) has its
+    // line breaks as Unicode separators; copy them as newlines.
+    t = String(t).replace(/[\u2028\u2029]/g, "\n")
     view.execArgv(["wl-copy", "--", t])
     view.notice = t.indexOf("\n") >= 0 ? "copied " + t.split("\n").length + " lines" : "copied"
     noticeTimer.restart()
@@ -1074,6 +1078,10 @@ Item {
             anchors.fill: parent
             z: 10
             acceptedButtons: Qt.NoButton      // wheel only; clicks fall through to the messages
+            // A MouseArea sets an arrow cursor by default, and this one sits above
+            // every message, so it hid the hand over links and the text cursor.
+            // Resetting it lets the cursors of the messages under it show.
+            cursorShape: undefined
             onWheel: function(ev) { view.scrollBy(list, ev) }
           }
 
@@ -1275,12 +1283,16 @@ Item {
                       font.italic: true
                     }
                     // Selectable: drag to select, Ctrl+C (or Super+C, or a right-click) copies.
+                    // A body with a link in it is shown as rich text in which only the
+                    // links are markup (Model.linkHtml escapes everything else); one
+                    // without stays PlainText. Clicking a link opens it in the browser.
                     TextEdit {
                       id: bodyText
+                      readonly property string linked: row.deleted ? "" : Model.linkHtml(row.body, String(Commons.Color.accent))
                       visible: row.body.length > 0
                       Layout.fillWidth: true
-                      text: row.body
-                      textFormat: TextEdit.PlainText
+                      text: linked.length > 0 ? linked : row.body
+                      textFormat: linked.length > 0 ? TextEdit.RichText : TextEdit.PlainText
                       wrapMode: TextEdit.Wrap
                       readOnly: true
                       selectByMouse: true
@@ -1298,10 +1310,24 @@ Item {
                         if (selectedText.length > 0) view.selectionTs = row.ts
                         else if (ownsSelection) view.selectionTs = 0
                       }
+                      // hoveredLink does not update on a read-only TextEdit with a
+                      // HoverHandler on it, so the cursor asks linkAt, like the click does.
+                      HoverHandler {
+                        id: bodyHover
+                        cursorShape: bodyText.linked.length > 0 && bodyHover.hovered
+                                     && bodyText.linkAt(bodyHover.point.position.x, bodyHover.point.position.y).length > 0
+                                     ? Qt.PointingHandCursor : Qt.IBeamCursor
+                      }
                       // A plain click still opens the message actions; a drag does not.
+                      // A click on a link opens the link instead.
                       TapHandler {
                         acceptedButtons: Qt.LeftButton
-                        onTapped: {
+                        onTapped: function(eventPoint) {
+                          var url = Model.openableUrl(bodyText.linkAt(eventPoint.position.x, eventPoint.position.y))
+                          if (url.length > 0) {
+                            view.execArgv(["xdg-open", url])
+                            return
+                          }
                           view.emojiRowOpen = false
                           view.confirmDeleteTs = 0
                           view.selectedTs = row.selected ? 0 : row.ts
@@ -1610,7 +1636,7 @@ Item {
               spacing: Style.space(2)
               model: view.thumbnails ? [] : view.pickerVisible
               boundsBehavior: Flickable.StopAtBounds
-              MouseArea { anchors.fill: parent; z: 10; acceptedButtons: Qt.NoButton; onWheel: function(ev) { view.scrollBy(plainList, ev) } }
+              MouseArea { anchors.fill: parent; z: 10; acceptedButtons: Qt.NoButton; cursorShape: undefined; onWheel: function(ev) { view.scrollBy(plainList, ev) } }
               delegate: Rectangle {
                 required property var modelData
                 required property int index
@@ -1669,7 +1695,7 @@ Item {
               cellHeight: Style.space(132)
               model: view.thumbnails && view.pickerOpen ? view.pickerVisible : []
               boundsBehavior: Flickable.StopAtBounds
-              MouseArea { anchors.fill: parent; z: 10; acceptedButtons: Qt.NoButton; onWheel: function(ev) { view.scrollBy(grid, ev) } }
+              MouseArea { anchors.fill: parent; z: 10; acceptedButtons: Qt.NoButton; cursorShape: undefined; onWheel: function(ev) { view.scrollBy(grid, ev) } }
               delegate: Item {
                 required property var modelData
                 required property int index

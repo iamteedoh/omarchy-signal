@@ -364,6 +364,80 @@ function threadRows(rows, limit) {
   })
 }
 
+// Links in message text, the same rule as lib/omarchy_signal/links.py (held to
+// the shared vectors in tests/vectors/model.json): http, https and mailto only,
+// trailing prose punctuation dropped, a ")" kept only when it closes a "(" in
+// the URL. Everything else in the message stays plain text.
+var URL_START_RE = /(?:https?:\/\/|mailto:)/ig
+var URL_BODY_RE = /^[^\s<>"'`\x00-\x1f\x7f]{1,2048}/
+var URL_TRAIL = ".,;:!?)]}'\"»”’"
+
+function wordChar(ch) {
+  if (!ch) return false
+  if (/[A-Za-z0-9_@]/.test(ch)) return true
+  return ch.charCodeAt(0) > 127 && ch.toLowerCase() !== ch.toUpperCase()
+}
+
+function count(s, ch) { return s.split(ch).length - 1 }
+
+// [{start, end, url}] in UTF-16 offsets into `text`.
+function findUrls(text) {
+  var s = String(text || "")
+  var out = []
+  URL_START_RE.lastIndex = 0
+  var m
+  while ((m = URL_START_RE.exec(s)) !== null) {
+    var start = m.index
+    if (start > 0 && wordChar(s.charAt(start - 1))) continue
+    var body = URL_BODY_RE.exec(s.substring(start + m[0].length))
+    if (!body) continue
+    var url = m[0] + body[0]
+    URL_START_RE.lastIndex = start + url.length
+    while (url.length > 0 && URL_TRAIL.indexOf(url.charAt(url.length - 1)) >= 0) {
+      if (url.charAt(url.length - 1) === ")" && count(url, "(") >= count(url, ")")) break
+      url = url.substring(0, url.length - 1)
+    }
+    if (url.length < 8) continue
+    out.push({ start: start, end: start + url.length, url: url })
+  }
+  return out
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;")
+}
+
+// Rich text for a message body whose URLs are links, or "" when it has none
+// (the caller then keeps PlainText). Only the URLs become markup: every other
+// character is escaped, and newlines and runs of spaces are kept as written.
+function linkHtml(text, linkColor) {
+  var s = String(text || "")
+  var spans = findUrls(s)
+  if (spans.length === 0) return ""
+  var color = /^#[0-9A-Fa-f]{3,8}$/.test(String(linkColor || "")) ? String(linkColor) : ""
+  var html = ""
+  var at = 0
+  for (var i = 0; i < spans.length; i++) {
+    html += escapeHtml(s.substring(at, spans[i].start))
+    var label = escapeHtml(spans[i].url)
+    html += '<a href="' + escapeHtml(spans[i].url) + '">'
+      + (color ? '<span style="color:' + color + '">' + label + "</span>" : label) + "</a>"
+    at = spans[i].end
+  }
+  html += escapeHtml(s.substring(at))
+  return '<span style="white-space:pre-wrap">' + html.replace(/\n/g, "<br>") + "</span>"
+}
+
+// The URL to open for a link the user clicked, or "" for anything that is not
+// one of the links linkHtml made.
+function openableUrl(href) {
+  var u = String(href || "")
+  if (!/^(https?:\/\/|mailto:)/i.test(u) || u.length > 2048) return ""
+  if (/[\s<>"'`\x00-\x1f\x7f]/.test(u)) return ""
+  return u
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     cleanText: cleanText,
@@ -393,6 +467,10 @@ if (typeof module !== "undefined") {
     TIMERS: TIMERS,
     timerLabel: timerLabel,
     timerOf: timerOf,
-    threadRows: threadRows
+    threadRows: threadRows,
+    findUrls: findUrls,
+    escapeHtml: escapeHtml,
+    linkHtml: linkHtml,
+    openableUrl: openableUrl
   }
 }

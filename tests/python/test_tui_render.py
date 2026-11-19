@@ -145,6 +145,7 @@ class RenderTests(unittest.TestCase):
                     app._filter_overlay()
                 if overlay == "link":
                     app.link_uri = "sgnl://linkdevice?uuid=abc&pub_key=def"
+                    app.cfg.qr_style = "half"     # in the terminal: no PNG in the real runtime dir, no shell popup"
                 app.draw()
                 self.assert_clean(app.term.text())
         app.overlay = ""

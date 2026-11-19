@@ -125,6 +125,9 @@ the real desktop can end up in a picture.
   cycles them.
 - Delete a message for you or for everyone (within Signal's 24 hours), or a
   whole chat from this computer. Day separators, delivery and read ticks.
+- Links in messages, sent or received, are clickable and open in your browser.
+  Only the link becomes clickable: nothing else a sender writes is shown as
+  markup.
 - Drawn as an instrument panel: corner brackets on the window, the popups and
   the pictures, a lit rule under the header, a marked edge on every message
   (yours in the accent colour), a scan line when a conversation comes up, a

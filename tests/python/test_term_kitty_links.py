@@ -79,6 +79,14 @@ class KeyParserTests(unittest.TestCase):
 
 
 class LinkTests(unittest.TestCase):
+    def test_shared_vectors(self):
+        """The chat window's Model.findUrls is held to the same cases (tests/qml)."""
+        import json
+        cases = json.loads((Path(__file__).resolve().parents[1] / "vectors" / "model.json").read_text())["findUrls"]
+        self.assertGreaterEqual(len(cases), 10)
+        for case in cases:
+            self.assertEqual([u for _, _, u in links.find_urls(case["in"])], case["out"], case["in"])
+
     def test_find_urls(self):
         spans = links.find_urls("see https://example.com/a?b=1). and http://x.io/y, mailto:a@b.co ok")
         self.assertEqual([u for _, _, u in spans], ["https://example.com/a?b=1", "http://x.io/y", "mailto:a@b.co"])

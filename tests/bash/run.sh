@@ -323,9 +323,19 @@ rm -rf "$hs"
 
 echo "no 32-bit int holds a Signal timestamp"
 if grep -n -E "property int (\w*[a-z0-9_]Ts|ts|\w*Timestamp)\b" "$ROOT"/*.qml; then echo "  FAIL use real/var for timestamps"; fail=1; else echo "  ok"; fi
-echo "every Text, TextEdit and TextArea is PlainText"
+echo "every Text, TextEdit and TextArea is PlainText (or a linked message body)"
 n_text=$(grep -c -E "^\s*(Text|TextEdit|QQC\.TextArea) \{" "${PLUGIN_QML[@]}" | awk -F: '{s+=$2} END {print s}')
 n_plain=$(grep -c -E "textFormat: (Text|TextEdit).PlainText" "${PLUGIN_QML[@]}" | awk -F: '{s+=$2} END {print s}')
-if [[ $n_text -eq $n_plain ]]; then echo "  ok   $n_text/$n_plain"; else echo "  FAIL $n_text Text blocks, $n_plain PlainText"; fail=1; fi
+# The one exception: a message body with a link in it, shown as the rich text
+# Model.linkHtml builds (every character escaped, only the URLs made links).
+n_linked=$(grep -c -E "textFormat: linked\.length > 0 \? TextEdit\.RichText : TextEdit\.PlainText$" "${PLUGIN_QML[@]}" | awk -F: '{s+=$2} END {print s}')
+n_linkhtml=$(grep -c -E "readonly property string linked: .*Model\.linkHtml\(" "${PLUGIN_QML[@]}" | awk -F: '{s+=$2} END {print s}')
+if [[ $n_linked -ne $n_linkhtml ]]; then
+  echo "  FAIL $n_linked rich-text bodies, but $n_linkhtml come from Model.linkHtml"; fail=1
+elif [[ $n_text -eq $((n_plain + n_linked)) ]]; then
+  echo "  ok   $n_text/$n_plain (+$n_linked linked message body)"
+else
+  echo "  FAIL $n_text Text blocks, $n_plain PlainText, $n_linked linked"; fail=1
+fi
 
 exit $fail

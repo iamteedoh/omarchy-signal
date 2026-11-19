@@ -83,8 +83,14 @@ safe character set and length-capped (`links.py`). `file://` links point only
 at attachment paths the bridge resolved inside `signal-cli`'s attachment
 directory. `xdg-open` is invoked with an argv array.
 
-Every Quickshell `Text` is `Text.PlainText`; nothing from the network is
-rendered as rich text or markup.
+Every Quickshell `Text` is `Text.PlainText`, with one exception: a message
+body that contains a link is shown as rich text so the link can be clicked.
+That rich text is built by `Model.linkHtml`, which HTML-escapes every character
+of the message and adds an `<a>` element only around the `http`, `https` and
+`mailto` URLs it found (the same rule as `links.py`, held to shared test
+vectors). Nothing else a sender writes becomes markup. A clicked link is checked
+again by `Model.openableUrl` and opened with `xdg-open` as an argv array.
+`tests/bash/run.sh` fails if any other `Text` is not PlainText.
 
 ### Images (remote sender → image decoder)
 

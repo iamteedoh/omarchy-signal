@@ -236,4 +236,44 @@ test("shared vectors (tests/vectors/model.json) hold", () => {
   for (const c of V.deleteForEveryoneRefusal)
     assert.equal(M.deleteForEveryoneRefusal({ ts: c.ts, outgoing: c.outgoing, deleted: c.deleted }, c.now, c.noteToSelf), c.out, c.name)
   for (const c of V.filterRows.cases) assert.deepEqual(M.filterRows(V.filterRows.rows, c.query).map(r => r.key), c.out, c.query)
+  assert.ok(V.findUrls.length >= 10)
+  for (const c of V.findUrls) assert.deepEqual(M.findUrls(c.in).map(u => u.url), c.out, JSON.stringify(c))
+})
+
+test("linkHtml links URLs and escapes everything else", () => {
+  assert.equal(M.linkHtml("no links here", "#ff0000"), "")
+  assert.equal(M.linkHtml("", "#ff0000"), "")
+  const h = M.linkHtml("<b>hi</b> & see https://example.com/a?x=1&y=2.\nnext  line", "#ff0000")
+  assert.equal(h, '<span style="white-space:pre-wrap">&lt;b&gt;hi&lt;/b&gt; &amp; see '
+    + '<a href="https://example.com/a?x=1&amp;y=2"><span style="color:#ff0000">https://example.com/a?x=1&amp;y=2</span></a>'
+    + ".<br>next  line</span>")
+  // A colour that is not a plain hex value is dropped rather than written into the style.
+  assert.ok(!M.linkHtml("https://a.example", "red;background:url(x)").includes("red"))
+  // Markup in the text never becomes markup, even next to a link.
+  const evil = M.linkHtml('https://a.example/"><img src=x> <a href="javascript:x">y</a>', "#000")
+  assert.ok(!evil.includes("<img") && !evil.includes('<a href="javascript'))
+  assert.equal((evil.match(/<a /g) || []).length, 1)
+})
+
+test("openableUrl accepts only the links linkHtml makes", () => {
+  assert.equal(M.openableUrl("https://example.com/a"), "https://example.com/a")
+  assert.equal(M.openableUrl("mailto:neo@example.org"), "mailto:neo@example.org")
+  assert.equal(M.openableUrl("javascript:alert(1)"), "")
+  assert.equal(M.openableUrl("file:///etc/passwd"), "")
+  assert.equal(M.openableUrl("-https://x.example"), "")
+  assert.equal(M.openableUrl("https://a.example/ b"), "")
+  assert.equal(M.openableUrl(""), "")
+})
+
+test("the thread delegate declares every field threadRows produces", () => {
+  // A row field with no matching required property reads as undefined in the
+  // delegate, and qmlcheck does not catch it.
+  const fs = require("fs")
+  const qml = fs.readFileSync(path.join(__dirname, "..", "..", "ConversationView.qml"), "utf8")
+  const start = qml.indexOf("delegate: Item {\n            id: row")
+  assert.ok(start > 0, "thread delegate not found")
+  const head = qml.slice(start, qml.indexOf("readonly property var message", start))
+  const declared = new Set([...head.matchAll(/required property \w+ (\w+)/g)].map(m => m[1]))
+  const [row] = M.threadRows([{ ts: 1, body: "x" }])
+  for (const key of Object.keys(row)) assert.ok(declared.has(key), `delegate is missing required property ${key}`)
 })
