@@ -92,6 +92,21 @@ vectors). Nothing else a sender writes becomes markup. A clicked link is checked
 again by `Model.openableUrl` and opened with `xdg-open` as an argv array.
 `tests/bash/run.sh` fails if any other `Text` is not PlainText.
 
+### Link previews (off by default)
+
+With `link_previews` off the bridge makes no web requests at all. With it on, a
+message you send that contains an `https` link makes the bridge fetch that page
+once, the way Signal's own clients do, to build the preview card
+(`linkpreview.py`). The fetch is bounded: `https` on port 443 only, no
+credentials in the URL, every address the host resolves to must be public (no
+loopback, private, link-local, multicast or reserved ranges) and the
+connection goes to the address that was checked, at most three redirects
+checked the same way, 4 seconds for the page and 7.5 seconds overall (the
+picture gets whatever the page left), 512 KiB of
+HTML and 2 MiB for a picture whose bytes must be PNG, JPEG, GIF or WebP. Titles
+and descriptions go through `clean_text`. Any failure sends the message
+without a card. Cards other people send are only shown, never fetched.
+
 ### Images (remote sender → image decoder)
 
 Dimensions are read from file headers without decoding. Anything over 40 Mpx

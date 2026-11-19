@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
-from .envelope import Attachment, Event
+from .envelope import Attachment, Event, Preview
 from .sanitize import Recipient, clean_name, clean_text
 
 SCHEMA_VERSION = 1
@@ -125,6 +125,7 @@ class Message:
     edited: bool = False
     expires_in: int = 0
     received_at: int = 0
+    previews: list[Preview] = field(default_factory=list)
 
     def to_json(self) -> dict:
         return {"conversation": self.conversation, "ts": self.ts, "sender": self.sender,
@@ -132,7 +133,8 @@ class Message:
                 "attachments": [a.to_json() for a in self.attachments], "quoteText": self.quote_text,
                 "quoteAuthor": self.quote_author, "quoteTs": self.quote_ts, "status": self.status,
                 "reactions": dict(self.reactions), "deleted": self.deleted, "edited": self.edited,
-                "expiresIn": self.expires_in, "receivedAt": self.received_at}
+                "expiresIn": self.expires_in, "receivedAt": self.received_at,
+                "previews": [pv.to_json() for pv in self.previews]}
 
 
 def expiry(start_ms: int, expires_in_s: int) -> int:
@@ -184,6 +186,8 @@ class Store:
             # stored before expiry was enforced and have been on screen since.
             self.db.execute("ALTER TABLE messages ADD COLUMN expire_at INTEGER NOT NULL DEFAULT 0")
             self.db.execute("UPDATE messages SET expire_at = ? + expires_in * 1000 WHERE expires_in > 0", (_now_ms(),))
+        if "previews" not in mcols:
+            self.db.execute("ALTER TABLE messages ADD COLUMN previews TEXT NOT NULL DEFAULT '[]'")
         self.db.execute("CREATE INDEX IF NOT EXISTS messages_expire_at ON messages(expire_at) WHERE expire_at > 0")
 
     def set_expiration(self, key: str, seconds: int) -> None:
@@ -198,7 +202,7 @@ class Store:
         return cur.rowcount > 0
 
     def delete_own(self, conversation_key: str, ts: int) -> bool:
-        cur = self.db.execute("UPDATE messages SET deleted = 1, body = '', attachments = '[]' WHERE conversation = ? AND ts = ? AND outgoing = 1",
+        cur = self.db.execute("UPDATE messages SET deleted = 1, body = '', attachments = '[]', previews = '[]' WHERE conversation = ? AND ts = ? AND outgoing = 1",
                               (conversation_key, ts))
         return cur.rowcount > 0
 
@@ -297,20 +301,21 @@ class Store:
             return False
         if ev.edit_target_ts:
             cur = self.db.execute(
-                "UPDATE messages SET body = ?, edited = 1 WHERE conversation = ? AND ts = ? AND sender = ?",
-                (ev.text, ev.conversation.key, ev.edit_target_ts, sender))
+                "UPDATE messages SET body = ?, edited = 1, previews = ? WHERE conversation = ? AND ts = ? AND sender = ?",
+                (ev.text, json.dumps([pv.to_json() for pv in ev.previews]), ev.conversation.key, ev.edit_target_ts, sender))
             if cur.rowcount:
                 return False
         body = clean_text(ev.text)
         self.db.execute(
             """INSERT OR REPLACE INTO messages(conversation, ts, sender, sender_name, outgoing, body, attachments,
-               quote_text, quote_author, quote_ts, status, expires_in, expire_at, received_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               quote_text, quote_author, quote_ts, status, expires_in, expire_at, received_at, previews)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (ev.conversation.key, ev.timestamp, sender, clean_name(ev.sender_name), 1 if ev.outgoing else 0,
              body, json.dumps([a.to_json() for a in ev.attachments]), ev.quote_text, ev.quote_author,
              ev.quote_timestamp, "sent" if ev.outgoing else "", ev.expires_in,
              # Signal starts the timer when a message is sent (ours) or read (theirs).
-             expiry(ev.timestamp, ev.expires_in) if ev.outgoing else 0, _now_ms()))
+             expiry(ev.timestamp, ev.expires_in) if ev.outgoing else 0, _now_ms(),
+             json.dumps([pv.to_json() for pv in ev.previews])))
         preview = body if body else ("[" + (ev.attachments[0].content_type.split("/")[0] if ev.attachments else "attachment") + "]")
         self.upsert_conversation(ev.conversation, name=ev.group_name or (ev.sender_name if not ev.outgoing and ev.conversation.kind != "group" else ""),
                                  last_ts=ev.timestamp, preview=preview,
@@ -321,16 +326,17 @@ class Store:
 
     def add_outgoing(self, conversation: Recipient, ts: int, sender_key: str, body: str,
                      attachments: Iterable[Attachment] = (), *, status: str = "sending",
-                     quote_text: str = "", quote_author: str = "", quote_ts: int = 0, expires_in: int = 0) -> None:
+                     quote_text: str = "", quote_author: str = "", quote_ts: int = 0, expires_in: int = 0,
+                     previews: Iterable[Preview] = ()) -> None:
         body = clean_text(body)
         atts = [a.to_json() for a in attachments]
         expires_in = max(0, int(expires_in))
         self.db.execute(
             """INSERT OR REPLACE INTO messages(conversation, ts, sender, sender_name, outgoing, body, attachments,
-               quote_text, quote_author, quote_ts, status, expires_in, expire_at, received_at)
-               VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               quote_text, quote_author, quote_ts, status, expires_in, expire_at, received_at, previews)
+               VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (conversation.key, ts, sender_key, "", body, json.dumps(atts), quote_text, quote_author, quote_ts,
-             status, expires_in, expiry(ts, expires_in), _now_ms()))
+             status, expires_in, expiry(ts, expires_in), _now_ms(), json.dumps([pv.to_json() for pv in previews])))
         preview = body if body else "[attachment]"
         self.upsert_conversation(conversation, last_ts=ts, preview=preview)
 
@@ -383,7 +389,7 @@ class Store:
         if ev.kind != "remote_delete" or ev.sender is None:
             return False
         cur = self.db.execute(
-            "UPDATE messages SET deleted = 1, body = '', attachments = '[]' WHERE conversation = ? AND ts = ? AND sender = ?",
+            "UPDATE messages SET deleted = 1, body = '', attachments = '[]', previews = '[]' WHERE conversation = ? AND ts = ? AND sender = ?",
             (ev.conversation.key, ev.delete_target_ts, ev.sender.key))
         return cur.rowcount > 0
 
@@ -404,6 +410,10 @@ class Store:
         if changed:
             self.db.execute("UPDATE messages SET attachments = ? WHERE conversation = ? AND ts = ? AND sender = ?",
                             (json.dumps(atts), conversation_key, ts, row["sender"]))
+
+    def set_previews(self, conversation_key: str, ts: int, sender: str, previews: Iterable[Preview]) -> None:
+        self.db.execute("UPDATE messages SET previews = ? WHERE conversation = ? AND ts = ? AND sender = ?",
+                        (json.dumps([pv.to_json() for pv in previews]), conversation_key, ts, sender))
 
     def history(self, conversation_key: str, *, before_ts: int = 0, limit: int = 50) -> list[Message]:
         limit = max(1, min(500, int(limit)))
@@ -441,6 +451,13 @@ class Store:
             reactions = json.loads(row["reactions"]) or {}
         except ValueError:
             reactions = {}
+        previews = []
+        try:
+            raw = json.loads(row["previews"]) if "previews" in row.keys() else []
+            previews = [pv for pv in (Preview.from_json(d) for d in raw if isinstance(d, dict)) if pv][:1] \
+                if isinstance(raw, list) else []
+        except ValueError:
+            previews = []
         sender_name = row["sender_name"] or self.display_name(row["sender"])
         return Message(conversation=row["conversation"], ts=row["ts"], sender=row["sender"],
                        sender_name=sender_name, outgoing=bool(row["outgoing"]), body=row["body"],
@@ -448,7 +465,7 @@ class Store:
                        quote_ts=row["quote_ts"], status=row["status"],
                        reactions=reactions if isinstance(reactions, dict) else {},
                        deleted=bool(row["deleted"]), edited=bool(row["edited"]),
-                       expires_in=row["expires_in"], received_at=row["received_at"])
+                       expires_in=row["expires_in"], received_at=row["received_at"], previews=previews)
 
     # -- contacts / groups -------------------------------------------------
 

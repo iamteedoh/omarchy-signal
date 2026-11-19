@@ -310,6 +310,24 @@ function timerOf(conversations, key) {
   return 0
 }
 
+// The link preview card of a message (the first one Signal sent), flattened
+// for a ListModel row. Empty fields when there is none or it is not a web link.
+function previewOf(m) {
+  var none = { previewUrl: "", previewTitle: "", previewText: "", previewHost: "", previewImage: "" }
+  var list = m && Array.isArray(m.previews) ? m.previews : []
+  var p = list.length > 0 && list[0] && typeof list[0] === "object" ? list[0] : null
+  if (!p) return none
+  var url = openableUrl(p.url)
+  if (!/^https?:\/\//i.test(url)) return none
+  var host = (/^https?:\/\/([^\/?#:]+)/i.exec(url) || [])[1] || ""
+  var img = p.image && typeof p.image.path === "string" && p.image.path.charAt(0) === "/"
+    && /^image\//.test(p.image.contentType || "") ? p.image.path : ""
+  var title = singleLine(p.title || "", 200)
+  if (!title && !img) return none
+  return { previewUrl: url, previewTitle: title || host, previewText: singleLine(p.description || "", 300),
+           previewHost: singleLine(host.toLowerCase(), 120), previewImage: img }
+}
+
 // Rows for the message list of a conversation window, oldest first. Every
 // field is a string, number or boolean: the rows go into a ListModel.
 function threadRows(rows, limit) {
@@ -339,6 +357,7 @@ function threadRows(rows, limit) {
     prevSender = runKey
     var newDay = day !== prevDay
     prevDay = day
+    var pv = m.deleted ? previewOf(null) : previewOf(m)
     return {
       ts: ts,
       who: outgoing ? "You" : singleLine(m.senderName || "?", 80),
@@ -359,7 +378,12 @@ function threadRows(rows, limit) {
       day: day,
       newDay: newDay,
       firstOfRun: firstOfRun,
-      time: clockTime(ts)
+      time: clockTime(ts),
+      previewUrl: pv.previewUrl,
+      previewTitle: pv.previewTitle,
+      previewText: pv.previewText,
+      previewHost: pv.previewHost,
+      previewImage: pv.previewImage
     }
   })
 }
@@ -468,6 +492,7 @@ if (typeof module !== "undefined") {
     timerLabel: timerLabel,
     timerOf: timerOf,
     threadRows: threadRows,
+    previewOf: previewOf,
     findUrls: findUrls,
     escapeHtml: escapeHtml,
     linkHtml: linkHtml,

@@ -57,6 +57,7 @@ Item {
   property bool thumbnails: true         // picture tiles in the attachment picker (setting); off = plain list
   property int scrollSpeed: 9            // trackpad/wheel multiplier (setting)
   property bool telemetry: true          // the readings beside the thread (setting; the header's switch asks to change it)
+  property bool linkPreviews: false      // link preview cards under messages (setting, off by default)
   property bool active: true             // false while the surface this view is in is hidden: nothing ticks then
   property int totalUnread: 0            // unread across every conversation, for the telemetry
   property string bridgeVersion: ""
@@ -336,7 +337,10 @@ Item {
           if (have.body !== row.body || have.status !== row.status || have.reactions !== row.reactions || have.edited !== row.edited
               || have.deleted !== row.deleted || have.image !== row.image || have.filesText !== row.filesText || have.quote !== row.quote
               || have.newDay !== row.newDay || have.firstOfRun !== row.firstOfRun || have.who !== row.who
-              || have.tick !== row.tick || have.expiresIn !== row.expiresIn) threadModel.set(k, row)
+              || have.tick !== row.tick || have.expiresIn !== row.expiresIn
+              || have.previewUrl !== row.previewUrl || have.previewTitle !== row.previewTitle
+              || have.previewText !== row.previewText || have.previewHost !== row.previewHost
+              || have.previewImage !== row.previewImage) threadModel.set(k, row)
           continue
         }
       }
@@ -1107,6 +1111,11 @@ Item {
             required property bool newDay
             required property bool firstOfRun
             required property string time
+            required property string previewUrl
+            required property string previewTitle
+            required property string previewText
+            required property string previewHost
+            required property string previewImage
             // What the view's functions take: a plain copy of this row.
             readonly property var message: ({ ts: row.ts, who: row.who, sender: row.sender, outgoing: row.outgoing,
                                               body: row.body, deleted: row.deleted })
@@ -1389,6 +1398,90 @@ Item {
                             arm: Style.space(10)
                             weight: 1
                           }
+                        }
+                      }
+                    }
+                    // A link preview card (the Link previews setting): picture, title,
+                    // description and site, all PlainText. Clicking it opens the link.
+                    Rectangle {
+                      id: previewCard
+                      visible: view.linkPreviews && row.previewUrl.length > 0
+                      Layout.preferredWidth: Math.min(Style.space(420), list.width * 0.72)
+                      Layout.preferredHeight: visible ? previewRow.implicitHeight + Style.space(16) : 0
+                      radius: Style.cornerRadius
+                      color: previewHover.hovered ? Style.hoverFillFor(view.fg, Commons.Color.accent) : Util.alpha(view.fg, 0.04)
+                      border.width: 1
+                      border.color: view.hairline
+                      Rectangle {
+                        width: Style.space(3)
+                        anchors { left: parent.left; top: parent.top; bottom: parent.bottom; margins: Style.space(4) }
+                        radius: width / 2
+                        color: Commons.Color.accent
+                      }
+                      RowLayout {
+                        id: previewRow
+                        anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter
+                                  leftMargin: Style.space(14); rightMargin: Style.space(10) }
+                        spacing: Style.space(10)
+                        Loader {
+                          active: previewCard.visible && row.previewImage.length > 0
+                          visible: active
+                          Layout.preferredWidth: Style.space(64)
+                          Layout.preferredHeight: Style.space(64)
+                          Layout.alignment: Qt.AlignTop
+                          sourceComponent: Image {
+                            source: "file://" + row.previewImage
+                            asynchronous: true
+                            cache: true
+                            smooth: true
+                            fillMode: Image.PreserveAspectCrop
+                            sourceSize.width: 128
+                            clip: true
+                          }
+                        }
+                        ColumnLayout {
+                          Layout.fillWidth: true
+                          spacing: Style.space(2)
+                          Text {
+                            Layout.fillWidth: true
+                            text: row.previewTitle
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                            maximumLineCount: 2
+                            elide: Text.ElideRight
+                            color: view.fg
+                            font.family: Style.font.family
+                            font.pixelSize: Style.font.body
+                            font.bold: true
+                          }
+                          Text {
+                            visible: row.previewText.length > 0
+                            Layout.fillWidth: true
+                            text: row.previewText
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                            maximumLineCount: 2
+                            elide: Text.ElideRight
+                            color: view.dim
+                            font.family: Style.font.family
+                            font.pixelSize: Style.font.caption
+                          }
+                          Text {
+                            Layout.fillWidth: true
+                            text: row.previewHost
+                            textFormat: Text.PlainText
+                            elide: Text.ElideRight
+                            color: view.faint
+                            font.family: Style.font.family
+                            font.pixelSize: Style.font.caption
+                          }
+                        }
+                      }
+                      HoverHandler { id: previewHover; cursorShape: Qt.PointingHandCursor }
+                      TapHandler {
+                        onTapped: {
+                          var url = Model.openableUrl(row.previewUrl)
+                          if (url.length > 0) view.execArgv(["xdg-open", url])
                         }
                       }
                     }
