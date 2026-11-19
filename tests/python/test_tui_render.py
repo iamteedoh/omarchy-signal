@@ -840,3 +840,36 @@ class AttachmentFlowTests(unittest.TestCase):
             await click(app, x=start + 1, y=row)
             self.assertEqual(app.overlay, "attachment")
         asyncio.run(go())
+
+    def test_attachment_save_does_not_follow_dangling_symlink(self):
+        saved = self.root / "saved"
+        saved.mkdir(exist_ok=True)
+        target = self.root / "symlink-target.png"
+        (saved / "cat.png").symlink_to(target)
+        att = {"id": "a1", "contentType": "image/png", "filename": "cat.png", "path": str(self.img)}
+
+        self.app._save_attachment(att, str(saved))
+
+        self.assertFalse(target.exists())
+        self.assertTrue((saved / "cat.png").is_symlink())
+        self.assertEqual((saved / "cat-1.png").read_bytes(), self.img.read_bytes())
+
+    def test_attachment_save_keeps_open_file_when_name_is_replaced(self):
+        saved = self.root / "saved"
+        saved.mkdir(exist_ok=True)
+        target = self.root / "replacement-target.png"
+        retained = saved / "opened-file.png"
+
+        def replace_name(source, output):
+            created = saved / "cat.png"
+            created.rename(retained)
+            created.symlink_to(target)
+            output.write(source.read())
+
+        att = {"id": "a1", "contentType": "image/png", "filename": "cat.png", "path": str(self.img)}
+        with mock.patch.object(tui.shutil, "copyfileobj", side_effect=replace_name):
+            self.app._save_attachment(att, str(saved))
+
+        self.assertFalse(target.exists())
+        self.assertTrue((saved / "cat.png").is_symlink())
+        self.assertEqual(retained.read_bytes(), self.img.read_bytes())

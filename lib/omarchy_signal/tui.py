@@ -1995,17 +1995,35 @@ class App:
         except OSError as exc:
             self.show_toast(f"cannot create {dest_dir}: {exc.strerror}")
             return
-        dest = dest_dir / name
         stem, ext = os.path.splitext(name)
-        n = 1
-        while dest.exists():
-            dest = dest_dir / f"{stem}-{n}{ext}"
-            n += 1
+        dir_fd = -1
+        dest_fd = -1
         try:
-            shutil.copyfile(src, dest)
+            dir_fd = os.open(dest_dir, os.O_PATH | os.O_DIRECTORY)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+            with src.open("rb") as source:
+                n = 0
+                while True:
+                    dest_name = name if n == 0 else f"{stem}-{n}{ext}"
+                    try:
+                        # Exclusive creation treats even dangling symlinks as occupied.
+                        dest_fd = os.open(dest_name, flags, 0o666, dir_fd=dir_fd)
+                        break
+                    except FileExistsError:
+                        n += 1
+                dest = dest_dir / dest_name
+                output = os.fdopen(dest_fd, "wb")
+                dest_fd = -1  # ownership transferred to output
+                with output:
+                    shutil.copyfileobj(source, output)
         except OSError as exc:
             self.show_toast(f"save failed: {exc.strerror}")
             return
+        finally:
+            if dest_fd >= 0:
+                os.close(dest_fd)
+            if dir_fd >= 0:
+                os.close(dir_fd)
         self.show_toast(f"saved {dest}", 6)
 
     def _copy_to_clipboard(self, text: str, *, primary_too: bool = False) -> None:
