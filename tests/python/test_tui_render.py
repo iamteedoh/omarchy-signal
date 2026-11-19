@@ -128,6 +128,17 @@ class RenderTests(unittest.TestCase):
         self.assertIn("message deleted", out)
         self.assertIn("🔥", out)
 
+    def test_extreme_protocol_timestamp_renders_bounded_display_time(self):
+        app = make_app()
+        seed(app)
+        message = app.messages[app.active_key][0]
+        message["ts"] = 2 ** 63 - 1
+        message["displayTs"] = 1700000000000
+        app.draw()
+        self.assertIn(app._fmt_time(message["displayTs"]), app.term.text())
+        self.assertIn(app._fmt_time(message["displayTs"]), app._message_info(message)[1])
+        self.assertEqual(app._fmt_time(message["ts"]), "")
+
     def test_every_overlay_renders(self):
         app = make_app()
         seed(app)

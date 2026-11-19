@@ -94,7 +94,8 @@ function relativeTime(tsMs, nowMs) {
   if (h < 24) return h + "h"
   var d = Math.floor(h / 24)
   if (d < 7) return d + "d"
-  return new Date(ts).toISOString().substring(0, 10)
+  var date = new Date(ts)
+  return isFinite(date.getTime()) ? date.toISOString().substring(0, 10) : ""
 }
 
 // Omarchy's Do Not Disturb state file (~/.local/state/omarchy/notifications.json).
@@ -225,6 +226,7 @@ function dayKey(tsMs) {
   var ts = Number(tsMs) || 0
   if (!ts) return ""
   var d = new Date(ts)
+  if (!isFinite(d.getTime())) return ""
   return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate())
 }
 
@@ -247,6 +249,7 @@ function clockTime(tsMs) {
   var ts = Number(tsMs) || 0
   if (!ts) return ""
   var d = new Date(ts)
+  if (!isFinite(d.getTime())) return ""
   return pad2(d.getHours()) + ":" + pad2(d.getMinutes())
 }
 
@@ -330,9 +333,10 @@ function threadRows(rows, limit) {
     }
     var filesText = atts.map(function(a) { return singleLine((a && a.filename) || "attachment", 80) }).join(", ")
     var ts = typeof m.ts === "number" ? m.ts : 0
+    var displayTs = typeof m.displayTs === "number" ? m.displayTs : ts
     var outgoing = m.outgoing === true
     var sender = typeof m.sender === "string" ? m.sender : ""
-    var day = dayKey(ts)
+    var day = dayKey(displayTs)
     // A run of messages from one person on one day shows the name once.
     var runKey = (outgoing ? "me" : sender) + "|" + day
     var firstOfRun = runKey !== prevSender
@@ -341,6 +345,7 @@ function threadRows(rows, limit) {
     prevDay = day
     return {
       ts: ts,
+      displayTs: displayTs,
       who: outgoing ? "You" : singleLine(m.senderName || "?", 80),
       sender: sender,
       outgoing: outgoing,
@@ -359,7 +364,7 @@ function threadRows(rows, limit) {
       day: day,
       newDay: newDay,
       firstOfRun: firstOfRun,
-      time: clockTime(ts)
+      time: clockTime(displayTs)
     }
   })
 }

@@ -15,6 +15,7 @@ conversation.
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from datetime import datetime
@@ -80,16 +81,25 @@ def _number(value) -> float:
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
 
 
+def _message_time(message: dict) -> int:
+    display = _number(message.get("displayTs"))
+    if display > 0 and math.isfinite(display):
+        return int(display)
+    sent = _number(message.get("ts"))
+    return int(sent) if sent > 0 and math.isfinite(sent) else 0
+
+
 def thread_stats(rows, now_ms: int | None = None) -> dict:
     """Everything the readout shows about one conversation.
 
     ``rows`` are the bridge's history rows in any order. ``now_ms`` is passed
     in so "today" and the 24 hour window are testable."""
     s = empty_stats()
-    msgs = [m for m in (rows or []) if isinstance(m, dict) and _number(m.get("ts")) > 0]
+    msgs = [(_message_time(m), m) for m in (rows or []) if isinstance(m, dict)]
+    msgs = [item for item in msgs if item[0] > 0]
     if not msgs:
         return s
-    msgs.sort(key=lambda m: m["ts"])
+    msgs.sort(key=lambda item: item[0])
     now = int(now_ms) if now_ms else int(time.time() * 1000)
     today = datetime.fromtimestamp(now / 1000)
     day_start = int(today.replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
@@ -101,10 +111,9 @@ def thread_stats(rows, now_ms: int | None = None) -> dict:
     yours: list[int] = []
     transit: list[int] = []
     senders: dict[str, int] = {}
-    prev = None
+    prev: tuple[int, bool] | None = None
 
-    for m in msgs:
-        ts = int(m["ts"])
+    for ts, m in msgs:
         outgoing = m.get("outgoing") is True
         status = m.get("status") if isinstance(m.get("status"), str) else ""
         s["total"] += 1
@@ -120,9 +129,10 @@ def thread_stats(rows, now_ms: int | None = None) -> dict:
             s["rx"] += 1
             s["lastRx"] = ts
             got = int(_number(m.get("receivedAt")))
+            sent = int(_number(m.get("ts")))
             # Sender's clock to ours: only believable when it is small and positive.
-            if got >= ts and got - ts < 5 * 60000:
-                transit.append(got - ts)
+            if got >= sent > 0 and got - sent < 5 * 60000:
+                transit.append(got - sent)
         if ts >= day_start:
             s["today"] += 1
         if m.get("edited") is True:
@@ -142,16 +152,16 @@ def thread_stats(rows, now_ms: int | None = None) -> dict:
         by_hour[datetime.fromtimestamp(ts / 1000).hour] += 1
 
         # The first message after the other side spoke is the reply to it.
-        if prev is not None and (prev.get("outgoing") is True) != outgoing:
-            gap = ts - int(prev["ts"])
+        if prev is not None and prev[1] != outgoing:
+            gap = ts - prev[0]
             if 0 <= gap <= REPLY_WINDOW_MS:
                 (yours if outgoing else theirs).append(gap)
-        prev = m
+        prev = (ts, outgoing)
 
         who = "You" if outgoing else str(m.get("senderName") or m.get("sender") or "?")
         senders[who] = senders.get(who, 0) + 1
 
-    s["firstTs"] = int(msgs[0]["ts"])
+    s["firstTs"] = msgs[0][0]
     s["replyTheirs"] = median(theirs)
     s["replyYours"] = median(yours)
     s["transit"] = median(transit)

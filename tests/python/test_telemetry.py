@@ -72,6 +72,17 @@ class FigureTests(unittest.TestCase):
         self.assertEqual(stats["peakHour"], 21)
         self.assertEqual(stats["today"], 3)
 
+    def test_extreme_protocol_time_uses_bounded_display_time(self):
+        shown = at(20, 15)
+        stats = telemetry.thread_stats([
+            msg(2 ** 63 - 1, False, displayTs=shown, receivedAt=shown + 500)
+        ], NOW)
+        self.assertEqual(stats["total"], 1)
+        self.assertEqual(stats["firstTs"], shown)
+        self.assertEqual(stats["lastRx"], shown)
+        self.assertEqual(stats["peakHour"], 20)
+        self.assertEqual(stats["transit"], -1)
+
     def test_bad_durations_say_nothing(self):
         for bad in (-1, None, "soon", float("nan"), True):
             self.assertEqual(telemetry.short_duration(bad), "")

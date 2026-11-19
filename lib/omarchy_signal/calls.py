@@ -759,6 +759,7 @@ class CallManager:
             await bridge._broadcast("message", {
                 "conversation": rec.key, "conversationName": call.name, "isGroup": False,
                 "sender": payload["sender"], "senderName": call.name if not call.outgoing else "", "ts": ts,
+                "displayTs": payload["displayTs"],
                 "text": text, "preview": text, "attachments": [], "outgoing": call.outgoing, "muted": False,
                 "quoteText": "", "expiresIn": expires, "viewOnce": False, "notify": False, "call": True})
             await bridge._broadcast("unread", {"total": bridge.store.total_unread()})

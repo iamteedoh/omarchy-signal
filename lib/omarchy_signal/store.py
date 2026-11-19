@@ -27,6 +27,13 @@ from .sanitize import Recipient, clean_name, clean_text
 
 SCHEMA_VERSION = 1
 
+# Python's local datetime conversion is platform-dependent near its limits.
+# Signal timestamps only need to be plausible relative to the time this client
+# received them; the original value remains the protocol identity in ``ts``.
+MIN_MESSAGE_TIME_MS = 1
+MAX_MESSAGE_TIME_MS = 253_402_214_399_999
+MAX_FUTURE_SKEW_MS = 5 * 60 * 1000
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
@@ -60,6 +67,7 @@ CREATE TABLE IF NOT EXISTS messages (
   edited INTEGER NOT NULL DEFAULT 0,
   expires_in INTEGER NOT NULL DEFAULT 0,
   received_at INTEGER NOT NULL,
+  timeline_ts INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (conversation, ts, sender)
 );
 CREATE INDEX IF NOT EXISTS messages_conv_ts ON messages(conversation, ts);
@@ -125,6 +133,7 @@ class Message:
     edited: bool = False
     expires_in: int = 0
     received_at: int = 0
+    timeline_ts: int = 0
 
     def to_json(self) -> dict:
         return {"conversation": self.conversation, "ts": self.ts, "sender": self.sender,
@@ -132,7 +141,8 @@ class Message:
                 "attachments": [a.to_json() for a in self.attachments], "quoteText": self.quote_text,
                 "quoteAuthor": self.quote_author, "quoteTs": self.quote_ts, "status": self.status,
                 "reactions": dict(self.reactions), "deleted": self.deleted, "edited": self.edited,
-                "expiresIn": self.expires_in, "receivedAt": self.received_at}
+                "expiresIn": self.expires_in, "receivedAt": self.received_at,
+                "displayTs": self.timeline_ts}
 
 
 def expiry(start_ms: int, expires_in_s: int) -> int:
@@ -142,6 +152,20 @@ def expiry(start_ms: int, expires_in_s: int) -> int:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def receipt_timestamp(received_at: int) -> int:
+    """Return a datetime-safe local receipt timestamp."""
+    if MIN_MESSAGE_TIME_MS <= received_at <= MAX_MESSAGE_TIME_MS:
+        return received_at
+    return max(MIN_MESSAGE_TIME_MS, min(_now_ms(), MAX_MESSAGE_TIME_MS))
+
+
+def timeline_timestamp(sent_at: int, received_at: int) -> int:
+    """Use a plausible Signal sent time, otherwise trusted local receipt time."""
+    fallback = receipt_timestamp(received_at)
+    latest = min(MAX_MESSAGE_TIME_MS, fallback + MAX_FUTURE_SKEW_MS)
+    return sent_at if MIN_MESSAGE_TIME_MS <= sent_at <= latest else fallback
 
 
 class Store:
@@ -178,13 +202,35 @@ class Store:
         if "blocked" not in cols:
             self.db.execute("ALTER TABLE conversations ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0")
         mcols = {r["name"] for r in self.db.execute("PRAGMA table_info(messages)")}
+        added_timeline = "timeline_ts" not in mcols
+        if added_timeline:
+            self.db.execute("ALTER TABLE messages ADD COLUMN timeline_ts INTEGER NOT NULL DEFAULT 0")
+        rows = self.db.execute(
+            "SELECT rowid, conversation, ts, received_at FROM messages WHERE timeline_ts = 0").fetchall()
+        repaired_conversations: set[str] = set()
+        for row in rows:
+            safe_ts = timeline_timestamp(int(row["ts"]), int(row["received_at"]))
+            self.db.execute("UPDATE messages SET timeline_ts = ? WHERE rowid = ?", (safe_ts, row["rowid"]))
+            repaired_conversations.add(row["conversation"])
         if "expire_at" not in mcols:
             # When a disappearing message goes (ms since the epoch, 0 = never or
             # not started yet). Older rows with a timer start now: they were
             # stored before expiry was enforced and have been on screen since.
             self.db.execute("ALTER TABLE messages ADD COLUMN expire_at INTEGER NOT NULL DEFAULT 0")
             self.db.execute("UPDATE messages SET expire_at = ? + expires_in * 1000 WHERE expires_in > 0", (_now_ms(),))
+        if added_timeline:
+            self.db.execute("UPDATE messages SET expire_at = timeline_ts + expires_in * 1000 "
+                            "WHERE outgoing = 1 AND expires_in > 0")
         self.db.execute("CREATE INDEX IF NOT EXISTS messages_expire_at ON messages(expire_at) WHERE expire_at > 0")
+        self.db.execute("CREATE INDEX IF NOT EXISTS messages_conv_timeline "
+                        "ON messages(conversation, timeline_ts, ts)")
+        if added_timeline or repaired_conversations:
+            # Old conversation metadata may already contain the hostile sent
+            # timestamp. Rebuild it from the newly bounded chronology once.
+            keys = ({r["key"] for r in self.db.execute("SELECT key FROM conversations")}
+                    if added_timeline else repaired_conversations)
+            for key in keys:
+                self._refresh_conversation(key)
 
     def set_expiration(self, key: str, seconds: int) -> None:
         self.db.execute("UPDATE conversations SET expiration = ? WHERE key = ?", (max(0, seconds), key))
@@ -302,18 +348,21 @@ class Store:
             if cur.rowcount:
                 return False
         body = clean_text(ev.text)
+        received_at = receipt_timestamp(ev.received_at)
+        ev.received_at = received_at
+        timeline_ts = timeline_timestamp(ev.timestamp, received_at)
         self.db.execute(
             """INSERT OR REPLACE INTO messages(conversation, ts, sender, sender_name, outgoing, body, attachments,
-               quote_text, quote_author, quote_ts, status, expires_in, expire_at, received_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               quote_text, quote_author, quote_ts, status, expires_in, expire_at, received_at, timeline_ts)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (ev.conversation.key, ev.timestamp, sender, clean_name(ev.sender_name), 1 if ev.outgoing else 0,
              body, json.dumps([a.to_json() for a in ev.attachments]), ev.quote_text, ev.quote_author,
              ev.quote_timestamp, "sent" if ev.outgoing else "", ev.expires_in,
              # Signal starts the timer when a message is sent (ours) or read (theirs).
-             expiry(ev.timestamp, ev.expires_in) if ev.outgoing else 0, _now_ms()))
+             expiry(timeline_ts, ev.expires_in) if ev.outgoing else 0, received_at, timeline_ts))
         preview = body if body else ("[" + (ev.attachments[0].content_type.split("/")[0] if ev.attachments else "attachment") + "]")
         self.upsert_conversation(ev.conversation, name=ev.group_name or (ev.sender_name if not ev.outgoing and ev.conversation.kind != "group" else ""),
-                                 last_ts=ev.timestamp, preview=preview,
+                                 last_ts=timeline_ts, preview=preview,
                                  unread_delta=(1 if (count_unread and not ev.outgoing) else 0))
         if ev.sender_name and ev.sender.kind in ("number", "uuid"):
             self.remember_contact_name(ev.sender, ev.sender_name)
@@ -325,14 +374,16 @@ class Store:
         body = clean_text(body)
         atts = [a.to_json() for a in attachments]
         expires_in = max(0, int(expires_in))
+        received_at = receipt_timestamp(0)
+        timeline_ts = timeline_timestamp(ts, received_at)
         self.db.execute(
             """INSERT OR REPLACE INTO messages(conversation, ts, sender, sender_name, outgoing, body, attachments,
-               quote_text, quote_author, quote_ts, status, expires_in, expire_at, received_at)
-               VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               quote_text, quote_author, quote_ts, status, expires_in, expire_at, received_at, timeline_ts)
+               VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (conversation.key, ts, sender_key, "", body, json.dumps(atts), quote_text, quote_author, quote_ts,
-             status, expires_in, expiry(ts, expires_in), _now_ms()))
+             status, expires_in, expiry(timeline_ts, expires_in), received_at, timeline_ts))
         preview = body if body else "[attachment]"
-        self.upsert_conversation(conversation, last_ts=ts, preview=preview)
+        self.upsert_conversation(conversation, last_ts=timeline_ts, preview=preview)
 
     def set_status(self, conversation_key: str, ts: int, status: str) -> None:
         self.db.execute("UPDATE messages SET status = ? WHERE conversation = ? AND ts = ? AND outgoing = 1",
@@ -408,12 +459,29 @@ class Store:
     def history(self, conversation_key: str, *, before_ts: int = 0, limit: int = 50) -> list[Message]:
         limit = max(1, min(500, int(limit)))
         if before_ts > 0:
-            rows = self.db.execute(
-                "SELECT * FROM messages WHERE conversation = ? AND ts < ? AND (expire_at = 0 OR expire_at > ?) ORDER BY ts DESC LIMIT ?",
-                (conversation_key, before_ts, _now_ms(), limit)).fetchall()
+            cursor = self.db.execute(
+                "SELECT timeline_ts FROM messages WHERE conversation = ? AND ts = ? LIMIT 1",
+                (conversation_key, before_ts)).fetchone()
+            if cursor:
+                rows = self.db.execute(
+                    "SELECT * FROM messages WHERE conversation = ? "
+                    "AND (timeline_ts < ? OR (timeline_ts = ? AND ts < ?)) "
+                    "AND (expire_at = 0 OR expire_at > ?) "
+                    "ORDER BY timeline_ts DESC, ts DESC LIMIT ?",
+                    (conversation_key, cursor["timeline_ts"], cursor["timeline_ts"], before_ts,
+                     _now_ms(), limit)).fetchall()
+            else:
+                # Preserve the old arbitrary-cursor behavior for API clients;
+                # cursors returned by history always take the bounded path above.
+                rows = self.db.execute(
+                    "SELECT * FROM messages WHERE conversation = ? AND ts < ? "
+                    "AND (expire_at = 0 OR expire_at > ?) "
+                    "ORDER BY timeline_ts DESC, ts DESC LIMIT ?",
+                    (conversation_key, before_ts, _now_ms(), limit)).fetchall()
         else:
             rows = self.db.execute(
-                "SELECT * FROM messages WHERE conversation = ? AND (expire_at = 0 OR expire_at > ?) ORDER BY ts DESC LIMIT ?",
+                "SELECT * FROM messages WHERE conversation = ? AND (expire_at = 0 OR expire_at > ?) "
+                "ORDER BY timeline_ts DESC, ts DESC LIMIT ?",
                 (conversation_key, _now_ms(), limit)).fetchall()
         return [self._msg(r) for r in reversed(rows)]
 
@@ -428,7 +496,8 @@ class Store:
             return []
         like = "%" + query.replace("%", "\\%").replace("_", "\\_") + "%"
         rows = self.db.execute(
-            "SELECT * FROM messages WHERE body LIKE ? ESCAPE '\\' AND deleted = 0 AND (expire_at = 0 OR expire_at > ?) ORDER BY ts DESC LIMIT ?",
+            "SELECT * FROM messages WHERE body LIKE ? ESCAPE '\\' AND deleted = 0 AND (expire_at = 0 OR expire_at > ?) "
+            "ORDER BY timeline_ts DESC, ts DESC LIMIT ?",
             (like, _now_ms(), max(1, min(200, limit)))).fetchall()
         return [self._msg(r) for r in rows]
 
@@ -448,7 +517,8 @@ class Store:
                        quote_ts=row["quote_ts"], status=row["status"],
                        reactions=reactions if isinstance(reactions, dict) else {},
                        deleted=bool(row["deleted"]), edited=bool(row["edited"]),
-                       expires_in=row["expires_in"], received_at=row["received_at"])
+                       expires_in=row["expires_in"], received_at=row["received_at"],
+                       timeline_ts=row["timeline_ts"])
 
     # -- contacts / groups -------------------------------------------------
 
@@ -552,7 +622,7 @@ class Store:
         gone = [self._msg(r) for r in rows]
         self.db.execute("DELETE FROM messages WHERE expire_at > 0 AND expire_at <= ?", (now_ms,))
         for key in {m.conversation for m in gone}:
-            self._refresh_preview(key)
+            self._refresh_conversation(key)
         return gone
 
     def next_expiry(self) -> int:
@@ -560,22 +630,29 @@ class Store:
         row = self.db.execute("SELECT MIN(expire_at) AS t FROM messages WHERE expire_at > 0").fetchone()
         return int(row["t"] or 0)
 
-    def _refresh_preview(self, key: str) -> None:
-        row = self.db.execute("SELECT body, attachments FROM messages WHERE conversation = ? AND deleted = 0 "
-                              "ORDER BY ts DESC LIMIT 1", (key,)).fetchone()
+    def _refresh_conversation(self, key: str) -> None:
+        row = self.db.execute("SELECT body, attachments, timeline_ts FROM messages "
+                              "WHERE conversation = ? AND deleted = 0 "
+                              "ORDER BY timeline_ts DESC, ts DESC LIMIT 1", (key,)).fetchone()
         preview = ""
+        last_ts = 0
         if row:
             preview = row["body"] or ("[attachment]" if row["attachments"] not in ("", "[]") else "")
-        self.db.execute("UPDATE conversations SET last_preview = ? WHERE key = ?",
-                        (clean_text(preview, max_length=200, single_line=True), key))
+            last_ts = int(row["timeline_ts"])
+        self.db.execute("UPDATE conversations SET last_ts = ?, last_preview = ? WHERE key = ?",
+                        (last_ts, clean_text(preview, max_length=200, single_line=True), key))
 
     def prune(self, retain_days: int) -> int:
         if retain_days <= 0:
             return 0
         cutoff = _now_ms() - retain_days * 86400 * 1000
-        cur = self.db.execute("DELETE FROM messages WHERE ts < ?", (cutoff,))
+        keys = [r["conversation"] for r in self.db.execute(
+            "SELECT DISTINCT conversation FROM messages WHERE timeline_ts < ?", (cutoff,))]
+        cur = self.db.execute("DELETE FROM messages WHERE timeline_ts < ?", (cutoff,))
+        for key in keys:
+            self._refresh_conversation(key)
         return cur.rowcount
 
     def clear_history(self) -> None:
         self.db.execute("DELETE FROM messages")
-        self.db.execute("UPDATE conversations SET unread = 0, last_preview = ''")
+        self.db.execute("UPDATE conversations SET unread = 0, last_ts = 0, last_preview = ''")

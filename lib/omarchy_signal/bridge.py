@@ -42,7 +42,7 @@ from .envelope import Attachment, Event, parse_receive
 from .rpc import JsonRpcClient, RpcClosed, RpcError
 from .sanitize import (E164, InvalidAttachment, InvalidRecipient, Recipient, classify_recipient,
                        clean_name, clean_text, parse_conversation_key, safe_attachment_path)
-from .store import Store
+from .store import Store, timeline_timestamp
 
 log = logging.getLogger("omarchy_signal.bridge")
 
@@ -503,6 +503,7 @@ class Bridge:
         return {
             "conversation": ev.conversation.key, "conversationName": popup_conv, "isGroup": ev.conversation.kind == "group" and content != "none",
             "sender": ev.sender.key if ev.sender else "", "senderName": popup_sender, "ts": ev.timestamp,
+            "displayTs": timeline_timestamp(ev.timestamp, ev.received_at),
             "text": ev.text, "preview": clean_text(preview, max_length=300, single_line=True),
             "attachments": [a.to_json() for a in ev.attachments], "outgoing": ev.outgoing,
             "muted": muted, "quoteText": ev.quote_text, "expiresIn": ev.expires_in,
@@ -795,12 +796,14 @@ class Bridge:
                                 quote_text=params.get("quoteMessage", ""), quote_author=p.get("quoteAuthor", ""),
                                 quote_ts=quote_ts if "quoteTimestamp" in params else 0,
                                 expires_in=conv.expiration if conv else 0)
+        stored = self.store.message(rec.key, ts)
+        display_ts = stored.timeline_ts if stored else timeline_timestamp(ts, int(time.time() * 1000))
         self.store.mark_read(rec.key)
         self._cancel_typing(rec.key)
-        await self._broadcast("sent", {"conversation": rec.key, "ts": ts, "status": status,
+        await self._broadcast("sent", {"conversation": rec.key, "ts": ts, "displayTs": display_ts, "status": status,
                                        "text": text, "attachments": [a.to_json() for a in atts]})
         await self._broadcast("unread", {"total": self.store.total_unread(), "conversation": rec.key})
-        return {"ts": ts, "status": status, "failures": failures}
+        return {"ts": ts, "displayTs": display_ts, "status": status, "failures": failures}
 
     async def op_deleteLocal(self, p: dict) -> dict:
         """Remove one message from this computer only ("delete for me"). Any

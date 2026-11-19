@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import unittest
+from unittest import mock
 
 import _helpers  # noqa: F401
 from omarchy_signal.envelope import parse_receive
@@ -33,6 +34,14 @@ class DataMessageTests(unittest.TestCase):
                                              "groupInfo": {"groupId": GID, "groupName": "Crew‮", "type": "DELIVER"}}))
         self.assertEqual(evs[0].conversation.key, "group:" + GID)
         self.assertEqual(evs[0].group_name, "Crew")
+
+    def test_extreme_timestamp_is_separate_from_local_receipt_time(self):
+        with mock.patch("omarchy_signal.envelope.time.time", return_value=1_800_000_000):
+            event = parse_receive(env(dataMessage={
+                "timestamp": 2 ** 63 - 1, "message": "future"
+            }))[0]
+        self.assertEqual(event.timestamp, 2 ** 63 - 1)
+        self.assertEqual(event.received_at, 1_800_000_000_000)
 
     def test_bad_group_id_falls_back_to_sender(self):
         evs = parse_receive(env(dataMessage={"timestamp": 1, "message": "yo",

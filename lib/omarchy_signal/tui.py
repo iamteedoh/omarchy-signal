@@ -41,6 +41,18 @@ TEXT_OVERLAYS = ("contacts", "search", "attach", "saveas", "react", "setting-tex
 CALL_WAVE_KEEP = 64        # levels kept for each side's waveform
 
 
+def _display_timestamp(message: dict) -> int:
+    value = message.get("displayTs", message.get("ts", 0))
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _datetime_from_ms(ts_ms: int) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(ts_ms / 1000)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 @dataclass
 class Line:
     """One rendered screen line of the message pane."""
@@ -408,7 +420,7 @@ class App:
             key = data.get("conversation", "")
             masked = data.get("senderName") == "Signal" and data.get("conversationName") == "New message"
             self._ensure_conversation(key, "" if masked else data.get("conversationName", ""), "group" if data.get("isGroup") else "")
-            self._touch_conversation(key, data.get("ts", 0), data.get("preview", ""),
+            self._touch_conversation(key, data.get("displayTs", data.get("ts", 0)), data.get("preview", ""),
                                      unread_delta=0 if (data.get("outgoing") or key == self.active_key) else 1)
             if key in self.messages:
                 self.messages[key].append(self._event_to_message(data))
@@ -420,7 +432,7 @@ class App:
             self.typing.pop(key, None)
         elif name == "sent":
             key = data.get("conversation", "")
-            self._touch_conversation(key, data.get("ts", 0), data.get("text") or "[attachment]")
+            self._touch_conversation(key, data.get("displayTs", data.get("ts", 0)), data.get("text") or "[attachment]")
             # Like "message": only a thread already loaded is updated. Creating
             # one here would stop its history from ever loading, so a chat you
             # had replied to from elsewhere would open showing just the reply.
@@ -429,11 +441,13 @@ class App:
             if pending is not None:
                 # The bridge confirmed it before the send call returned: settle it now.
                 pending["ts"] = data.get("ts", pending["ts"])
+                pending["displayTs"] = data.get("displayTs", pending.get("displayTs", pending["ts"]))
                 pending["status"] = data.get("status", "sent")
                 pending.pop("_pending", None)
             elif msgs is not None and not any(m.get("ts") == data.get("ts") and m.get("outgoing") for m in msgs):
                 msgs.append({
                     "conversation": key, "ts": data.get("ts", 0), "sender": "me", "senderName": "You",
+                    "displayTs": data.get("displayTs", data.get("ts", 0)),
                     "outgoing": True, "body": data.get("text", ""), "attachments": data.get("attachments", []),
                     "status": data.get("status", "sent"), "reactions": {}, "quoteText": "", "quoteAuthor": ""})
         elif name == "receipt":
@@ -653,6 +667,7 @@ class App:
         if sender_name == "Signal" and data.get("sender"):
             sender_name = ""   # masked for the popup ("none" content); the thread shows the real name
         return {"conversation": data.get("conversation", ""), "ts": data.get("ts", 0), "sender": data.get("sender", ""),
+                "displayTs": data.get("displayTs", data.get("ts", 0)),
                 "senderName": sender_name, "outgoing": bool(data.get("outgoing")),
                 "body": data.get("text", ""), "attachments": data.get("attachments", []), "status": "",
                 "reactions": {}, "quoteText": data.get("quoteText", ""), "quoteAuthor": "",
@@ -731,7 +746,7 @@ class App:
                 # this request was in flight must not vanish from the thread.
                 seen = {(m.get("ts"), bool(m.get("outgoing"))) for m in msgs}
                 extra = [m for m in existing if m.get("_pending") or (m.get("ts"), bool(m.get("outgoing"))) not in seen]
-                self.messages[key] = sorted(msgs + extra, key=lambda m: m.get("ts", 0))
+                self.messages[key] = sorted(msgs + extra, key=_display_timestamp)
         except BridgeError as exc:
             self.show_toast(f"history: {exc}")
         finally:
@@ -866,7 +881,8 @@ class App:
             self.overlay = "info"
 
     def _message_info(self, m: dict) -> list[str]:
-        when = datetime.fromtimestamp(m.get("ts", 0) / 1000).strftime("%Y-%m-%d %H:%M:%S") if m.get("ts") else "?"
+        dt = _datetime_from_ms(_display_timestamp(m))
+        when = dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "?"
         lines = [f"From      {'You' if m.get('outgoing') else clean_name(m.get('senderName') or m.get('sender', '?'))}",
                  f"Sent      {when}",
                  f"Status    {m.get('status') or ('received' if not m.get('outgoing') else 'sent')}"]
@@ -1868,7 +1884,8 @@ class App:
         # looks like a dead Enter key (and a second Enter can not resend it).
         self._pending_seq += 1
         local_ts = int(time.time() * 1000) + self._pending_seq
-        pending = {"conversation": key, "ts": local_ts, "sender": "me", "senderName": "You", "outgoing": True,
+        pending = {"conversation": key, "ts": local_ts, "displayTs": local_ts,
+                   "sender": "me", "senderName": "You", "outgoing": True,
                    "body": text, "attachments": [{"filename": Path(a).name, "contentType": _guess_mime(Path(a)),
                                                   "size": Path(a).stat().st_size if Path(a).exists() else 0, "path": a} for a in attachments],
                    "status": "sending", "reactions": {}, "quoteText": params.get("quoteText", ""), "quoteAuthor": "", "_pending": True,
@@ -1892,6 +1909,7 @@ class App:
             return
         ts = int(res.get("ts", 0) or 0)
         pending["ts"] = ts or pending["ts"]
+        pending["displayTs"] = int(res.get("displayTs", 0) or pending["displayTs"])
         if pending.get("status") in ("sending", ""):
             pending["status"] = res.get("status", "sent")
         pending.pop("_pending", None)
@@ -1956,7 +1974,7 @@ class App:
             for a in reversed(m.get("attachments", [])):
                 if a.get("path"):
                     tagged = dict(a)
-                    tagged["_ts"] = m.get("ts", 0)
+                    tagged["_ts"] = _display_timestamp(m)
                     tagged["_who"] = who
                     out.append(tagged)
         return out
@@ -2347,7 +2365,9 @@ class App:
     def _fmt_time(self, ts_ms: int, *, short: bool = False) -> str:
         if not ts_ms:
             return ""
-        dt = datetime.fromtimestamp(ts_ms / 1000)
+        dt = _datetime_from_ms(ts_ms)
+        if dt is None:
+            return ""
         now = datetime.now()
         if dt.date() == now.date():
             return dt.strftime("%H:%M")
@@ -2375,7 +2395,9 @@ class App:
             self._line_cache_epoch = epoch
         for m in msgs:
             ts = m.get("ts", 0)
-            day = datetime.fromtimestamp(ts / 1000).date() if ts else None
+            display_ts = _display_timestamp(m)
+            dt = _datetime_from_ms(display_ts) if display_ts else None
+            day = dt.date() if dt else None
             if day != last_day and day is not None:
                 label = day.strftime("%A, %d %B %Y")
                 deco = f"┈┈ {label} ┈┈"
@@ -2412,10 +2434,10 @@ class App:
         if status == "sending" and m.get("_started"):
             tick += f" {int(time.monotonic() - m['_started'])}s"
         tick_color = th.red if status == "failed" else (th.accent if status in ("read", "viewed") else th.dim)
-        header = (T.fg(hue) + T.BOLD + who + T.RESET + T.fg(th.dim) + " · " + self._fmt_time(m.get("ts", 0)) + T.RESET
+        header = (T.fg(hue) + T.BOLD + who + T.RESET + T.fg(th.dim) + " · " + self._fmt_time(_display_timestamp(m)) + T.RESET
                   + ("  " + T.fg(th.dim) + "(edited)" + T.RESET if m.get("edited") else "")
                   + ("  " + T.fg(tick_color) + tick + T.RESET if tick else ""))
-        header_w = str_width(who) + 3 + str_width(self._fmt_time(m.get("ts", 0))) + (10 if m.get("edited") else 0) + (2 + str_width(tick) if tick else 0)
+        header_w = str_width(who) + 3 + str_width(self._fmt_time(_display_timestamp(m))) + (10 if m.get("edited") else 0) + (2 + str_width(tick) if tick else 0)
         out.append(Line(header, header_w, right=align_right))
         indent = "  "
         if m.get("deleted"):
@@ -2882,7 +2904,7 @@ class App:
                     body = "(deleted)"
                 text = ("▶ " if selected else "  ") + f"{who}: {body}"
                 out.append(T.move(y, body_left) + style + pad(truncate(text, body_w - 8), body_w - 6)
-                           + T.fg(th.dim if not selected else th.bright_foreground) + pad(self._fmt_time(m.get("ts", 0), short=True), 6, align="right") + T.RESET)
+                           + T.fg(th.dim if not selected else th.bright_foreground) + pad(self._fmt_time(_display_timestamp(m), short=True), 6, align="right") + T.RESET)
                 y += 1
             hints = "r react · q quote · e edit · d delete for everyone · D delete for me · f forward · c copy · o open · i info · Esc"
             out.append(T.move(top + h - 2, body_left) + bg + T.fg(th.dim) + truncate(hints, body_w) + T.RESET)
@@ -2983,7 +3005,7 @@ class App:
                     who = clean_name(item.get("senderName", "?"))
                     text = ("▶ " if selected else "  ") + clean_text(f"{who}: {item.get('body', '')}", single_line=True)
                     out.append(T.move(y, body_left) + style + pad(truncate(text, body_w - 8), body_w - 6)
-                               + T.fg(th.dim) + pad(self._fmt_time(item.get("ts", 0), short=True), 6, align="right") + T.RESET)
+                               + T.fg(th.dim) + pad(self._fmt_time(_display_timestamp(item), short=True), 6, align="right") + T.RESET)
             self._overlay_cursor = (top + 1, body_left + len(prompt) + str_width(self.overlay_query))
             out.append(T.move(*self._overlay_cursor))
         elif name == "help":

@@ -142,14 +142,22 @@ function emptyStats() {
   }
 }
 
+function messageTime(message) {
+  var display = Number(message && message.displayTs)
+  if (isFinite(display) && display > 0) return display
+  var sent = Number(message && message.ts)
+  return isFinite(sent) && sent > 0 ? sent : 0
+}
+
 // Everything the telemetry rail draws about one conversation, out of the
 // bridge's history rows (oldest first, as "history" returns them). `nowMs` is
 // passed in so the 24 hour window and "today" are testable.
 function threadStats(rows, nowMs) {
   var s = emptyStats()
-  var list = Array.isArray(rows) ? rows.filter(function(m) { return m && typeof m.ts === "number" && m.ts > 0 }) : []
+  var list = Array.isArray(rows) ? rows.map(function(m) { return { row: m, time: messageTime(m) } })
+    .filter(function(item) { return item.row && item.time > 0 }) : []
   if (list.length === 0) return s
-  list.sort(function(a, b) { return a.ts - b.ts })
+  list.sort(function(a, b) { return a.time - b.time })
   var now = Number(nowMs) || Date.now()
   var today = new Date(now)
   var dayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
@@ -163,23 +171,25 @@ function threadStats(rows, nowMs) {
   var prev = null
 
   for (var i = 0; i < list.length; i++) {
-    var m = list[i]
+    var m = list[i].row
+    var ts = list[i].time
     var outgoing = m.outgoing === true
     s.total += 1
     if (outgoing) {
       s.tx += 1
-      s.lastTx = m.ts
+      s.lastTx = ts
       s.lastTxStatus = typeof m.status === "string" ? m.status : ""
       if (Object.prototype.hasOwnProperty.call(s.delivery, m.status)) s.delivery[m.status] += 1
       else if (m.status === "viewed") s.delivery.read += 1
     } else {
       s.rx += 1
-      s.lastRx = m.ts
+      s.lastRx = ts
       var got = Number(m.receivedAt) || 0
+      var sent = Number(m.ts) || 0
       // Sender's clock to ours: only believable when it is small and positive.
-      if (got >= m.ts && got - m.ts < 5 * 60000) transit.push(got - m.ts)
+      if (got >= sent && sent > 0 && got - sent < 5 * 60000) transit.push(got - sent)
     }
-    if (m.ts >= dayStart) s.today += 1
+    if (ts >= dayStart) s.today += 1
     if (m.edited === true) s.edited += 1
     if (Number(m.expiresIn) > 0) s.expiring += 1
     if (m.deleted !== true) {
@@ -189,22 +199,22 @@ function threadStats(rows, nowMs) {
     }
     if (m.reactions && typeof m.reactions === "object") for (var r in m.reactions) s.reactions += 1
 
-    if (m.ts >= windowStart && m.ts < windowEnd) s.hours[Math.floor((m.ts - windowStart) / HOUR_MS)] += 1
-    byHour[new Date(m.ts).getHours()] += 1
+    if (ts >= windowStart && ts < windowEnd) s.hours[Math.floor((ts - windowStart) / HOUR_MS)] += 1
+    byHour[new Date(ts).getHours()] += 1
 
     // The first message after the other side spoke is the reply to it.
-    if (prev && (prev.outgoing === true) !== outgoing) {
-      var gap = m.ts - prev.ts
+    if (prev && prev.outgoing !== outgoing) {
+      var gap = ts - prev.time
       if (gap >= 0 && gap <= REPLY_WINDOW_MS) (outgoing ? yours : theirs).push(gap)
     }
-    prev = m
+    prev = { time: ts, outgoing: outgoing }
 
     var who = outgoing ? "You" : String(m.senderName || m.sender || "?")
     if (!Object.prototype.hasOwnProperty.call(senders, who)) { senders[who] = 0; order.push(who) }
     senders[who] += 1
   }
 
-  s.firstTs = list[0].ts
+  s.firstTs = list[0].time
   s.replyTheirs = median(theirs)
   s.replyYours = median(yours)
   s.transit = median(transit)

@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import os
+import sqlite3
 import stat
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import _helpers  # noqa: F401
 from omarchy_signal.envelope import Attachment, Event
@@ -23,7 +25,8 @@ def msg(ts, text="hi", conv=ALICE, sender=ALICE, outgoing=False, **kw):
 class StoreTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.store = Store(Path(self.tmp.name) / "sub" / "h.sqlite3")
+        self.path = Path(self.tmp.name) / "sub" / "h.sqlite3"
+        self.store = Store(self.path)
 
     def tearDown(self):
         self.store.close()
@@ -124,6 +127,48 @@ class StoreTests(unittest.TestCase):
         self.store.add_event_message(msg(1, "ancient"))
         self.assertEqual(self.store.prune(30), 1)
         self.assertEqual(self.store.prune(0), 0)
+
+    def test_extreme_timestamp_keeps_identity_but_uses_receipt_chronology(self):
+        now = 1_800_000_000_000
+        old_receipt = now - 31 * 86400 * 1000
+        extreme = 2 ** 63 - 1
+        with mock.patch("omarchy_signal.store._now_ms", return_value=now):
+            self.assertTrue(self.store.add_event_message(
+                msg(extreme, "hostile", received_at=old_receipt)))
+            self.assertTrue(self.store.apply_reaction(Event(
+                kind="reaction", conversation=ALICE, timestamp=now, sender=ALICE,
+                reaction_target_ts=extreme, emoji="👍")))
+            self.assertTrue(self.store.add_event_message(
+                msg(now - 1000, "ordinary", received_at=now)))
+
+            hist = self.store.history(ALICE.key)
+            self.assertEqual([m.body for m in hist], ["hostile", "ordinary"])
+            self.assertEqual(hist[0].ts, extreme, "Signal identity remains available to reactions and receipts")
+            self.assertEqual(hist[0].timeline_ts, old_receipt)
+            self.assertEqual(hist[0].to_json()["displayTs"], old_receipt)
+            self.assertEqual(self.store.conversation(ALICE.key).last_ts, now - 1000)
+            self.assertEqual(self.store.prune(30), 1)
+            self.assertEqual([m.body for m in self.store.history(ALICE.key)], ["ordinary"])
+
+    def test_migration_repairs_persisted_extreme_conversation_time(self):
+        now = 1_800_000_000_000
+        received = now - 1000
+        extreme = 2 ** 63 - 1
+        with mock.patch("omarchy_signal.store._now_ms", return_value=now):
+            self.store.add_event_message(msg(extreme, "persisted", received_at=received))
+        self.store.close()
+        db = sqlite3.connect(self.path)
+        db.execute("DROP INDEX messages_conv_timeline")
+        db.execute("ALTER TABLE messages DROP COLUMN timeline_ts")
+        db.execute("UPDATE conversations SET last_ts = ?", (extreme,))
+        db.commit()
+        db.close()
+
+        with mock.patch("omarchy_signal.store._now_ms", return_value=now):
+            self.store = Store(self.path)
+        row = self.store.history(ALICE.key)[0]
+        self.assertEqual((row.ts, row.timeline_ts), (extreme, received))
+        self.assertEqual(self.store.conversation(ALICE.key).last_ts, received)
 
     def test_memory_store(self):
         s = Store(":memory:")

@@ -185,6 +185,16 @@ test("threadStats: the 24 hour graph ends with the hour running now", () => {
   assert.equal(T.hourLabel(-1), "")
 })
 
+test("threadStats uses bounded display time for extreme protocol identity", () => {
+  const shown = at(20, 15)
+  const s = T.threadStats([msg(Number.MAX_SAFE_INTEGER, false, { displayTs: shown, receivedAt: shown + 500 })], NOW)
+  assert.equal(s.total, 1)
+  assert.equal(s.firstTs, shown)
+  assert.equal(s.lastRx, shown)
+  assert.equal(s.peakHour, 20)
+  assert.equal(s.transit, -1)
+})
+
 test("threadStats: transit believes only a small positive gap between the two clocks", () => {
   const rows = [
     msg(at(9, 0), false, { receivedAt: at(9, 0) + 400 }),

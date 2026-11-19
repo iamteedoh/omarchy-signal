@@ -207,6 +207,12 @@ test("threadRows normalises history rows", () => {
   assert.equal(rows[3].tick, "✓✓"); assert.equal(rows[0].tick, "")
   assert.equal(M.threadRows([{ ts: day1, body: "x", expiresIn: 300 }])[0].expiresIn, "5m")
   assert.equal(M.threadRows([{ ts: day1, body: "x" }])[0].expiresIn, "")
+  const bounded = M.threadRows([{ ts: Number.MAX_SAFE_INTEGER, displayTs: day1, body: "x" }])[0]
+  assert.equal(bounded.ts, Number.MAX_SAFE_INTEGER)                 // protocol identity is unchanged
+  assert.equal(bounded.day, "2026-11-11")
+  assert.equal(bounded.time, "23:50")
+  assert.equal(M.dayKey(Number.MAX_SAFE_INTEGER), "")             // an invalid Date is never rendered
+  assert.equal(M.clockTime(Number.MAX_SAFE_INTEGER), "")
   // Every field must be a flat value: the rows are stored in a ListModel.
   for (const r of rows) for (const k in r) assert.ok(["string", "number", "boolean"].includes(typeof r[k]), k)
   assert.deepEqual(M.threadRows(null), [])

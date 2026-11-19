@@ -333,7 +333,10 @@ def cmd_history(args) -> int:
             return 0
         from datetime import datetime
         for m in msgs:
-            when = datetime.fromtimestamp(m["ts"] / 1000).strftime("%Y-%m-%d %H:%M")
+            try:
+                when = datetime.fromtimestamp(m.get("displayTs", m["ts"]) / 1000).strftime("%Y-%m-%d %H:%M")
+            except (OverflowError, OSError, ValueError, TypeError):
+                when = "?"
             who = "you" if m["outgoing"] else m["senderName"]
             body = m["body"] or ("[" + ", ".join(a.get("filename", "attachment") for a in m.get("attachments", [])) + "]" if m.get("attachments") else "")
             _safe_print(f"{when}  {who:>16}  {body}")

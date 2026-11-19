@@ -91,6 +91,7 @@ class Event:
     # edits
     edit_target_ts: int = 0
     story: bool = False
+    received_at: int = 0                # local receipt time; never part of Signal's message id
 
 
 def _int(value: Any, default: int = 0) -> int:
@@ -167,6 +168,7 @@ def parse_receive(params: Any, own_account: str = "") -> list[Event]:
         sender = _party(envelope.get("source"), None)
     sender_name = clean_name(envelope.get("sourceName"))
     env_ts = _int(envelope.get("timestamp"))
+    received_at = int(time.time() * 1000)
     events: list[Event] = []
 
     data = envelope.get("dataMessage")
@@ -176,7 +178,7 @@ def parse_receive(params: Any, own_account: str = "") -> list[Event]:
         data = edit["dataMessage"]
         edit_target = _int(edit.get("targetSentTimestamp"))
     if isinstance(data, dict) and sender is not None:
-        ev = _data_message(data, sender, sender_name, env_ts, outgoing=False)
+        ev = _data_message(data, sender, sender_name, env_ts, received_at=received_at, outgoing=False)
         if ev is not None:
             ev.edit_target_ts = edit_target
             events.append(ev)
@@ -189,7 +191,7 @@ def parse_receive(params: Any, own_account: str = "") -> list[Event]:
             dest = _party(sent.get("destinationNumber") or sent.get("destination"), sent.get("destinationUuid"))
             me = _party(own_account, None) if own_account else sender
             ev = _data_message(inner, me or sender, "", _int(sent.get("timestamp"), env_ts),
-                               outgoing=True, destination=dest)
+                               received_at=received_at, outgoing=True, destination=dest)
             if ev is not None:
                 events.append(ev)
         read = sync.get("readMessages")
@@ -231,7 +233,7 @@ def parse_receive(params: Any, own_account: str = "") -> list[Event]:
 
 
 def _data_message(data: dict, sender: Recipient, sender_name: str, fallback_ts: int, *,
-                  outgoing: bool, destination: Recipient | None = None) -> Event | None:
+                  received_at: int, outgoing: bool, destination: Recipient | None = None) -> Event | None:
     group, group_name = _group_key(data.get("groupInfo"))
     if group is not None:
         conversation = group
@@ -250,7 +252,7 @@ def _data_message(data: dict, sender: Recipient, sender_name: str, fallback_ts: 
     if isinstance(reaction, dict):
         target = _party(reaction.get("targetAuthorNumber") or reaction.get("targetAuthor"),
                         reaction.get("targetAuthorUuid"))
-        return Event(kind="reaction", conversation=conversation, timestamp=ts, sender=sender,
+        return Event(kind="reaction", conversation=conversation, timestamp=ts, received_at=received_at, sender=sender,
                      sender_name=sender_name, outgoing=outgoing, group_name=group_name,
                      emoji=clean_name(reaction.get("emoji"), max_length=16),
                      reaction_target_ts=_int(reaction.get("targetSentTimestamp")),
@@ -259,7 +261,7 @@ def _data_message(data: dict, sender: Recipient, sender_name: str, fallback_ts: 
 
     remote_delete = data.get("remoteDelete")
     if isinstance(remote_delete, dict):
-        return Event(kind="remote_delete", conversation=conversation, timestamp=ts, sender=sender,
+        return Event(kind="remote_delete", conversation=conversation, timestamp=ts, received_at=received_at, sender=sender,
                      sender_name=sender_name, outgoing=outgoing, group_name=group_name,
                      delete_target_ts=_int(remote_delete.get("timestamp")))
 
@@ -308,7 +310,7 @@ def _data_message(data: dict, sender: Recipient, sender_name: str, fallback_ts: 
                 rebuilt += ("@" + label if label else "@?") + part
             text = rebuilt
 
-    return Event(kind="message", conversation=conversation, timestamp=ts, sender=sender,
+    return Event(kind="message", conversation=conversation, timestamp=ts, received_at=received_at, sender=sender,
                  sender_name=sender_name, outgoing=outgoing, text=text, attachments=attachments,
                  group_name=group_name, quote_text=quote_text, quote_author=quote_author,
                  quote_timestamp=quote_ts, mentions=mentions,
