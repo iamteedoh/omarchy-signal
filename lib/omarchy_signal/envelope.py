@@ -50,6 +50,40 @@ class Attachment:
 
 
 @dataclass
+class Preview:
+    """A link preview a sender attached to a message (Signal's link card)."""
+    url: str
+    title: str = ""
+    description: str = ""
+    image: Attachment | None = None
+
+    def to_json(self) -> dict:
+        return {"url": self.url, "title": self.title, "description": self.description,
+                "image": self.image.to_json() if self.image else None}
+
+    @classmethod
+    def from_json(cls, d: dict) -> "Preview | None":
+        if not isinstance(d, dict) or not _preview_url(d.get("url")):
+            return None
+        image = d.get("image")
+        return cls(url=str(d["url"]), title=clean_name(d.get("title"), max_length=300),
+                   description=clean_text(d.get("description"), max_length=500, single_line=True),
+                   image=Attachment.from_json(image) if isinstance(image, dict) else None)
+
+
+def _preview_url(value: Any) -> str:
+    """The URL of a link preview, or "": http(s) only, no whitespace or controls."""
+    if not isinstance(value, str) or len(value) > 2048:
+        return ""
+    lowered = value.lower()
+    if not (lowered.startswith("https://") or lowered.startswith("http://")):
+        return ""
+    if any(ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7f for ch in value) or clean_text(value) != value:
+        return ""
+    return value
+
+
+@dataclass
 class Event:
     """One thing that happened. ``kind`` selects which fields matter.
 
@@ -68,6 +102,7 @@ class Event:
     outgoing: bool = False              # True for sync messages sent from our other devices
     text: str = ""
     attachments: list[Attachment] = field(default_factory=list)
+    previews: list[Preview] = field(default_factory=list)
     group_name: str = ""
     quote_text: str = ""
     quote_author: str = ""
@@ -147,6 +182,26 @@ def _attachments(items: Any) -> list[Attachment]:
             caption=clean_text(item.get("caption"), max_length=2000),
             voice_note=bool(item.get("voiceNote", False)),
         ))
+    return out
+
+
+def _previews(items: Any) -> list[Preview]:
+    """Signal sends at most one link preview; anything malformed is dropped."""
+    out: list[Preview] = []
+    if not isinstance(items, list):
+        return out
+    for item in items[:4]:
+        if not isinstance(item, dict):
+            continue
+        url = _preview_url(item.get("url"))
+        if not url:
+            continue
+        images = _attachments([item["image"]]) if isinstance(item.get("image"), dict) else []
+        image = images[0] if images and images[0].content_type.startswith("image/") else None
+        out.append(Preview(url=url, title=clean_name(item.get("title"), max_length=300),
+                           description=clean_text(item.get("description"), max_length=500, single_line=True),
+                           image=image))
+        break
     return out
 
 
@@ -310,7 +365,7 @@ def _data_message(data: dict, sender: Recipient, sender_name: str, fallback_ts: 
 
     return Event(kind="message", conversation=conversation, timestamp=ts, sender=sender,
                  sender_name=sender_name, outgoing=outgoing, text=text, attachments=attachments,
-                 group_name=group_name, quote_text=quote_text, quote_author=quote_author,
+                 previews=_previews(data.get("previews")), group_name=group_name, quote_text=quote_text, quote_author=quote_author,
                  quote_timestamp=quote_ts, mentions=mentions,
                  expires_in=max(0, _int(data.get("expiresInSeconds"))),
                  has_timer=isinstance(data.get("expiresInSeconds"), int) and not isinstance(data.get("expiresInSeconds"), bool),

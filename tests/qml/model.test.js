@@ -265,6 +265,26 @@ test("openableUrl accepts only the links linkHtml makes", () => {
   assert.equal(M.openableUrl(""), "")
 })
 
+test("previewOf flattens the first web link preview for a thread row", () => {
+  const m = { previews: [{ url: "https://Example.com/post", title: "Post\ntitle", description: "About‮ it",
+                           image: { path: "/home/u/.local/share/signal-cli/attachments/abc", contentType: "image/jpeg" } }] }
+  assert.deepEqual(M.previewOf(m), { previewUrl: "https://Example.com/post", previewTitle: "Post title",
+    previewText: "About it", previewHost: "example.com", previewImage: "/home/u/.local/share/signal-cli/attachments/abc" })
+  const empty = { previewUrl: "", previewTitle: "", previewText: "", previewHost: "", previewImage: "" }
+  assert.deepEqual(M.previewOf({}), empty)
+  assert.deepEqual(M.previewOf(null), empty)
+  assert.deepEqual(M.previewOf({ previews: [{ url: "javascript:alert(1)", title: "x" }] }), empty)
+  assert.deepEqual(M.previewOf({ previews: [{ url: "mailto:a@b.example", title: "x" }] }), empty)
+  // A picture outside an absolute path, or not an image, is not shown; a missing title falls back to the site.
+  const p = M.previewOf({ previews: [{ url: "https://a.example/x", image: { path: "/p", contentType: "text/html" } }] })
+  assert.deepEqual(p, empty)
+  assert.equal(M.previewOf({ previews: [{ url: "https://a.example/x", image: { path: "/p", contentType: "image/png" } }] }).previewTitle, "a.example")
+  // Rows carry the fields, and a deleted message carries none.
+  const rows = M.threadRows([{ ts: 1, body: "x", ...m }, { ts: 2, deleted: true, ...m }])
+  assert.equal(rows[0].previewTitle, "Post title")
+  assert.equal(rows[1].previewUrl, "")
+})
+
 test("the thread delegate declares every field threadRows produces", () => {
   // A row field with no matching required property reads as undefined in the
   // delegate, and qmlcheck does not catch it.

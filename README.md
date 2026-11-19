@@ -85,6 +85,8 @@ the real desktop can end up in a picture.
   read ticks, typing indicators, disappearing-message marks, `@mentions`.
 - Images inline through the kitty graphics protocol (Ghostty, kitty, WezTerm);
   URLs and attachments are clickable OSC 8 hyperlinks; text-only elsewhere.
+- Link preview cards (title, description, site) under a message when
+  `link_previews` is on.
 - Emoji shortcodes (`:smile:`) with a picker as you type, and emoticons
   (`:D`, `:)`, `<3`, …); both convert after the space, or send raw (setting).
 - Message actions on any message: react, quote/reply, edit, delete for
@@ -128,6 +130,10 @@ the real desktop can end up in a picture.
 - Links in messages, sent or received, are clickable and open in your browser.
   Only the link becomes clickable: nothing else a sender writes is shown as
   markup.
+- Link previews, off by default like Signal's "Generate link previews": turn on
+  `link_previews` and a link you send goes out with a card (title, description,
+  picture), and cards other people send show under their message. Clicking a
+  card opens the link.
 - Drawn as an instrument panel: corner brackets on the window, the popups and
   the pictures, a lit rule under the header, a marked edge on every message
   (yours in the accent colour), a scan line when a conversation comes up, a
@@ -415,6 +421,7 @@ offers `r`). File: `~/.config/omarchy-signal/config.toml`
 | Chats & media | `inline_images` | `always` · `click` · `never` |
 | | `download_attachments` | auto-fetch attachments (restart) |
 | | `attachment_thumbnails` | tiles or a plain list in the picker |
+| | `link_previews` | off by default; on: a link you send gets a preview card fetched from this computer (`https` only, public addresses only, a few seconds at most), and cards others send are shown |
 | | `save_dir` | where the attachment menu saves |
 | | `emoji_autoconvert` | `:smile:` and `:D` → emoji; off sends them raw |
 | | `message_layout` | `left` · `bubbles` |

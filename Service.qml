@@ -61,6 +61,7 @@ Item {
   property int scrollSpeed: 9
   property int windowOpacity: 0          // percent; 0 = what the theme uses
   property bool telemetry: true          // the readings beside a conversation
+  property bool linkPreviews: false      // show link preview cards (setting, off by default)
   property bool updateCheck: true
   property string bridgeVersion: ""
   property var windows: []               // conversation keys open as tabs of the chat window
@@ -383,6 +384,7 @@ Item {
     if (typeof d.scrollSpeed === "number") root.scrollSpeed = Math.max(0, Math.min(20, d.scrollSpeed))
     if (typeof d.windowOpacity === "number") root.windowOpacity = Math.max(0, Math.min(100, d.windowOpacity))
     if ("telemetry" in d) root.telemetry = d.telemetry !== false
+    if ("linkPreviews" in d) root.linkPreviews = d.linkPreviews === true
     if (d.calls && typeof d.calls === "object") {
       root.callsAvailable = d.calls.available === true
       root.callsReason = Model.singleLine(d.calls.reason || "", 160)
@@ -708,6 +710,7 @@ Item {
           thumbnails: root.attachmentThumbnails
           scrollSpeed: root.scrollSpeed
           telemetry: root.telemetry
+          linkPreviews: root.linkPreviews
           active: root.replyOpen
           totalUnread: root.unread
           activeCall: root.activeCall
@@ -785,6 +788,7 @@ Item {
         thumbnails: root.attachmentThumbnails
         scrollSpeed: root.scrollSpeed
         telemetry: root.telemetry
+        linkPreviews: root.linkPreviews
         totalUnread: root.unread
           activeCall: root.activeCall
           callTx: root.callTx

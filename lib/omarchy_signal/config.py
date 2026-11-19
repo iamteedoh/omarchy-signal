@@ -116,6 +116,7 @@ class Config:
     message_layout: str = "left"           # left (everything left-aligned) | bubbles (yours on the right)
     emoji_autoconvert: bool = True         # turn :smile: and :D into emoji as you type (and on send); off sends them raw
     attachment_thumbnails: bool = True     # picture tiles in the attachment picker (off = plain list)
+    link_previews: bool = False            # like Signal's "Generate link previews": fetch and send a card for links you send, show the ones others send
     scroll_speed: int = 9                  # chat window: trackpad/wheel scroll multiplier (0 = Qt default)
     terminal: str = "auto"                 # terminal for `omarchy-signal open`: auto (system default) | ghostty | kitty | wezterm | foot | alacritty
     window_opacity: int = 0                # how solid the popup and chat window are, in percent; 0 = what the Omarchy theme uses
@@ -224,6 +225,8 @@ SETTINGS: list[dict] = [
      "help": "on-first-use matches Signal's clients; never refuses changed safety numbers"},
     {"section": "Chats & media", "key": "inline_images", "label": "Show images in chat", "type": "choice",
      "choices": ["always", "click", "never"], "help": "always: as they arrive · click: only after you click · never"},
+    {"section": "Chats & media", "key": "link_previews", "label": "Link previews", "type": "bool",
+     "help": "Like Signal's Generate link previews: a link you send gets a card (title, description, picture) fetched from this computer, and cards other people send are shown. Off: nothing is fetched or shown"},
     {"section": "Chats & media", "key": "download_attachments", "label": "Auto-download attachments", "type": "bool",
      "restart": True, "help": "Fetch attachments as messages arrive"},
     {"section": "Chats & media", "key": "attachment_thumbnails", "label": "Thumbnails when attaching", "type": "bool",

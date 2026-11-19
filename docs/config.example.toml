@@ -20,6 +20,7 @@ typing_indicators = true   # Send and show typing indicators
 trust_new_identities = "on-first-use"   # on-first-use matches Signal's clients; never refuses changed safety numbers (restart)
 # ── Chats & media ──
 inline_images = "always"   # always: as they arrive · click: only after you click · never
+link_previews = false   # Like Signal's Generate link previews: a link you send gets a card (title, description, picture) fetched from this computer, and cards other people send are shown. Off: nothing is fetched or shown
 download_attachments = true   # Fetch attachments as messages arrive (restart)
 attachment_thumbnails = true   # Picture tiles in the attachment picker; off shows a plain file list
 save_dir = "~/Downloads"   # Folder used by the attachment menu's save action

@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import __version__, calls, clipboard, emoji, kitty, links, pathcomplete, protocol, qr, telemetry
 from .bridge import _guess_mime
@@ -430,12 +431,14 @@ class App:
                 # The bridge confirmed it before the send call returned: settle it now.
                 pending["ts"] = data.get("ts", pending["ts"])
                 pending["status"] = data.get("status", "sent")
+                pending["previews"] = data.get("previews", [])
                 pending.pop("_pending", None)
             elif msgs is not None and not any(m.get("ts") == data.get("ts") and m.get("outgoing") for m in msgs):
                 msgs.append({
                     "conversation": key, "ts": data.get("ts", 0), "sender": "me", "senderName": "You",
                     "outgoing": True, "body": data.get("text", ""), "attachments": data.get("attachments", []),
-                    "status": data.get("status", "sent"), "reactions": {}, "quoteText": "", "quoteAuthor": ""})
+                    "status": data.get("status", "sent"), "reactions": {}, "quoteText": "", "quoteAuthor": "",
+                    "previews": data.get("previews", [])})
         elif name == "receipt":
             for msgs in self.messages.values():
                 for m in msgs:
@@ -656,7 +659,7 @@ class App:
                 "senderName": sender_name, "outgoing": bool(data.get("outgoing")),
                 "body": data.get("text", ""), "attachments": data.get("attachments", []), "status": "",
                 "reactions": {}, "quoteText": data.get("quoteText", ""), "quoteAuthor": "",
-                "expiresIn": data.get("expiresIn", 0)}
+                "expiresIn": data.get("expiresIn", 0), "previews": data.get("previews", [])}
 
     # ------------------------------------------------------------------ state helpers
 
@@ -2383,7 +2386,8 @@ class App:
                 last_day = day
             sig = (self.active_key, ts, m.get("sender"), m.get("status"), m.get("edited"), m.get("deleted"),
                    m.get("body"), m.get("_pending"), m.get("expiresIn"), repr(m.get("reactions")),
-                   tuple((a.get("id"), a.get("path"), a.get("filename")) for a in m.get("attachments", [])))
+                   tuple((a.get("id"), a.get("path"), a.get("filename")) for a in m.get("attachments", [])),
+                   self.link_previews_on(), repr(m.get("previews")))
             cached = self._line_cache.get(sig)
             if cached is None or m.get("status") == "sending":
                 cached = self._render_message(m, bubble_w, inner)
@@ -2430,6 +2434,8 @@ class App:
                 out.append(Line(indent + self._linkify(raw) + T.RESET, str_width(raw) + 2, right=align_right))
         for a in m.get("attachments", [])[:8]:
             out.extend(self._render_attachment(a, bubble_w, right=align_right, indent=indent))
+        if self.link_previews_on():
+            out.extend(self._render_preview(m, bubble_w, right=align_right, indent=indent))
         reactions = m.get("reactions") or {}
         if reactions:
             counts: dict[str, int] = {}
@@ -2448,6 +2454,35 @@ class App:
                 if line.width < block_w:
                     line.text += " " * (block_w - line.width)
                     line.width = block_w
+        return out
+
+    def link_previews_on(self) -> bool:
+        value = self.status.get("linkPreviews")
+        return value if isinstance(value, bool) else self.cfg.link_previews
+
+    def _render_preview(self, m: dict, bubble_w: int, *, right: bool, indent: str) -> list[Line]:
+        """A link preview card as text: a bar, the title as a link, the
+        description and the site. Pictures stay in the chat window."""
+        previews = m.get("previews")
+        if not isinstance(previews, list) or not previews or not isinstance(previews[0], dict):
+            return []
+        pv = previews[0]
+        url = pv.get("url") if isinstance(pv.get("url"), str) else ""
+        href = links.safe_href(url) if url.lower().startswith(("https://", "http://")) else None
+        if not href:
+            return []
+        th = self.theme
+        width = max(10, bubble_w - 4)
+        host = urlsplit(url).hostname or ""
+        title = truncate(clean_text(pv.get("title") or host, single_line=True), width)
+        out = [Line(indent + T.fg(th.accent) + "▌ " + T.BOLD + links.osc8(href, title) + T.RESET,
+                    str_width(title) + 4, right=right)]
+        desc = clean_text(pv.get("description") or "", single_line=True)
+        for raw in wrap(desc, width)[:2]:
+            out.append(Line(indent + T.fg(th.accent) + "▌ " + T.fg(th.dim) + raw + T.RESET, str_width(raw) + 4, right=right))
+        if host:
+            h = truncate(clean_name(host, max_length=120), width)
+            out.append(Line(indent + T.fg(th.accent) + "▌ " + T.fg(th.muted) + h + T.RESET, str_width(h) + 4, right=right))
         return out
 
     @staticmethod

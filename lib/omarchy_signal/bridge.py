@@ -34,11 +34,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import __version__, emoji, protocol
+from . import __version__, emoji, linkpreview, protocol
 from .audio import AudioError
 from .calls import CallManager
 from .config import Config, Paths
-from .envelope import Attachment, Event, parse_receive
+from .envelope import Attachment, Event, Preview, parse_receive
 from .rpc import JsonRpcClient, RpcClosed, RpcError
 from .sanitize import (E164, InvalidAttachment, InvalidRecipient, Recipient, classify_recipient,
                        clean_name, clean_text, parse_conversation_key, safe_attachment_path)
@@ -403,6 +403,7 @@ class Bridge:
             "scrollSpeed": self.cfg.scroll_speed,
             "windowOpacity": self.cfg.window_opacity,
             "telemetry": self.cfg.telemetry,
+            "linkPreviews": self.cfg.link_previews,
             "updateCheck": self.cfg.update_check,
             "notificationSound": os.path.expanduser(self.cfg.notification_sound) if self.cfg.notification_sound and os.path.isfile(os.path.expanduser(self.cfg.notification_sound)) else "",
             "account": self.account,
@@ -457,6 +458,8 @@ class Bridge:
                 await self._broadcast("conversation", {"conversation": conv.key, "expiration": ev.expires_in})
             if ev.attachments and self.cfg.download_attachments:
                 self._locate_attachments(conv.key, ev.timestamp, ev.attachments)
+            if any(pv.image for pv in ev.previews):
+                self._locate_preview_images(conv.key, ev)
             if not ev.outgoing:
                 self.store.set_typing(conv.key, 0)
             payload = self._message_payload(ev, muted=bool(muted and muted.muted))
@@ -505,6 +508,7 @@ class Bridge:
             "sender": ev.sender.key if ev.sender else "", "senderName": popup_sender, "ts": ev.timestamp,
             "text": ev.text, "preview": clean_text(preview, max_length=300, single_line=True),
             "attachments": [a.to_json() for a in ev.attachments], "outgoing": ev.outgoing,
+            "previews": [pv.to_json() for pv in ev.previews],
             "muted": muted, "quoteText": ev.quote_text, "expiresIn": ev.expires_in,
             "viewOnce": ev.view_once, "notify": (not ev.outgoing) and (not muted) and self.cfg.notifications != "off",
         }
@@ -513,23 +517,39 @@ class Bridge:
         """signal-cli writes attachments to <data-dir>/attachments/<id>. Record
         the path when the file exists (it usually does by the time the receive
         notification is emitted)."""
+        for att in attachments:
+            real = self._attachment_file(att.id)
+            if real:
+                att.path = real
+                self.store.set_attachment_path(conv_key, ts, att.id, real)
+
+    def _attachment_file(self, att_id: str) -> str:
+        """The file signal-cli stored attachment ``att_id`` in, or ""."""
+        if not att_id:
+            return ""
         base = self.paths.signal_cli_data / "attachments"
         with contextlib.suppress(OSError):
             os.chmod(base, 0o700)
-        for att in attachments:
-            if not att.id:
-                continue
-            candidate = base / att.id
-            try:
-                real = candidate.resolve(strict=True)
-            except OSError:
-                continue
-            if base.resolve() not in real.parents or not real.is_file():
-                continue
-            with contextlib.suppress(OSError):
-                os.chmod(real, 0o600)
-            att.path = str(real)
-            self.store.set_attachment_path(conv_key, ts, att.id, str(real))
+        try:
+            real = (base / att_id).resolve(strict=True)
+        except OSError:
+            return ""
+        if base.resolve() not in real.parents or not real.is_file():
+            return ""
+        with contextlib.suppress(OSError):
+            os.chmod(real, 0o600)
+        return str(real)
+
+    def _locate_preview_images(self, conv_key: str, ev: Event) -> None:
+        """A link preview's picture is an attachment signal-cli downloads like
+        any other; record where it is so the card can show it."""
+        changed = False
+        for pv in ev.previews:
+            if pv.image and not pv.image.path:
+                pv.image.path = self._attachment_file(pv.image.id)
+                changed = changed or bool(pv.image.path)
+        if changed:
+            self.store.set_previews(conv_key, ev.timestamp, ev.sender.key if ev.sender else "", ev.previews)
 
     # -- client connections ---------------------------------------------------
 
@@ -764,6 +784,14 @@ class Bridge:
             params.update(self._target_params(rec))
         if paths:
             params["attachments"] = paths
+        preview = await self._link_preview(text) if not paths else None
+        if preview is not None:
+            params["previewUrl"] = preview.url
+            params["previewTitle"] = preview.title
+            if preview.description:
+                params["previewDescription"] = preview.description
+            if preview.image_path:
+                params["previewImage"] = preview.image_path
         quote_ts = p.get("quoteTs", 0)
         if quote_ts > 0:
             quote_author = p.get("quoteAuthor", "")
@@ -775,7 +803,13 @@ class Bridge:
                 params["quoteTimestamp"] = quote_ts
                 params["quoteAuthor"] = qa.value
                 params["quoteMessage"] = clean_text(p.get("quoteText", ""), max_length=2000, single_line=True)
-        result = await self.supervisor.call("send", params, timeout=120)
+        try:
+            result = await self.supervisor.call("send", params, timeout=120)
+        except BaseException:
+            if preview is not None and preview.image_path:
+                with contextlib.suppress(OSError):
+                    os.unlink(preview.image_path)
+            raise
         ts = int(result.get("timestamp", 0)) if isinstance(result, dict) else 0
         if ts <= 0:
             ts = int(time.time() * 1000)
@@ -790,17 +824,54 @@ class Bridge:
             atts.append(Attachment(id="", content_type=_guess_mime(pth), filename=pth.name,
                                    size=pth.stat().st_size, path=str(pth)))
         status = "failed" if failures and len(failures) >= max(1, len(result.get("results", [1]))) else "sent"
+        sent_previews = [self._keep_preview(preview, ts)] if preview is not None else []
         conv = self.store.conversation(rec.key)
         self.store.add_outgoing(rec, ts, f"number:{account}", text, atts, status=status,
                                 quote_text=params.get("quoteMessage", ""), quote_author=p.get("quoteAuthor", ""),
                                 quote_ts=quote_ts if "quoteTimestamp" in params else 0,
-                                expires_in=conv.expiration if conv else 0)
+                                expires_in=conv.expiration if conv else 0, previews=sent_previews)
         self.store.mark_read(rec.key)
         self._cancel_typing(rec.key)
         await self._broadcast("sent", {"conversation": rec.key, "ts": ts, "status": status,
-                                       "text": text, "attachments": [a.to_json() for a in atts]})
+                                       "text": text, "attachments": [a.to_json() for a in atts],
+                                       "previews": [pv.to_json() for pv in sent_previews]})
         await self._broadcast("unread", {"total": self.store.total_unread(), "conversation": rec.key})
         return {"ts": ts, "status": status, "failures": failures}
+
+    PREVIEW_BUDGET_S = 8.0    # a little over linkpreview.BUDGET_S, so the fetch ends on its own first
+
+    def _keep_preview(self, preview: "linkpreview.LinkPreview", ts: int) -> Preview:
+        """The card stored with a message we sent. signal-cli keeps no copy of
+        an outgoing preview picture, so the fetched file moves next to the
+        attachments, where the chat window can show it."""
+        image = None
+        if preview.image_path:
+            src = Path(preview.image_path)
+            dest = self.paths.attachments_dir / f"preview-{ts}{src.suffix}"
+            try:
+                os.replace(src, dest)
+                os.chmod(dest, 0o600)
+                image = Attachment(id="", content_type=preview.image_type, filename=dest.name,
+                                   size=dest.stat().st_size, path=str(dest))
+            except OSError:
+                with contextlib.suppress(OSError):
+                    src.unlink()
+        return Preview(url=preview.url, title=preview.title, description=preview.description, image=image)
+
+    async def _link_preview(self, text: str) -> "linkpreview.LinkPreview | None":
+        """The preview for the first https link in ``text``, when the setting is
+        on. Bounded in time: a slow or broken site sends the message without one."""
+        if not self.cfg.link_previews:
+            return None
+        url = linkpreview.first_link(text)
+        if not url:
+            return None
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(linkpreview.fetch, url, self.paths.attachments_dir / "outgoing-previews"), self.PREVIEW_BUDGET_S)
+        except (asyncio.TimeoutError, Exception):  # noqa: BLE001 - never let a preview stop a send
+            log.info("no link preview for this message")
+            return None
 
     async def op_deleteLocal(self, p: dict) -> dict:
         """Remove one message from this computer only ("delete for me"). Any
