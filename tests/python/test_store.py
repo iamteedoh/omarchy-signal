@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import os
+import sqlite3
 import stat
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import _helpers  # noqa: F401
+from omarchy_signal import store as store_mod
 from omarchy_signal.envelope import Attachment, Event
 from omarchy_signal.sanitize import Recipient
 from omarchy_signal.store import Store
@@ -121,9 +124,34 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(len(self.store.history(ALICE.key)), 2)
 
     def test_prune(self):
+        now = 1_800_000_000_000
+        old_ts = now - 31 * 86400 * 1000
+        with mock.patch.object(store_mod, "_now_ms", return_value=now):
+            self.store.add_event_message(msg(old_ts, "ancient"))
+            self.store.add_event_message(msg(old_ts, "old group", conv=GROUP))
+            self.store.add_event_message(msg(now, "current group", conv=GROUP))
+
+            self.assertEqual(self.store.prune(0), 0)
+            self.assertEqual(self.store.conversation(ALICE.key).last_preview, "ancient")
+            self.assertEqual(self.store.prune(30), 2)
+
+        alice = self.store.conversation(ALICE.key)
+        group = self.store.conversation(GROUP.key)
+        self.assertEqual((alice.last_ts, alice.last_preview), (old_ts, ""))
+        self.assertEqual((group.last_ts, group.last_preview), (now, "current group"))
+        self.assertEqual([m.body for m in self.store.history(GROUP.key)], ["current group"])
+
+    def test_prune_rolls_back_messages_when_preview_refresh_fails(self):
         self.store.add_event_message(msg(1, "ancient"))
-        self.assertEqual(self.store.prune(30), 1)
-        self.assertEqual(self.store.prune(0), 0)
+        self.store.db.execute(
+            "CREATE TRIGGER fail_preview_refresh BEFORE UPDATE OF last_preview ON conversations "
+            "BEGIN SELECT RAISE(ABORT, 'preview failed'); END")
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.prune(30)
+
+        self.assertEqual([m.body for m in self.store.history(ALICE.key)], ["ancient"])
+        self.assertEqual(self.store.conversation(ALICE.key).last_preview, "ancient")
 
     def test_memory_store(self):
         s = Store(":memory:")

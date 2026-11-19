@@ -573,7 +573,18 @@ class Store:
         if retain_days <= 0:
             return 0
         cutoff = _now_ms() - retain_days * 86400 * 1000
-        cur = self.db.execute("DELETE FROM messages WHERE ts < ?", (cutoff,))
+        self.db.execute("SAVEPOINT history_prune")
+        try:
+            keys = [r["conversation"] for r in self.db.execute(
+                "SELECT DISTINCT conversation FROM messages WHERE ts < ?", (cutoff,))]
+            cur = self.db.execute("DELETE FROM messages WHERE ts < ?", (cutoff,))
+            for key in keys:
+                self._refresh_preview(key)
+            self.db.execute("RELEASE SAVEPOINT history_prune")
+        except Exception:
+            self.db.execute("ROLLBACK TO SAVEPOINT history_prune")
+            self.db.execute("RELEASE SAVEPOINT history_prune")
+            raise
         return cur.rowcount
 
     def clear_history(self) -> None:
